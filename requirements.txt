@@ -4,3 +4,4 @@ google-auth
 python-dotenv
 pandas
 plotly
+qrcode
