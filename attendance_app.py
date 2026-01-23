@@ -143,6 +143,11 @@ def get_today_myt_date():
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt).strftime("%Y-%m-%d")
 
+def get_now_myt():
+    """Get current datetime in MYT timezone"""
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt)
+
 def generate_daily_colors():
     """Generate random colors based on today's date (consistent throughout the day)"""
     today = get_today_myt_date()
@@ -346,7 +351,7 @@ if 'refresh_counter' not in st.session_state:
 
 # Track last refresh time for cache countdown
 if 'last_refresh_time' not in st.session_state:
-    st.session_state.last_refresh_time = datetime.now()
+    st.session_state.last_refresh_time = get_now_myt()
 
 CACHE_TTL_SECONDS = 120  # Must match the @st.cache_data TTL
 
@@ -601,7 +606,7 @@ with col2:
                 if success:
                     # Increment refresh counter to invalidate cache
                     st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                    st.session_state.last_refresh_time = datetime.now()
+                    st.session_state.last_refresh_time = get_now_myt()
                     # Also clear cache for immediate effect
                     get_today_attendance_data.clear()
                     get_options_from_sheet.clear()
@@ -722,18 +727,19 @@ if st.session_state.get('show_qr_modal', False):
 st.markdown("---")
 
 # Calculate cache status
-time_since_refresh = (datetime.now() - st.session_state.last_refresh_time).total_seconds()
+time_since_refresh = (get_now_myt() - st.session_state.last_refresh_time).total_seconds()
 cache_remaining = max(0, CACHE_TTL_SECONDS - int(time_since_refresh))
 cache_expired = cache_remaining == 0
+qr_modal_open = st.session_state.get('show_qr_modal', False)
 
-# Add refresh button with cache indicator (disabled until cache expires)
+# Add refresh button with cache indicator (disabled until cache expires, OR enabled if QR modal is open)
 col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
 with col_refresh2:
-    if cache_expired:
+    if cache_expired or qr_modal_open:
         if st.button("🔄 Refresh Dashboard", type="secondary", use_container_width=True):
             # Increment refresh counter to invalidate cache
             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = datetime.now()
+            st.session_state.last_refresh_time = get_now_myt()
             # Also clear cache for immediate effect
             get_today_attendance_data.clear()
             get_options_from_sheet.clear()
