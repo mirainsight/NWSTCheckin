@@ -25,6 +25,8 @@ if not SHEET_ID:
         pass  # No secrets.toml file, continue with empty SHEET_ID
 OPTIONS_TAB_NAME = "Options"  # Tab name where options are stored
 ATTENDANCE_TAB_NAME = "Attendance"  # Tab name where attendance is recorded
+LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"  # Tab name for leaders discipleship check-in
+KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
 
 def get_gsheet_client():
     """Connect to Google Sheets - works with both local files and Streamlit secrets"""
@@ -138,6 +140,43 @@ def get_options_from_sheet(_client, sheet_id):
     except Exception as e:
         return None, f"❌ Error reading options from column C: {str(e)}"
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes since this changes rarely
+def get_cell_to_zone_mapping(_client, sheet_id):
+    """Read cell-to-zone mapping from Key Values tab in Google Sheets.
+    Column A = Cell Names, Column C = Zones"""
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+
+        # Try to get the Key Values worksheet
+        try:
+            key_values_sheet = spreadsheet.worksheet(KEY_VALUES_TAB_NAME)
+        except gspread.exceptions.WorksheetNotFound:
+            return {}, f"Tab '{KEY_VALUES_TAB_NAME}' not found."
+
+        # Get all values from the sheet
+        all_values = key_values_sheet.get_all_values()
+
+        if len(all_values) <= 1:  # Only header row or empty
+            return {}, "Key Values sheet is empty or has only headers."
+
+        # Build mapping from Cell Name to Zone (skip header row)
+        # Column A (index 0) = Cell Names, Column C (index 2) = Zones
+        cell_to_zone = {}
+        for row in all_values[1:]:  # Skip header
+            if len(row) >= 3:
+                cell_name = row[0].strip()  # Column A: "Anchor Street"
+                zone = row[2].strip()        # Column C: "Syd"
+                if cell_name and zone:
+                    cell_to_zone[cell_name.lower()] = zone
+
+        return cell_to_zone, None
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return {}, "API quota exceeded."
+        return {}, f"Error reading Key Values: {str(e)}"
+    except Exception as e:
+        return {}, f"Error reading Key Values: {str(e)}"
+
 def get_today_myt_date():
     """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
     myt = timezone(timedelta(hours=8))
@@ -200,14 +239,14 @@ def parse_name_cell_group(name_cell_group_str):
         return parts[0].strip(), "Unknown"
 
 @st.cache_data(ttl=60)  # Cache for 60 seconds to reduce API calls
-def get_today_attendance_data(_client, sheet_id, refresh_key=0):
+def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDANCE_TAB_NAME):
     """Get today's attendance data with names and cell groups grouped"""
     try:
         spreadsheet = _client.open_by_key(sheet_id)
-        
-        # Try to get the Attendance worksheet
+
+        # Try to get the specified worksheet
         try:
-            attendance_sheet = spreadsheet.worksheet(ATTENDANCE_TAB_NAME)
+            attendance_sheet = spreadsheet.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
             return {}, []
         
@@ -272,33 +311,33 @@ def get_today_attendance_data(_client, sheet_id, refresh_key=0):
     except Exception as e:
         return {}, []
 
-def get_checked_in_today(client, sheet_id):
+def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
     """Get a set of people who have already checked in today (MYT date)"""
     try:
         refresh_key = st.session_state.get('refresh_counter', 0)
-        _, checked_in_list = get_today_attendance_data(client, sheet_id, refresh_key)
+        _, checked_in_list = get_today_attendance_data(client, sheet_id, refresh_key, tab_name)
         return set(checked_in_list)
     except Exception as e:
         # If there's an error reading attendance, return empty set (show all options)
         return set()
 
-def save_attendance_to_sheet(client, attendance_data):
-    """Save attendance data to the Attendance tab - supports batch check-ins"""
+def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
+    """Save attendance data to the specified tab - supports batch check-ins"""
     try:
         spreadsheet = client.open_by_key(SHEET_ID)
 
         # Try to get the Attendance worksheet, create if it doesn't exist
         try:
-            attendance_sheet = spreadsheet.worksheet(ATTENDANCE_TAB_NAME)
+            attendance_sheet = spreadsheet.worksheet(tab_name)
             # Check if headers exist, if not add them
             existing_headers = attendance_sheet.row_values(1)
             if not existing_headers:
                 headers = ["Timestamp", attendance_data.get("option_type", "Option")]
                 attendance_sheet.append_row(headers)
         except gspread.exceptions.WorksheetNotFound:
-            # Create the Attendance worksheet
+            # Create the worksheet
             attendance_sheet = spreadsheet.add_worksheet(
-                title=ATTENDANCE_TAB_NAME,
+                title=tab_name,
                 rows=1000,
                 cols=20
             )
@@ -488,7 +527,7 @@ with st.spinner("Loading options..."):
 if options is None:
     if error_msg:
         st.error(error_msg)
-        st.info("💡 **Tip:** If you're seeing quota errors, wait a moment and refresh the page. Data is cached to reduce API calls.")
+        st.info("Tip: If you're seeing quota errors, wait a moment and refresh the page. Data is cached to reduce API calls.")
     st.stop()
 
 if not options:
@@ -496,8 +535,8 @@ if not options:
         st.warning(error_msg)
     else:
         st.warning("""
-        ⚠️ No options found. Please add options to your Google Sheet.
-        
+        No options found. Please add options to your Google Sheet.
+
         **Format in the Options tab:**
         - Column C, Row 1: Header name (e.g., "Name" or "Attendee")
         - Column C, Row 2+: Options listed vertically
@@ -509,536 +548,752 @@ if not options:
         """)
     st.stop()
 
-# Get list of people who have already checked in today (MYT)
-with st.spinner("Checking today's attendance..."):
-    checked_in_today = get_checked_in_today(client, SHEET_ID)
-
 # Get the single option type and values
 option_type = list(options.keys())[0]
 all_option_values = list(options.values())[0]
 
-# Filter out options that have already checked in today
-available_options = [opt for opt in all_option_values if opt not in checked_in_today]
 
-# Wrap form section with GIF background
-if background_gif and gif_src:
-    st.markdown(f"""
-    <div style="
-        position: relative;
-        padding: 2rem;
-        margin: 0;
-        border-radius: 8px;
-        border: 2px solid {daily_colors['primary']};
-        min-height: 250px;
-        overflow: hidden;
-    ">
-        <img src="{gif_src}" 
-             style="
-                 position: absolute;
-                 top: 0;
-                 left: 0;
-                 width: 100%;
-                 height: 100%;
-                 object-fit: cover;
-                 z-index: 0;
-                 opacity: 0.8;
-             " />
-        <div style="position: relative; z-index: 1;">
-    """, unsafe_allow_html=True)
+def render_check_in_form(tab_name, form_key):
+    """Render the check-in form for a specific tab"""
+    # Get list of people who have already checked in today (MYT) for this specific tab
+    with st.spinner("Checking today's attendance..."):
+        checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
 
-# Display form in centered column
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    # Show instruction text
-    if background_gif:
+    # Filter out options that have already checked in today
+    available_options = [opt for opt in all_option_values if opt not in checked_in_today]
+
+    # Wrap form section with GIF background
+    if background_gif and gif_src:
         st.markdown(f"""
         <div style="
-            background: rgba(0, 0, 0, 0.6);
-            padding: 0.75rem 1rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
+            position: relative;
+            padding: 2rem;
+            margin: 0;
+            border-radius: 8px;
+            border: 2px solid {daily_colors['primary']};
+            min-height: 250px;
+            overflow: hidden;
         ">
-            <p style="
-                font-size: 1rem; 
-                margin: 0; 
-                color: white;
-                text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-                text-align: center;
-            ">Select your name from the dropdown below to check in.</p>
+            <img src="{gif_src}"
+                 style="
+                     position: absolute;
+                     top: 0;
+                     left: 0;
+                     width: 100%;
+                     height: 100%;
+                     object-fit: cover;
+                     z-index: 0;
+                     opacity: 0.8;
+                 " />
+            <div style="position: relative; z-index: 1;">
+        """, unsafe_allow_html=True)
+
+    # Display form in centered column
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Show instruction text
+        if background_gif:
+            st.markdown(f"""
+            <div style="
+                background: rgba(0, 0, 0, 0.6);
+                padding: 0.75rem 1rem;
+                border-radius: 6px;
+                margin-bottom: 1rem;
+            ">
+                <p style="
+                    font-size: 1rem;
+                    margin: 0;
+                    color: white;
+                    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+                    text-align: center;
+                ">Select your name from the dropdown below to check in.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
+
+        # Show simple refresh message
+        if checked_in_today:
+            st.success("Refreshed!")
+
+        # Display form
+        with st.form(form_key, clear_on_submit=True):
+            # Check if there are any available options
+            if not available_options:
+                st.warning("All attendees have already checked in for today!")
+                st.form_submit_button("Check In", type="primary", use_container_width=True, disabled=True)
+            else:
+                # Multi-select for batch check-ins (reduces API calls)
+                selected_options = st.multiselect(
+                    f"Select {option_type}(s) *",
+                    options=available_options,
+                    help="Select one or more people to check in at once. This reduces API calls.",
+                    default=[]
+                )
+
+                # Submit button
+                submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
+
+                if submitted:
+                    # Validation
+                    if not selected_options:
+                        st.error("Please select at least one person.")
+                    else:
+                        # Prepare attendance data for batch check-in
+                        attendance_data = {
+                            "selected_options": selected_options,
+                            "option_type": option_type
+                        }
+
+                        # Save to Google Sheets (single API call for all) - use tab_name
+                        success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+
+                        if success:
+                            # Increment refresh counter to invalidate cache
+                            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                            st.session_state.last_refresh_time = get_now_myt()
+                            # Also clear cache for immediate effect
+                            get_today_attendance_data.clear()
+                            get_options_from_sheet.clear()
+
+                            st.success(f"{message}")
+                            st.balloons()
+                            # Refresh the page to update the dropdown
+                            st.rerun()
+                        else:
+                            st.error(f"{message}")
+
+    # Close background GIF container if it was opened
+    if background_gif:
+        st.markdown("</div></div>", unsafe_allow_html=True)
+    else:
+        # Show placeholder if no GIF
+        st.markdown(f"""
+        <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: #0a0a0a; border: 2px dashed {daily_colors['primary']}; border-radius: 8px;">
+            <p style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
+                Add your banner GIF by setting BANNER_GIF_URL in .env or placing banner.gif in the CHECK IN folder
+            </p>
         </div>
         """, unsafe_allow_html=True)
-    else:
-        st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
-    
-    # Show simple refresh message
-    if checked_in_today:
-        st.success("Refreshed!")
-    
-    # Display form
-    with st.form("attendance_form", clear_on_submit=True):
-        # Check if there are any available options
-        if not available_options:
-            st.warning("✅ All attendees have already checked in for today!")
-            st.stop()
 
-        # Multi-select for batch check-ins (reduces API calls)
-        selected_options = st.multiselect(
-            f"Select {option_type}(s) *",
-            options=available_options,
-            help="Select one or more people to check in at once. This reduces API calls.",
-            default=[]
-        )
+    return checked_in_today
 
-        # Submit button
-        submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
 
-        if submitted:
-            # Validation
-            if not selected_options:
-                st.error("❌ Please select at least one person.")
-            else:
-                # Prepare attendance data for batch check-in
-                attendance_data = {
-                    "selected_options": selected_options,
-                    "option_type": option_type
-                }
-
-                # Save to Google Sheets (single API call for all)
-                success, message = save_attendance_to_sheet(client, attendance_data)
-
-                if success:
-                    # Increment refresh counter to invalidate cache
-                    st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                    st.session_state.last_refresh_time = get_now_myt()
-                    # Also clear cache for immediate effect
-                    get_today_attendance_data.clear()
-                    get_options_from_sheet.clear()
-
-                    st.success(f"✅ {message}")
-                    st.balloons()
-                    # Refresh the page to update the dropdown
-                    st.rerun()
-                else:
-                    st.error(f"❌ {message}")
-
-# Close background GIF container if it was opened
-if background_gif:
-    st.markdown("</div></div>", unsafe_allow_html=True)
-else:
-    # Show placeholder if no GIF
-    st.markdown(f"""
-    <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: #0a0a0a; border: 2px dashed {daily_colors['primary']}; border-radius: 8px;">
-        <p style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
-            Add your banner GIF by setting BANNER_GIF_URL in .env or placing banner.gif in the CHECK IN folder
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ========== FEEDBACK FORM QR CODE SECTION ==========
-st.markdown("<br><br>", unsafe_allow_html=True)
-col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
-with col_qr2:
-    if st.button("👋 I'm New!", type="secondary", use_container_width=True):
-        # Toggle the modal on/off
-        st.session_state.show_qr_modal = not st.session_state.get('show_qr_modal', False)
-        st.rerun()
-
-# Show QR code in modal/spotlight mode
-if st.session_state.get('show_qr_modal', False):
-    # Generate QR code
-    feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
-    qr.add_data(feedback_url)
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
-
-    # Convert to base64 for embedding in HTML
-    buffer = BytesIO()
-    qr_img.save(buffer, format="PNG")
-    import base64
-    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-    # Modal overlay with QR code
-    components.html(f"""
-    <style>
-        .modal-overlay {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: rgba(0, 0, 0, 0.85);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            backdrop-filter: blur(5px);
-        }}
-        .modal-content {{
-            background: #1a1a1a;
-            padding: 2rem;
-            border-radius: 16px;
-            text-align: center;
-            max-width: 350px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-        }}
-        .qr-image {{
-            width: 250px;
-            height: 250px;
-            border-radius: 8px;
-        }}
-        .modal-title {{
-            color: #fff;
-            font-size: 1.3rem;
-            margin-bottom: 1rem;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }}
-        .modal-subtitle {{
-            color: #888;
-            font-size: 0.9rem;
-            margin-top: 1rem;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }}
-        .link-btn {{
-            color: #4da6ff;
-            text-decoration: none;
-            font-size: 0.95rem;
-        }}
-        .link-btn:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-    <div class="modal-overlay" id="qrModal">
-        <div class="modal-content">
-            <div class="modal-title">👋 Welcome! Scan to fill out the form</div>
-            <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
-            <div class="modal-subtitle">
-                <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
-            </div>
-        </div>
-    </div>
-    """, height=500)
-
-    # Close button using Streamlit
-    col_close1, col_close2, col_close3 = st.columns([2, 1, 2])
-    with col_close2:
-        if st.button("✕ Close", type="primary", use_container_width=True):
-            st.session_state.show_qr_modal = False
+def render_qr_section():
+    """Render the I'm New QR code section"""
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
+    with col_qr2:
+        if st.button("I'm New!", type="secondary", use_container_width=True, key="new_btn"):
+            # Toggle the modal on/off
+            st.session_state.show_qr_modal = not st.session_state.get('show_qr_modal', False)
             st.rerun()
 
-# ========== DASHBOARD SECTION ==========
-st.markdown("---")
+    # Show QR code in modal/spotlight mode
+    if st.session_state.get('show_qr_modal', False):
+        # Generate QR code
+        feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(feedback_url)
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color="black", back_color="white")
 
-# Calculate cache status
-time_since_refresh = (get_now_myt() - st.session_state.last_refresh_time).total_seconds()
-cache_remaining = max(0, CACHE_TTL_SECONDS - int(time_since_refresh))
-cache_expired = cache_remaining == 0
-qr_modal_open = st.session_state.get('show_qr_modal', False)
+        # Convert to base64 for embedding in HTML
+        buffer = BytesIO()
+        qr_img.save(buffer, format="PNG")
+        import base64
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
 
-# Add refresh button with cache indicator (disabled until cache expires, OR enabled if QR modal is open)
-col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
-with col_refresh2:
-    if cache_expired or qr_modal_open:
-        if st.button("🔄 Refresh Dashboard", type="secondary", use_container_width=True):
-            # Increment refresh counter to invalidate cache
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            # Also clear cache for immediate effect
-            get_today_attendance_data.clear()
-            get_options_from_sheet.clear()
-            st.rerun()
-    else:
-        # Show disabled button with live countdown using HTML/JS
-        refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000
+        # Modal overlay with QR code
         components.html(f"""
         <style>
-            .disabled-btn {{
-                background-color: transparent;
-                color: {daily_colors['primary']};
-                border: 2px solid {daily_colors['primary']};
-                border-radius: 0px;
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-                font-weight: 600;
-                font-size: 14px;
-                letter-spacing: 0.5px;
-                padding: 0.5rem 1rem;
-                width: 100%;
-                opacity: 0.5;
-                cursor: not-allowed;
+            .modal-overlay {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(0, 0, 0, 0.85);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 9999;
+                backdrop-filter: blur(5px);
+            }}
+            .modal-content {{
+                background: #1a1a1a;
+                padding: 2rem;
+                border-radius: 16px;
+                text-align: center;
+                max-width: 350px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            }}
+            .qr-image {{
+                width: 250px;
+                height: 250px;
+                border-radius: 8px;
+            }}
+            .modal-title {{
+                color: #fff;
+                font-size: 1.3rem;
+                margin-bottom: 1rem;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }}
+            .modal-subtitle {{
+                color: #888;
+                font-size: 0.9rem;
+                margin-top: 1rem;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }}
+            .link-btn {{
+                color: #4da6ff;
+                text-decoration: none;
+                font-size: 0.95rem;
+            }}
+            .link-btn:hover {{
+                text-decoration: underline;
             }}
         </style>
-        <button class="disabled-btn" disabled>
-            🔄 Refresh in <span id="btn-countdown">{cache_remaining}s</span>
-        </button>
-        <script>
-            const refreshTime = {refresh_timestamp};
-            const cacheDuration = {CACHE_TTL_SECONDS} * 1000;
-            const countdownEl = document.getElementById('btn-countdown');
+        <div class="modal-overlay" id="qrModal">
+            <div class="modal-content">
+                <div class="modal-title">Welcome! Scan to fill out the form</div>
+                <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
+                <div class="modal-subtitle">
+                    <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
+                </div>
+            </div>
+        </div>
+        """, height=500)
 
-            function updateBtnCountdown() {{
-                const now = Date.now();
-                const elapsed = now - refreshTime;
-                const remaining = Math.max(0, cacheDuration - elapsed);
+        # Close button using Streamlit
+        col_close1, col_close2, col_close3 = st.columns([2, 1, 2])
+        with col_close2:
+            if st.button("Close", type="primary", use_container_width=True, key="close_modal"):
+                st.session_state.show_qr_modal = False
+                st.rerun()
 
-                if (remaining > 0) {{
-                    const mins = Math.floor(remaining / 60000);
-                    const secs = Math.floor((remaining % 60000) / 1000);
-                    countdownEl.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
-                }} else {{
-                    countdownEl.textContent = 'now!';
+
+def render_dashboard(tab_name, group_by_zone=False):
+    """Render the dashboard section for a specific tab.
+    If group_by_zone=True, groups by Zone instead of Cell Group."""
+    st.markdown("---")
+
+    # Calculate cache status
+    time_since_refresh = (get_now_myt() - st.session_state.last_refresh_time).total_seconds()
+    cache_remaining = max(0, CACHE_TTL_SECONDS - int(time_since_refresh))
+    cache_expired = cache_remaining == 0
+    qr_modal_open = st.session_state.get('show_qr_modal', False)
+
+    # Add refresh button with cache indicator (disabled until cache expires, OR enabled if QR modal is open)
+    col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
+    with col_refresh2:
+        if cache_expired or qr_modal_open:
+            if st.button("Refresh Dashboard", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
+                # Increment refresh counter to invalidate cache
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                # Also clear cache for immediate effect
+                get_today_attendance_data.clear()
+                get_options_from_sheet.clear()
+                get_cell_to_zone_mapping.clear()
+                st.rerun()
+        else:
+            # Show disabled button with live countdown using HTML/JS
+            refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000
+            components.html(f"""
+            <style>
+                .disabled-btn {{
+                    background-color: transparent;
+                    color: {daily_colors['primary']};
+                    border: 2px solid {daily_colors['primary']};
+                    border-radius: 0px;
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                    font-weight: 600;
+                    font-size: 14px;
+                    letter-spacing: 0.5px;
+                    padding: 0.5rem 1rem;
+                    width: 100%;
+                    opacity: 0.5;
+                    cursor: not-allowed;
                 }}
+            </style>
+            <button class="disabled-btn" disabled>
+                Refresh in <span id="btn-countdown-{tab_name}">{cache_remaining}s</span>
+            </button>
+            <script>
+                const refreshTime_{tab_name.replace(' ', '_')} = {refresh_timestamp};
+                const cacheDuration_{tab_name.replace(' ', '_')} = {CACHE_TTL_SECONDS} * 1000;
+                const countdownEl_{tab_name.replace(' ', '_')} = document.getElementById('btn-countdown-{tab_name}');
+
+                function updateBtnCountdown_{tab_name.replace(' ', '_')}() {{
+                    const now = Date.now();
+                    const elapsed = now - refreshTime_{tab_name.replace(' ', '_')};
+                    const remaining = Math.max(0, cacheDuration_{tab_name.replace(' ', '_')} - elapsed);
+
+                    if (remaining > 0) {{
+                        const mins = Math.floor(remaining / 60000);
+                        const secs = Math.floor((remaining % 60000) / 1000);
+                        countdownEl_{tab_name.replace(' ', '_')}.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+                    }} else {{
+                        countdownEl_{tab_name.replace(' ', '_')}.textContent = 'now!';
+                    }}
+                }}
+
+                updateBtnCountdown_{tab_name.replace(' ', '_')}();
+                setInterval(updateBtnCountdown_{tab_name.replace(' ', '_')}, 1000);
+            </script>
+            """, height=45)
+
+    # Show cache status with live countdown timer
+    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
+    refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000  # Convert to JS milliseconds
+
+    components.html(f"""
+    <div style="text-align: center; padding: 0.5rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <span style="color: #888; font-size: 0.85rem;">
+            Last refreshed at <b>{last_refresh_str}</b> |
+            New data drops in <b><span id="countdown-{tab_name}">--</span></b>
+        </span>
+    </div>
+    <script>
+        const refreshTime2_{tab_name.replace(' ', '_')} = {refresh_timestamp};
+        const cacheDuration2_{tab_name.replace(' ', '_')} = {CACHE_TTL_SECONDS} * 1000;
+        const countdownEl2_{tab_name.replace(' ', '_')} = document.getElementById('countdown-{tab_name}');
+
+        function updateCountdown2_{tab_name.replace(' ', '_')}() {{
+            const now = Date.now();
+            const elapsed = now - refreshTime2_{tab_name.replace(' ', '_')};
+            const remaining = Math.max(0, cacheDuration2_{tab_name.replace(' ', '_')} - elapsed);
+
+            if (remaining > 0) {{
+                const mins = Math.floor(remaining / 60000);
+                const secs = Math.floor((remaining % 60000) / 1000);
+                countdownEl2_{tab_name.replace(' ', '_')}.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+            }} else {{
+                countdownEl2_{tab_name.replace(' ', '_')}.textContent = 'now! hit refresh';
+                countdownEl2_{tab_name.replace(' ', '_')}.style.color = '#4CAF50';
             }}
-
-            updateBtnCountdown();
-            setInterval(updateBtnCountdown, 1000);
-        </script>
-        """, height=45)
-
-# Show cache status with live countdown timer
-last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000  # Convert to JS milliseconds
-
-components.html(f"""
-<div style="text-align: center; padding: 0.5rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-    <span style="color: #888; font-size: 0.85rem;">
-        📦 Last refreshed at <b>{last_refresh_str}</b> •
-        New data drops in <b><span id="countdown">--</span></b>
-    </span>
-</div>
-<script>
-    const refreshTime = {refresh_timestamp};
-    const cacheDuration = {CACHE_TTL_SECONDS} * 1000;
-    const countdownEl = document.getElementById('countdown');
-
-    function updateCountdown() {{
-        const now = Date.now();
-        const elapsed = now - refreshTime;
-        const remaining = Math.max(0, cacheDuration - elapsed);
-
-        if (remaining > 0) {{
-            const mins = Math.floor(remaining / 60000);
-            const secs = Math.floor((remaining % 60000) / 1000);
-            countdownEl.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
-        }} else {{
-            countdownEl.textContent = 'now! hit refresh 🔄';
-            countdownEl.style.color = '#4CAF50';
         }}
-    }}
 
-    updateCountdown();
-    setInterval(updateCountdown, 1000);
-</script>
-""", height=50)
+        updateCountdown2_{tab_name.replace(' ', '_')}();
+        setInterval(updateCountdown2_{tab_name.replace(' ', '_')}, 1000);
+    </script>
+    """, height=50)
 
-# Get today's attendance data
-with st.spinner("Loading dashboard data..."):
-    refresh_key = st.session_state.get('refresh_counter', 0)
-    cell_group_data, checked_in_list = get_today_attendance_data(client, SHEET_ID, refresh_key)
+    # Get today's attendance data for the specific tab
+    with st.spinner("Loading dashboard data..."):
+        refresh_key = st.session_state.get('refresh_counter', 0)
+        cell_group_data, checked_in_list = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
-total_checked_in = len(checked_in_list)
+    total_checked_in = len(checked_in_list)
 
-# Convert hex color to RGB for rgba shadows
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    # If grouping by zone, convert cell_group_data to zone_data
+    if group_by_zone:
+        # Get zone mapping from Key Values tab (cell name -> zone)
+        cell_to_zone, zone_error = get_cell_to_zone_mapping(client, SHEET_ID)
 
-primary_rgb = hex_to_rgb(daily_colors['primary'])
+        # Convert cell groups to zones
+        zone_data = {}
+        for cell_group, names in cell_group_data.items():
+            # Look up zone from Key Values (case-insensitive)
+            zone = cell_to_zone.get(cell_group.lower(), cell_group)
+            if zone not in zone_data:
+                zone_data[zone] = []
+            zone_data[zone].extend(names)
+        display_data = zone_data
+        group_label = "Zone"
+    else:
+        display_data = cell_group_data
+        group_label = "Cell Group"
 
-# Modern Edgy Dashboard Styling with Dynamic Colors
-st.markdown(f"""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap');
-    
-    .kpi-card {{
-        background: #000000;
-        padding: 2rem 2.5rem;
-        border-radius: 0px;
-        border-left: 6px solid {daily_colors['primary']};
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
-        transition: all 0.3s ease;
-    }}
-    .kpi-card:hover {{
-        transform: translateY(-4px);
-        box-shadow: 0 12px 40px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.25);
-        border-left-width: 8px;
-    }}
-    .kpi-label {{
-        font-family: 'Inter', sans-serif;
-        font-size: 0.9rem;
-        font-weight: 700;
-        color: #999;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        margin-bottom: 0.5rem;
-    }}
-    .kpi-number {{
-        font-family: 'Inter', sans-serif;
-        font-size: 5.5rem;
-        font-weight: 900;
-        color: {daily_colors['primary']};
-        line-height: 1;
-        margin: 0.5rem 0;
-        text-shadow: 0 0 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
-    }}
-    .kpi-subtitle {{
-        font-family: 'Inter', sans-serif;
-        font-size: 0.85rem;
-        color: #666;
-        margin-top: 0.5rem;
-        font-weight: 500;
-    }}
-    .dashboard-section {{
-        background: #0a0a0a;
-        padding: 2rem;
-        border-radius: 0px;
-        border: 2px solid {daily_colors['primary']};
-        margin: 2rem 0;
-    }}
-    .section-title {{
-        font-family: 'Inter', sans-serif;
-        font-size: 1.8rem;
-        font-weight: 900;
-        color: {daily_colors['primary']};
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        margin-bottom: 1.5rem;
-        border-bottom: 3px solid {daily_colors['primary']};
-        padding-bottom: 0.5rem;
-        display: inline-block;
-    }}
-    .name-badge {{
-        background: #1a1a1a;
-        border: 1px solid {daily_colors['primary']};
-        color: {daily_colors['primary']};
-        padding: 0.6rem 1.2rem;
-        margin: 0.4rem 0.4rem 0.4rem 0;
-        border-radius: 0px;
-        display: inline-block;
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        font-size: 0.9rem;
-        letter-spacing: 0.5px;
-        transition: all 0.2s ease;
-    }}
-    .name-badge:hover {{
-        background: {daily_colors['primary']};
-        color: #000;
-        transform: scale(1.05);
-    }}
-    .empty-state {{
-        text-align: center;
-        padding: 4rem 2rem;
-        background: #0a0a0a;
-        border: 2px dashed #333;
-        border-radius: 0px;
-    }}
-    .empty-state-text {{
-        font-family: 'Inter', sans-serif;
-        font-size: 1.5rem;
-        color: #666;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-    }}
-</style>
-""", unsafe_allow_html=True)
+    # Convert hex color to RGB for rgba shadows
+    def hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
-# KPI Card - Total Checked In
-st.markdown(f"""
-<div class="kpi-card">
-    <div class="kpi-label">Total Checked In Today</div>
-    <div class="kpi-number">{total_checked_in}</div>
-    <div class="kpi-subtitle">People checked in as of now</div>
-</div>
-""", unsafe_allow_html=True)
+    primary_rgb = hex_to_rgb(daily_colors['primary'])
 
-if total_checked_in > 0:
-    # Bar Chart Section
-    st.markdown('<div class="section-title">📊 Check-Ins by Cell Group</div>', unsafe_allow_html=True)
-    
-    # Prepare data for bar chart - sort alphabetically by cell group name
-    sorted_cell_groups = sorted(cell_group_data.items(), key=lambda x: x[0].lower())
-    
-    chart_data = {
-        'Cell Group': [group for group, _ in sorted_cell_groups],
-        'Count': [len(names) for _, names in sorted_cell_groups]
-    }
-    df_chart = pd.DataFrame(chart_data)
-    
-    # Create bar chart with modern edgy style
-    fig = px.bar(
-        df_chart,
-        x='Cell Group',
-        y='Count',
-        color='Count',
-        color_continuous_scale=['#000000', daily_colors['primary']],
-        text='Count',
-        labels={'Count': 'Number of People', 'Cell Group': 'Cell Group'},
-        height=400
-    )
-    
-    # Update layout for modern edgy style
-    fig.update_layout(
-        plot_bgcolor='#000000',
-        paper_bgcolor='#0a0a0a',
-        font=dict(family='Inter, sans-serif', size=12, color=daily_colors['primary']),
-        xaxis=dict(
-            title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
-            tickfont=dict(color='#999', family='Inter'),
-            gridcolor='#333',
-            linecolor=daily_colors['primary'],
-            linewidth=2
-        ),
-        yaxis=dict(
-            title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
-            tickfont=dict(color='#999', family='Inter'),
-            gridcolor='#333',
-            linecolor=daily_colors['primary'],
-            linewidth=2
-        ),
-        coloraxis_showscale=False,
-        showlegend=False,
-        margin=dict(l=50, r=50, t=30, b=50)
-    )
-    
-    # Update bar style
-    fig.update_traces(
-        textfont=dict(size=14, color=daily_colors['primary'], family='Inter', weight='bold'),
-        textposition='outside',
-        marker=dict(line=dict(color=daily_colors['primary'], width=2)),
-        hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
-        hoverlabel=dict(bgcolor='#000', font=dict(color=daily_colors['primary'], family='Inter'))
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Names Breakdown Section
-    st.markdown('<div class="section-title">👥 Attendees by Cell Group</div>', unsafe_allow_html=True)
-    
-    # Display names for each cell group
-    for cell_group, names in sorted_cell_groups:
+    # Modern Edgy Dashboard Styling with Dynamic Colors
+    st.markdown(f"""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap');
+
+        .kpi-card {{
+            background: #000000;
+            padding: 2rem 2.5rem;
+            border-radius: 0px;
+            border-left: 6px solid {daily_colors['primary']};
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
+            transition: all 0.3s ease;
+        }}
+        .kpi-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.25);
+            border-left-width: 8px;
+        }}
+        .kpi-label {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }}
+        .kpi-number {{
+            font-family: 'Inter', sans-serif;
+            font-size: 5.5rem;
+            font-weight: 900;
+            color: {daily_colors['primary']};
+            line-height: 1;
+            margin: 0.5rem 0;
+            text-shadow: 0 0 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
+        }}
+        .kpi-subtitle {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.5rem;
+            font-weight: 500;
+        }}
+        .dashboard-section {{
+            background: #0a0a0a;
+            padding: 2rem;
+            border-radius: 0px;
+            border: 2px solid {daily_colors['primary']};
+            margin: 2rem 0;
+        }}
+        .section-title {{
+            font-family: 'Inter', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 900;
+            color: {daily_colors['primary']};
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 1.5rem;
+            border-bottom: 3px solid {daily_colors['primary']};
+            padding-bottom: 0.5rem;
+            display: inline-block;
+        }}
+        .name-badge {{
+            background: #1a1a1a;
+            border: 1px solid {daily_colors['primary']};
+            color: {daily_colors['primary']};
+            padding: 0.6rem 1.2rem;
+            margin: 0.4rem 0.4rem 0.4rem 0;
+            border-radius: 0px;
+            display: inline-block;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            transition: all 0.2s ease;
+        }}
+        .name-badge:hover {{
+            background: {daily_colors['primary']};
+            color: #000;
+            transform: scale(1.05);
+        }}
+        .empty-state {{
+            text-align: center;
+            padding: 4rem 2rem;
+            background: #0a0a0a;
+            border: 2px dashed #333;
+            border-radius: 0px;
+        }}
+        .empty-state-text {{
+            font-family: 'Inter', sans-serif;
+            font-size: 1.5rem;
+            color: #666;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # KPI Card - Total Checked In
+    st.markdown(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">Total Checked In Today</div>
+        <div class="kpi-number">{total_checked_in}</div>
+        <div class="kpi-subtitle">People checked in as of now</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Zone tiles (only for zone grouping)
+    if group_by_zone and total_checked_in > 0 and cell_group_data:
+        # Get zone mapping from Key Values tab
+        cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+
+        # Aggregate by zone for tiles
+        zone_counts = {}
+        for cell_group, names in cell_group_data.items():
+            # Look up zone from Key Values (case-insensitive)
+            zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+            if zone not in zone_counts:
+                zone_counts[zone] = 0
+            zone_counts[zone] += len(names)
+
+        sorted_zones_for_tiles = sorted(zone_counts.items(), key=lambda x: x[0].lower())
+
+        # Create tiles in a grid
         st.markdown(f"""
-        <div style="margin-bottom: 2rem;">
-            <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {daily_colors['primary']}; 
-                       text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                {cell_group} <span style="color: #666; font-size: 0.9rem;">({len(names)})</span>
-            </h3>
-            <div>
-                {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+        <style>
+            .zone-tiles-container {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1rem;
+                margin-bottom: 2rem;
+            }}
+            .zone-tile {{
+                background: #0a0a0a;
+                border: 2px solid {daily_colors['primary']};
+                padding: 1.2rem 1.5rem;
+                min-width: 140px;
+                flex: 1;
+                text-align: center;
+                transition: all 0.2s ease;
+            }}
+            .zone-tile:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 4px 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
+            }}
+            .zone-name {{
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 700;
+                color: #999;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 0.3rem;
+            }}
+            .zone-count {{
+                font-family: 'Inter', sans-serif;
+                font-size: 2.5rem;
+                font-weight: 900;
+                color: {daily_colors['primary']};
+                line-height: 1;
+            }}
+        </style>
+        <div class="zone-tiles-container">
+            {''.join([f'<div class="zone-tile"><div class="zone-name">{zone}</div><div class="zone-count">{count}</div></div>' for zone, count in sorted_zones_for_tiles])}
+        </div>
+        """, unsafe_allow_html=True)
+
+    if total_checked_in > 0:
+        # Bar Chart Section
+        chart_title = "Attendance by Zone" if group_by_zone else "Check-Ins by Cell Group"
+        st.markdown(f'<div class="section-title">{chart_title}</div>', unsafe_allow_html=True)
+
+        # Prepare data for bar chart - sort by count descending
+        sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
+
+        chart_data = {
+            group_label: [group for group, _ in sorted_groups],
+            'Count': [len(names) for _, names in sorted_groups]
+        }
+        df_chart = pd.DataFrame(chart_data)
+
+        # Create bar chart with modern edgy style
+        fig = px.bar(
+            df_chart,
+            x=group_label,
+            y='Count',
+            color='Count',
+            color_continuous_scale=['#000000', daily_colors['primary']],
+            text='Count',
+            labels={'Count': 'Number of People', group_label: group_label},
+            height=400
+        )
+
+        # Update layout for modern edgy style
+        fig.update_layout(
+            plot_bgcolor='#000000',
+            paper_bgcolor='#0a0a0a',
+            font=dict(family='Inter, sans-serif', size=12, color=daily_colors['primary']),
+            xaxis=dict(
+                title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
+                tickfont=dict(color='#999', family='Inter'),
+                gridcolor='#333',
+                linecolor=daily_colors['primary'],
+                linewidth=2,
+                categoryorder='total descending'
+            ),
+            yaxis=dict(
+                title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
+                tickfont=dict(color='#999', family='Inter'),
+                gridcolor='#333',
+                linecolor=daily_colors['primary'],
+                linewidth=2
+            ),
+            coloraxis_showscale=False,
+            showlegend=False,
+            margin=dict(l=50, r=50, t=60, b=50)
+        )
+
+        # Update bar style
+        fig.update_traces(
+            textfont=dict(size=14, color='#000', family='Inter', weight='bold'),
+            textposition='inside',
+            insidetextanchor='middle',
+            marker=dict(line=dict(color=daily_colors['primary'], width=2)),
+            hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
+            hoverlabel=dict(bgcolor='#000', font=dict(color=daily_colors['primary'], family='Inter'))
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Names Breakdown Section
+        names_title = "Attendees by Zone" if group_by_zone else "Attendees by Cell Group"
+        st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
+
+        # Display names for each group
+        if group_by_zone:
+            # For zone grouping, show Zone -> Cell -> Names hierarchy
+            # Build zone -> cell -> names structure
+            zone_cell_names = {}
+            cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+            for cell_group, names in cell_group_data.items():
+                zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+                if zone not in zone_cell_names:
+                    zone_cell_names[zone] = {}
+                if cell_group not in zone_cell_names[zone]:
+                    zone_cell_names[zone][cell_group] = []
+                zone_cell_names[zone][cell_group].extend(names)
+
+            # Display with hierarchy
+            for zone in sorted(zone_cell_names.keys(), key=str.lower):
+                cells = zone_cell_names[zone]
+                total_in_zone = sum(len(names) for names in cells.values())
+                st.markdown(f"""
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {daily_colors['primary']};
+                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                        {zone} <span style="color: #666; font-size: 0.9rem;">({total_in_zone})</span>
+                    </h3>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Show each cell within the zone
+                for cell_group in sorted(cells.keys(), key=str.lower):
+                    names = cells[cell_group]
+                    st.markdown(f"""
+                    <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: #999;
+                                   letter-spacing: 1px; margin-bottom: 0.5rem;">
+                            {cell_group} <span style="color: #666; font-size: 0.85rem;">({len(names)})</span>
+                        </h4>
+                        <div>
+                            {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Regular cell group display - sorted alphabetically
+            sorted_groups_alpha = sorted(display_data.items(), key=lambda x: x[0].lower())
+            for group_name, names in sorted_groups_alpha:
+                st.markdown(f"""
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {daily_colors['primary']};
+                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                        {group_name} <span style="color: #666; font-size: 0.9rem;">({len(names)})</span>
+                    </h3>
+                    <div>
+                        {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="empty-state">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+            <div class="empty-state-text">No check-ins yet today</div>
+            <div style="font-size: 1rem; color: #999; margin-top: 1rem; font-weight: 500;">
+                Be the first to check in!
             </div>
         </div>
         """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <div class="empty-state">
-        <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
-        <div class="empty-state-text">No check-ins yet today</div>
-        <div style="font-size: 1rem; color: #999; margin-top: 1rem; font-weight: 500;">
-            Be the first to check in! 🎯
-        </div>
-    </div>
+
+
+# ========== SIDEBAR NAVIGATION ==========
+with st.sidebar:
+    st.markdown(f"""
+    <h2 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 900; letter-spacing: 2px;">
+        Navigation
+    </h2>
     """, unsafe_allow_html=True)
+
+    page = st.radio(
+        "Select Check-In Type",
+        ["NWST Check In", "Leaders Discipleship Check In"],
+        label_visibility="collapsed"
+    )
+
+    # Separator
+    st.markdown("---")
+
+    # Email Report Button
+    st.markdown(f"""
+    <h3 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
+        ADMIN ACTIONS
+    </h3>
+    """, unsafe_allow_html=True)
+
+    if st.button("📧 Email Report Now", type="secondary", use_container_width=True, key="send_email_btn"):
+        st.session_state.show_email_confirm = True
+
+    # Email confirmation dialog
+    if st.session_state.get('show_email_confirm', False):
+        st.warning("Send weekly report email now?")
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("Yes, Send", type="primary", key="confirm_send"):
+                st.session_state.show_email_confirm = False
+                st.session_state.sending_email = True
+                st.rerun()
+        with col_no:
+            if st.button("Cancel", key="cancel_send"):
+                st.session_state.show_email_confirm = False
+                st.rerun()
+
+    # Handle email sending
+    if st.session_state.get('sending_email', False):
+        st.session_state.sending_email = False
+        with st.spinner("Sending email report..."):
+            try:
+                from weekly_email_report import main as send_weekly_report
+                # Redirect stdout to capture output
+                import io
+                import sys
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
+
+                send_weekly_report()
+
+                output = sys.stdout.getvalue()
+                sys.stdout = old_stdout
+
+                if "SUCCESS" in output:
+                    st.success("Email report sent successfully!")
+                else:
+                    st.error("Failed to send email. Check configuration.")
+                    if output:
+                        st.text(output)
+            except ImportError:
+                st.error("Email module not found. Please ensure weekly_email_report.py exists.")
+            except Exception as e:
+                st.error(f"Error sending email: {str(e)}")
+
+# ========== RENDER SELECTED PAGE ==========
+if page == "NWST Check In":
+    render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form")
+    render_qr_section()
+    render_dashboard(ATTENDANCE_TAB_NAME)
+else:
+    render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form")
+    render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
 # Footer
 st.markdown("---")
