@@ -1,0 +1,6 @@
+streamlit
+gspread
+google-auth
+python-dotenv
+pandas
+plotly
