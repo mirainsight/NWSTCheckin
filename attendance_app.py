@@ -95,7 +95,7 @@ def get_gsheet_client():
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
 
-@st.cache_data(ttl=120)  # Cache for 120 seconds to reduce API calls
+@st.cache_data(ttl=60)  # Cache for 60 seconds to reduce API calls
 def get_options_from_sheet(_client, sheet_id):
     """Read options from Column C of the Options tab in Google Sheets"""
     try:
@@ -199,7 +199,7 @@ def parse_name_cell_group(name_cell_group_str):
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
 
-@st.cache_data(ttl=120)  # Cache for 120 seconds to reduce API calls
+@st.cache_data(ttl=60)  # Cache for 60 seconds to reduce API calls
 def get_today_attendance_data(_client, sheet_id, refresh_key=0):
     """Get today's attendance data with names and cell groups grouped"""
     try:
@@ -356,7 +356,7 @@ if 'last_refresh_time' not in st.session_state:
 elif st.session_state.last_refresh_time.tzinfo is None:
     st.session_state.last_refresh_time = get_now_myt()
 
-CACHE_TTL_SECONDS = 120  # Must match the @st.cache_data TTL
+CACHE_TTL_SECONDS = 60  # 1 minute cache duration
 
 # Generate daily colors
 daily_colors = generate_daily_colors()
