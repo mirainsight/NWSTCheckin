@@ -477,6 +477,17 @@ st.markdown(f"""
     .stMultiSelect [data-baseweb="select"] > div {{
         border-color: {daily_colors['primary']} !important;
     }}
+
+    /* Style checked-in options (starting with ✓) in multiselect dropdown */
+    .stMultiSelect [data-baseweb="menu"] li[aria-disabled="false"]:has(div[title^="✓"]),
+    .stMultiSelect [role="listbox"] li:has(div[title^="✓"]) {{
+        opacity: 0.5 !important;
+        color: #888 !important;
+    }}
+    /* Alternative selector for dropdown items containing tick */
+    [data-baseweb="menu"] [role="option"] {{
+        transition: opacity 0.2s ease;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -559,8 +570,9 @@ def render_check_in_form(tab_name, form_key):
     with st.spinner("Checking today's attendance..."):
         checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
 
-    # Filter out options that have already checked in today
+    # Keep all options but track which are already checked in
     available_options = [opt for opt in all_option_values if opt not in checked_in_today]
+    checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
 
     # Wrap form section with GIF background
     if background_gif and gif_src:
@@ -623,21 +635,96 @@ def render_check_in_form(tab_name, form_key):
                 st.warning("All attendees have already checked in for today!")
                 st.form_submit_button("Check In", type="primary", use_container_width=True, disabled=True)
             else:
+                # Create formatted options: available ones normal, checked-in ones with tick prefix
+                # Format: "✓ Name - Cell" for checked in, "Name - Cell" for available
+                # Sort all options alphabetically by name (case-insensitive)
+                # Extract just the name part for sorting (before the " - ")
+                def get_sort_key(opt):
+                    # Get name part (before " - ") for sorting
+                    name_part = opt.split(" - ")[0] if " - " in opt else opt
+                    return name_part.lower()
+
+                sorted_options = sorted(all_option_values, key=get_sort_key)
+
+                formatted_options = []
+                option_mapping = {}  # Maps display name back to original name
+
+                for opt in sorted_options:
+                    if opt in checked_in_today:
+                        display_name = f"✓ {opt}"
+                        formatted_options.append(display_name)
+                        option_mapping[display_name] = opt
+                    else:
+                        formatted_options.append(opt)
+                        option_mapping[opt] = opt
+
+                # Sort formatted options again to ensure correct order
+                # (ignoring ✓ prefix for sorting)
+                def get_display_sort_key(display_opt):
+                    opt = display_opt.lstrip("✓ ")
+                    name_part = opt.split(" - ")[0] if " - " in opt else opt
+                    return name_part.lower()
+
+                formatted_options = sorted(formatted_options, key=get_display_sort_key)
+
                 # Multi-select for batch check-ins (reduces API calls)
-                selected_options = st.multiselect(
+                selected_display_options = st.multiselect(
                     f"Select {option_type}(s) *",
-                    options=available_options,
-                    help="Select one or more people to check in at once. This reduces API calls.",
-                    default=[]
+                    options=formatted_options,
+                    help="Select one or more people to check in at once. Names with ✓ are already checked in today.",
+                    default=[],
+                    format_func=lambda x: x  # Use as-is since we already formatted
                 )
+
+                # Add JavaScript to gray out checked-in options in the dropdown
+                components.html(f"""
+                <script>
+                    // Function to style checked-in options (those starting with ✓)
+                    function styleCheckedInOptions() {{
+                        // Find all option items in the multiselect dropdown
+                        const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
+                        options.forEach(opt => {{
+                            const text = opt.textContent || opt.innerText;
+                            if (text && text.trim().startsWith('✓')) {{
+                                opt.style.opacity = '0.5';
+                                opt.style.color = '#888';
+                                opt.style.fontStyle = 'italic';
+                            }}
+                        }});
+                    }}
+
+                    // Run on page load and observe for dropdown changes
+                    const observer = new MutationObserver(styleCheckedInOptions);
+                    observer.observe(document.body, {{ childList: true, subtree: true }});
+                    styleCheckedInOptions();
+                </script>
+                """, height=0)
+
+                # Filter out any already checked-in options that user might have selected
+                # (convert back to original names and filter)
+                selected_options = []
+                already_checked_in_selected = []
+                for display_opt in selected_display_options:
+                    original_name = option_mapping.get(display_opt, display_opt)
+                    if original_name in checked_in_today:
+                        already_checked_in_selected.append(original_name)
+                    else:
+                        selected_options.append(original_name)
 
                 # Submit button
                 submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
 
                 if submitted:
+                    # Warn if user selected already checked-in people
+                    if already_checked_in_selected:
+                        st.warning(f"Note: {', '.join(already_checked_in_selected)} already checked in today and were skipped.")
+
                     # Validation
                     if not selected_options:
-                        st.error("Please select at least one person.")
+                        if already_checked_in_selected:
+                            st.error("All selected people have already checked in today.")
+                        else:
+                            st.error("Please select at least one person.")
                     else:
                         # Prepare attendance data for batch check-in
                         attendance_data = {
