@@ -45,12 +45,32 @@ def get_email_credentials():
     """Get email credentials - works with both .env and Streamlit secrets"""
     try:
         import streamlit as st
-        if hasattr(st, 'secrets') and 'SENDER_EMAIL' in st.secrets:
-            return st.secrets['SENDER_EMAIL'], st.secrets['SENDER_PASSWORD']
-    except:
+        if hasattr(st, 'secrets'):
+            if 'SENDER_EMAIL' in st.secrets and 'SENDER_PASSWORD' in st.secrets:
+                print("Using Streamlit secrets for email credentials")
+                return st.secrets['SENDER_EMAIL'], st.secrets['SENDER_PASSWORD']
+    except ImportError:
         pass
+    except Exception as e:
+        print(f"Warning: Could not load email credentials from Streamlit secrets: {str(e)}")
 
     return os.getenv("SENDER_EMAIL", ""), os.getenv("SENDER_PASSWORD", "")
+
+
+def get_sheet_id():
+    """Get Sheet ID from .env or Streamlit secrets"""
+    sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "")
+    if not sheet_id:
+        try:
+            import streamlit as st
+            if hasattr(st, 'secrets') and 'ATTENDANCE_SHEET_ID' in st.secrets:
+                sheet_id = st.secrets['ATTENDANCE_SHEET_ID']
+                print("Using Streamlit secrets for ATTENDANCE_SHEET_ID")
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"Warning: Could not load ATTENDANCE_SHEET_ID from Streamlit secrets: {str(e)}")
+    return sheet_id
 
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "shaun.quek@sibkl.org.my")
 EMAIL_CC = os.getenv("EMAIL_CC", "narrowstreet.sibkl@gmail.com")
@@ -110,14 +130,16 @@ def generate_daily_colors():
 
 
 def get_gsheet_client():
-    """Connect to Google Sheets"""
+    """Connect to Google Sheets - works with both local files and Streamlit secrets"""
     try:
         scope = [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
 
-        # Try credentials.json file (same folder as script)
+        creds = None
+
+        # Try credentials.json file first (for local development)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         possible_paths = [
             os.path.join(script_dir, 'credentials.json'),
@@ -133,11 +155,27 @@ def get_gsheet_client():
 
         if credentials_path:
             creds = Credentials.from_service_account_file(credentials_path, scopes=scope)
-            client = gspread.authorize(creds)
-            return client
         else:
-            print("ERROR: No credentials.json found")
+            # Try Streamlit secrets (for cloud deployment)
+            try:
+                import streamlit as st
+                if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+                    creds_dict = dict(st.secrets['gcp_service_account'])
+                    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+                    print("Using Streamlit secrets for Google Sheets credentials")
+            except ImportError:
+                pass
+            except Exception as e:
+                print(f"Warning: Could not load Streamlit secrets: {str(e)}")
+
+        if creds is None:
+            print("ERROR: No Google Sheets credentials found")
+            print("For local: Place credentials.json in script directory")
+            print("For Streamlit Cloud: Configure gcp_service_account in secrets")
             return None
+
+        client = gspread.authorize(creds)
+        return client
 
     except Exception as e:
         print(f"ERROR: Could not connect to Google Sheets: {str(e)}")
@@ -623,9 +661,11 @@ def main():
     print(f"Running at: {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
     print(f"{'='*60}")
 
-    # Check configuration
-    if not SHEET_ID:
-        print("ERROR: ATTENDANCE_SHEET_ID not configured in .env file")
+    # Get Sheet ID (from .env or Streamlit secrets)
+    sheet_id = get_sheet_id()
+    if not sheet_id:
+        print("ERROR: ATTENDANCE_SHEET_ID not configured")
+        print("Set it in .env file or Streamlit secrets")
         return
 
     # Connect to Google Sheets
@@ -637,17 +677,17 @@ def main():
 
     # Get cell-to-zone mapping
     print("\n[2/5] Loading zone mappings...")
-    cell_to_zone = get_cell_to_zone_mapping(client, SHEET_ID)
+    cell_to_zone = get_cell_to_zone_mapping(client, sheet_id)
     print(f"Loaded {len(cell_to_zone)} zone mappings")
 
     # Get NWST attendance data
     print("\n[3/5] Fetching NWST Check In data...")
-    nwst_cell_data, nwst_list = get_today_attendance_data(client, SHEET_ID, ATTENDANCE_TAB_NAME)
+    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME)
     print(f"Found {len(nwst_list)} NWST check-ins")
 
     # Get Leaders attendance data
     print("\n[4/5] Fetching Leaders Discipleship Check In data...")
-    leaders_cell_data, leaders_list = get_today_attendance_data(client, SHEET_ID, LEADERS_ATTENDANCE_TAB_NAME)
+    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME)
     print(f"Found {len(leaders_list)} Leaders check-ins")
 
     # Generate charts
