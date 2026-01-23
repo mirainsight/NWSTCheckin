@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 import gspread
 from google.oauth2.service_account import Credentials
@@ -8,15 +9,20 @@ import pandas as pd
 import plotly.express as px
 import hashlib
 import colorsys
+import qrcode
+from io import BytesIO
 
 # Load environment variables
 load_dotenv()
 
-# Configuration - check Streamlit secrets first, then .env
-if hasattr(st, 'secrets') and 'ATTENDANCE_SHEET_ID' in st.secrets:
-    SHEET_ID = st.secrets["ATTENDANCE_SHEET_ID"]
-else:
-    SHEET_ID = os.getenv("ATTENDANCE_SHEET_ID", "")
+# Configuration - check .env first, then Streamlit secrets
+SHEET_ID = os.getenv("ATTENDANCE_SHEET_ID", "")
+if not SHEET_ID:
+    try:
+        if hasattr(st, 'secrets') and 'ATTENDANCE_SHEET_ID' in st.secrets:
+            SHEET_ID = st.secrets["ATTENDANCE_SHEET_ID"]
+    except FileNotFoundError:
+        pass  # No secrets.toml file, continue with empty SHEET_ID
 OPTIONS_TAB_NAME = "Options"  # Tab name where options are stored
 ATTENDANCE_TAB_NAME = "Attendance"  # Tab name where attendance is recorded
 
@@ -89,7 +95,7 @@ def get_gsheet_client():
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
 
-@st.cache_data(ttl=30)  # Cache for 30 seconds (same as attendance data)
+@st.cache_data(ttl=120)  # Cache for 120 seconds to reduce API calls
 def get_options_from_sheet(_client, sheet_id):
     """Read options from Column C of the Options tab in Google Sheets"""
     try:
@@ -188,7 +194,7 @@ def parse_name_cell_group(name_cell_group_str):
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
 
-@st.cache_data(ttl=30)  # Cache for 30 seconds (attendance changes more frequently)
+@st.cache_data(ttl=120)  # Cache for 120 seconds to reduce API calls
 def get_today_attendance_data(_client, sheet_id, refresh_key=0):
     """Get today's attendance data with names and cell groups grouped"""
     try:
@@ -272,10 +278,10 @@ def get_checked_in_today(client, sheet_id):
         return set()
 
 def save_attendance_to_sheet(client, attendance_data):
-    """Save attendance data to the Attendance tab"""
+    """Save attendance data to the Attendance tab - supports batch check-ins"""
     try:
         spreadsheet = client.open_by_key(SHEET_ID)
-        
+
         # Try to get the Attendance worksheet, create if it doesn't exist
         try:
             attendance_sheet = spreadsheet.worksheet(ATTENDANCE_TAB_NAME)
@@ -294,24 +300,34 @@ def save_attendance_to_sheet(client, attendance_data):
             # Add headers
             headers = ["Timestamp", attendance_data.get("option_type", "Option")]
             attendance_sheet.append_row(headers)
-        
+
         # Get current time in Malaysia Time (MYT, UTC+8)
         myt = timezone(timedelta(hours=8))
         timestamp = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Prepare row data - only timestamp and selected option
-        row = [
-            timestamp,
-            attendance_data.get("selected_option", "")
-        ]
-        
-        # Append the row
-        attendance_sheet.append_row(row)
-        return True, "Attendance recorded successfully!"
-        
+
+        # Check if this is a batch check-in (list of options) or single
+        selected_options = attendance_data.get("selected_options", [])
+        if not selected_options:
+            # Single check-in (backwards compatibility)
+            selected_option = attendance_data.get("selected_option", "")
+            if selected_option:
+                selected_options = [selected_option]
+
+        if not selected_options:
+            return False, "No options selected"
+
+        # Prepare all rows for batch insert
+        rows = [[timestamp, option] for option in selected_options]
+
+        # Batch append all rows at once (single API call)
+        attendance_sheet.append_rows(rows)
+
+        count = len(selected_options)
+        return True, f"Checked in {count} {'person' if count == 1 else 'people'} successfully!"
+
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
-            return False, "⚠️ API quota exceeded. Please wait a moment and try again. Your check-in will be saved once the quota resets."
+            return False, "⚠️ API quota exceeded. Please wait a moment and try again."
         return False, f"Failed to save attendance: {str(e)}"
     except Exception as e:
         return False, f"Failed to save attendance: {str(e)}"
@@ -328,33 +344,92 @@ st.set_page_config(
 if 'refresh_counter' not in st.session_state:
     st.session_state.refresh_counter = 0
 
+# Track last refresh time for cache countdown
+if 'last_refresh_time' not in st.session_state:
+    st.session_state.last_refresh_time = datetime.now()
+
+CACHE_TTL_SECONDS = 120  # Must match the @st.cache_data TTL
+
 # Generate daily colors
 daily_colors = generate_daily_colors()
 
-# Add CSS to reduce Streamlit default spacing
-st.markdown("""
+# Add CSS to reduce Streamlit default spacing and style buttons with daily color
+st.markdown(f"""
 <style>
-    .element-container {
+    .element-container {{
         margin-top: 0rem !important;
         margin-bottom: 0rem !important;
         padding-top: 0rem !important;
         padding-bottom: 0rem !important;
-    }
-    [data-testid="stVerticalBlock"] {
+    }}
+    [data-testid="stVerticalBlock"] {{
         gap: 0rem !important;
-    }
-    [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] {
+    }}
+    [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] {{
         gap: 0rem !important;
-    }
-    .stMarkdown {
+    }}
+    .stMarkdown {{
         margin-top: 0rem !important;
         margin-bottom: 0rem !important;
         padding-top: 0rem !important;
         padding-bottom: 0rem !important;
-    }
-    [data-testid="column"] {
+    }}
+    [data-testid="column"] {{
         padding-top: 0rem !important;
-    }
+    }}
+
+    /* Style all buttons with daily color theme */
+    .stButton > button {{
+        background-color: transparent !important;
+        color: {daily_colors['primary']} !important;
+        border: 2px solid {daily_colors['primary']} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        transition: all 0.2s ease !important;
+    }}
+    .stButton > button:hover {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000 !important;
+        transform: scale(1.02) !important;
+    }}
+
+    /* Primary buttons (Check In, Close) */
+    .stButton > button[kind="primary"] {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000 !important;
+        border: 2px solid {daily_colors['primary']} !important;
+    }}
+    .stButton > button[kind="primary"]:hover {{
+        background-color: {daily_colors['light']} !important;
+        border-color: {daily_colors['light']} !important;
+    }}
+
+    /* Form submit button */
+    .stFormSubmitButton > button {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000 !important;
+        border: 2px solid {daily_colors['primary']} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+    }}
+    .stFormSubmitButton > button:hover {{
+        background-color: {daily_colors['light']} !important;
+        border-color: {daily_colors['light']} !important;
+        transform: scale(1.02) !important;
+    }}
+
+    /* Multiselect styling */
+    .stMultiSelect [data-baseweb="tag"] {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000 !important;
+    }}
+    .stMultiSelect [data-baseweb="select"] > div {{
+        border-color: {daily_colors['primary']} !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -497,43 +572,43 @@ with col2:
         if not available_options:
             st.warning("✅ All attendees have already checked in for today!")
             st.stop()
-        
-        # Single searchable dropdown field (only showing available options)
-        selected_option = st.selectbox(
-            f"Select {option_type} *",
-            options=[""] + available_options,
-            help=f"Type to search and filter options. Only people who haven't checked in today are shown.",
-            index=0
+
+        # Multi-select for batch check-ins (reduces API calls)
+        selected_options = st.multiselect(
+            f"Select {option_type}(s) *",
+            options=available_options,
+            help="Select one or more people to check in at once. This reduces API calls.",
+            default=[]
         )
-        
+
         # Submit button
         submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
-        
+
         if submitted:
             # Validation
-            if not selected_option or selected_option == "":
-                st.error("❌ Please select an option.")
+            if not selected_options:
+                st.error("❌ Please select at least one person.")
             else:
-                # Prepare attendance data (only the selected option)
+                # Prepare attendance data for batch check-in
                 attendance_data = {
-                    "selected_option": selected_option,
+                    "selected_options": selected_options,
                     "option_type": option_type
                 }
-                
-                # Save to Google Sheets
+
+                # Save to Google Sheets (single API call for all)
                 success, message = save_attendance_to_sheet(client, attendance_data)
-                
+
                 if success:
                     # Increment refresh counter to invalidate cache
                     st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                    st.session_state.last_refresh_time = datetime.now()
                     # Also clear cache for immediate effect
                     get_today_attendance_data.clear()
-                    get_options_from_sheet.clear()  # Clear options cache to show new options
-                    
+                    get_options_from_sheet.clear()
+
                     st.success(f"✅ {message}")
                     st.balloons()
-                    st.info(f"Welcome! Your attendance has been recorded.")
-                    # Refresh the page to update the dropdown (remove the checked-in person)
+                    # Refresh the page to update the dropdown
                     st.rerun()
                 else:
                     st.error(f"❌ {message}")
@@ -551,19 +626,200 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
+# ========== FEEDBACK FORM QR CODE SECTION ==========
+st.markdown("<br><br>", unsafe_allow_html=True)
+col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
+with col_qr2:
+    if st.button("👋 I'm New!", type="secondary", use_container_width=True):
+        # Toggle the modal on/off
+        st.session_state.show_qr_modal = not st.session_state.get('show_qr_modal', False)
+        st.rerun()
+
+# Show QR code in modal/spotlight mode
+if st.session_state.get('show_qr_modal', False):
+    # Generate QR code
+    feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(feedback_url)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to base64 for embedding in HTML
+    buffer = BytesIO()
+    qr_img.save(buffer, format="PNG")
+    import base64
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    # Modal overlay with QR code
+    components.html(f"""
+    <style>
+        .modal-overlay {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            backdrop-filter: blur(5px);
+        }}
+        .modal-content {{
+            background: #1a1a1a;
+            padding: 2rem;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 350px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }}
+        .qr-image {{
+            width: 250px;
+            height: 250px;
+            border-radius: 8px;
+        }}
+        .modal-title {{
+            color: #fff;
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .modal-subtitle {{
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .link-btn {{
+            color: #4da6ff;
+            text-decoration: none;
+            font-size: 0.95rem;
+        }}
+        .link-btn:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+    <div class="modal-overlay" id="qrModal">
+        <div class="modal-content">
+            <div class="modal-title">👋 Welcome! Scan to fill out the form</div>
+            <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
+            <div class="modal-subtitle">
+                <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
+            </div>
+        </div>
+    </div>
+    """, height=500)
+
+    # Close button using Streamlit
+    col_close1, col_close2, col_close3 = st.columns([2, 1, 2])
+    with col_close2:
+        if st.button("✕ Close", type="primary", use_container_width=True):
+            st.session_state.show_qr_modal = False
+            st.rerun()
+
 # ========== DASHBOARD SECTION ==========
 st.markdown("---")
 
-# Add refresh button
+# Calculate cache status
+time_since_refresh = (datetime.now() - st.session_state.last_refresh_time).total_seconds()
+cache_remaining = max(0, CACHE_TTL_SECONDS - int(time_since_refresh))
+cache_expired = cache_remaining == 0
+
+# Add refresh button with cache indicator (disabled until cache expires)
 col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
 with col_refresh2:
-    if st.button("🔄 Refresh Dashboard", type="secondary", use_container_width=True):
-        # Increment refresh counter to invalidate cache
-        st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-        # Also clear cache for immediate effect
-        get_today_attendance_data.clear()
-        get_options_from_sheet.clear()  # Clear options cache to show new options
-        st.rerun()
+    if cache_expired:
+        if st.button("🔄 Refresh Dashboard", type="secondary", use_container_width=True):
+            # Increment refresh counter to invalidate cache
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = datetime.now()
+            # Also clear cache for immediate effect
+            get_today_attendance_data.clear()
+            get_options_from_sheet.clear()
+            st.rerun()
+    else:
+        # Show disabled button with live countdown using HTML/JS
+        refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000
+        components.html(f"""
+        <style>
+            .disabled-btn {{
+                background-color: transparent;
+                color: {daily_colors['primary']};
+                border: 2px solid {daily_colors['primary']};
+                border-radius: 0px;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                font-weight: 600;
+                font-size: 14px;
+                letter-spacing: 0.5px;
+                padding: 0.5rem 1rem;
+                width: 100%;
+                opacity: 0.5;
+                cursor: not-allowed;
+            }}
+        </style>
+        <button class="disabled-btn" disabled>
+            🔄 Refresh in <span id="btn-countdown">{cache_remaining}s</span>
+        </button>
+        <script>
+            const refreshTime = {refresh_timestamp};
+            const cacheDuration = {CACHE_TTL_SECONDS} * 1000;
+            const countdownEl = document.getElementById('btn-countdown');
+
+            function updateBtnCountdown() {{
+                const now = Date.now();
+                const elapsed = now - refreshTime;
+                const remaining = Math.max(0, cacheDuration - elapsed);
+
+                if (remaining > 0) {{
+                    const mins = Math.floor(remaining / 60000);
+                    const secs = Math.floor((remaining % 60000) / 1000);
+                    countdownEl.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+                }} else {{
+                    countdownEl.textContent = 'now!';
+                }}
+            }}
+
+            updateBtnCountdown();
+            setInterval(updateBtnCountdown, 1000);
+        </script>
+        """, height=45)
+
+# Show cache status with live countdown timer
+last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
+refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000  # Convert to JS milliseconds
+
+components.html(f"""
+<div style="text-align: center; padding: 0.5rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <span style="color: #888; font-size: 0.85rem;">
+        📦 Last refreshed at <b>{last_refresh_str}</b> •
+        New data drops in <b><span id="countdown">--</span></b>
+    </span>
+</div>
+<script>
+    const refreshTime = {refresh_timestamp};
+    const cacheDuration = {CACHE_TTL_SECONDS} * 1000;
+    const countdownEl = document.getElementById('countdown');
+
+    function updateCountdown() {{
+        const now = Date.now();
+        const elapsed = now - refreshTime;
+        const remaining = Math.max(0, cacheDuration - elapsed);
+
+        if (remaining > 0) {{
+            const mins = Math.floor(remaining / 60000);
+            const secs = Math.floor((remaining % 60000) / 1000);
+            countdownEl.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+        }} else {{
+            countdownEl.textContent = 'now! hit refresh 🔄';
+            countdownEl.style.color = '#4CAF50';
+        }}
+    }}
+
+    updateCountdown();
+    setInterval(updateCountdown, 1000);
+</script>
+""", height=50)
 
 # Get today's attendance data
 with st.spinner("Loading dashboard data..."):
