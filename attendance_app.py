@@ -349,8 +349,11 @@ st.set_page_config(
 if 'refresh_counter' not in st.session_state:
     st.session_state.refresh_counter = 0
 
-# Track last refresh time for cache countdown
+# Track last refresh time for cache countdown (MYT timezone)
 if 'last_refresh_time' not in st.session_state:
+    st.session_state.last_refresh_time = get_now_myt()
+# Ensure existing session state is timezone-aware (fix for mixed tz issues)
+elif st.session_state.last_refresh_time.tzinfo is None:
     st.session_state.last_refresh_time = get_now_myt()
 
 CACHE_TTL_SECONDS = 120  # Must match the @st.cache_data TTL
