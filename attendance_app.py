@@ -637,12 +637,13 @@ def render_check_in_form(tab_name, form_key):
             else:
                 # Create formatted options: available ones normal, checked-in ones with tick prefix
                 # Format: "✓ Name - Cell" for checked in, "Name - Cell" for available
-                # Sort all options alphabetically by name (case-insensitive)
-                # Extract just the name part for sorting (before the " - ")
+                # Sort by Cell Group first, then by Name within each group
                 def get_sort_key(opt):
-                    # Get name part (before " - ") for sorting
-                    name_part = opt.split(" - ")[0] if " - " in opt else opt
-                    return name_part.lower()
+                    parts = opt.split(" - ", 1)
+                    if len(parts) == 2:
+                        name, cell = parts[0].strip(), parts[1].strip()
+                        return (cell.lower(), name.lower())
+                    return (opt.lower(), "")
 
                 sorted_options = sorted(all_option_values, key=get_sort_key)
 
@@ -662,8 +663,11 @@ def render_check_in_form(tab_name, form_key):
                 # (ignoring ✓ prefix for sorting)
                 def get_display_sort_key(display_opt):
                     opt = display_opt.lstrip("✓ ")
-                    name_part = opt.split(" - ")[0] if " - " in opt else opt
-                    return name_part.lower()
+                    parts = opt.split(" - ", 1)
+                    if len(parts) == 2:
+                        name, cell = parts[0].strip(), parts[1].strip()
+                        return (cell.lower(), name.lower())
+                    return (opt.lower(), "")
 
                 formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
