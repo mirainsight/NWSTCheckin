@@ -11,6 +11,7 @@ This ensures:
 
 import os
 import json
+import base64
 from datetime import datetime, timedelta, timezone
 
 # Try to load from .env file (for local testing)
@@ -58,7 +59,14 @@ def get_gsheet_client():
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     if creds_json:
         import json
-        creds_dict = json.loads(creds_json)
+        # Support both base64-encoded and plain JSON
+        try:
+            # Try base64 decode first
+            decoded = base64.b64decode(creds_json).decode('utf-8')
+            creds_dict = json.loads(decoded)
+        except Exception:
+            # Fall back to plain JSON
+            creds_dict = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         return gspread.authorize(creds)
 
