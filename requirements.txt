@@ -8,3 +8,4 @@ qrcode[pil]
 schedule
 altair
 vl-convert-python
+upstash-redis
