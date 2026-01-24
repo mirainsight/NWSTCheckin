@@ -57,14 +57,21 @@ def get_gsheet_client():
 
     # Try environment variable with JSON string (for GitHub Actions)
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    print(f"DEBUG: GOOGLE_CREDENTIALS_JSON length: {len(creds_json)}")
+    print(f"DEBUG: First 50 chars: {creds_json[:50] if creds_json else 'EMPTY'}")
+
     if creds_json:
         import json
         # Support both base64-encoded and plain JSON
         try:
             # Try base64 decode first
+            print("DEBUG: Attempting base64 decode...")
             decoded = base64.b64decode(creds_json).decode('utf-8')
+            print(f"DEBUG: Decoded length: {len(decoded)}")
             creds_dict = json.loads(decoded)
-        except Exception:
+            print("DEBUG: Successfully parsed as base64-encoded JSON")
+        except Exception as e:
+            print(f"DEBUG: Base64 decode failed: {e}")
             # Fall back to plain JSON
             creds_dict = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
