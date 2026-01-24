@@ -440,6 +440,11 @@ else:
 # Add CSS to reduce Streamlit default spacing and style buttons with daily color
 st.markdown(f"""
 <style>
+    /* Force instruction text to be white */
+    .instruction-text {{
+        color: #ffffff !important;
+    }}
+
     /* Base theme colors */
     .stApp {{
         background-color: {page_colors['background']} !important;
@@ -689,22 +694,23 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     with col2:
         # Show instruction text
         if background_gif:
-            st.markdown(f"""
-            <div class="instruction-box" style="
+            components.html("""
+            <div style="
                 background: rgba(0, 0, 0, 0.6);
                 padding: 0.75rem 1rem;
                 border-radius: 6px;
                 margin-bottom: 1rem;
             ">
-                <p class="instruction-text" style="
+                <p style="
                     font-size: 1rem;
                     margin: 0;
                     color: #ffffff;
                     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
                     text-align: center;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 ">Select your name from the dropdown below to check in.</p>
             </div>
-            """, unsafe_allow_html=True)
+            """, height=60)
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
