@@ -1633,6 +1633,54 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Error sending email: {str(e)}")
 
+    st.markdown("---")
+
+    # Send to NWST Core Team Button
+    if st.button("📤 Send to NWST Core Team", type="secondary", use_container_width=True, key="send_nwst_core_btn"):
+        st.session_state.show_nwst_core_confirm = True
+
+    # NWST Core Team confirmation dialog
+    if st.session_state.get('show_nwst_core_confirm', False):
+        st.warning("Send attendance report to NWST Core Team?")
+        col_yes_nwst, col_no_nwst = st.columns(2)
+        with col_yes_nwst:
+            if st.button("Yes, Send", type="primary", key="confirm_send_nwst"):
+                st.session_state.show_nwst_core_confirm = False
+                st.session_state.sending_nwst_core = True
+                st.rerun()
+        with col_no_nwst:
+            if st.button("Cancel", key="cancel_send_nwst"):
+                st.session_state.show_nwst_core_confirm = False
+                st.rerun()
+
+    # Handle NWST Core Team email sending
+    if st.session_state.get('sending_nwst_core', False):
+        st.session_state.sending_nwst_core = False
+        with st.spinner("Sending to NWST Core Team..."):
+            try:
+                from weekly_email_report import send_to_nwst_core_team
+                # Redirect stdout to capture output
+                import io
+                import sys
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
+
+                send_to_nwst_core_team()
+
+                output = sys.stdout.getvalue()
+                sys.stdout = old_stdout
+
+                if "SUCCESS" in output:
+                    st.success("Report sent to NWST Core Team!")
+                else:
+                    st.error("Failed to send. Check configuration.")
+                    if output:
+                        st.text(output)
+            except ImportError:
+                st.error("NWST Core Team email function not found. Please add send_to_nwst_core_team() to weekly_email_report.py")
+            except Exception as e:
+                st.error(f"Error sending: {str(e)}")
+
 # ========== RENDER SELECTED PAGE ==========
 # Add toggle tabs in main content area for switching between check-in types
 st.markdown(f"""
