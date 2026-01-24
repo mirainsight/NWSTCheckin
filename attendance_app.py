@@ -584,7 +584,7 @@ if 'last_refresh_time' not in st.session_state:
 elif st.session_state.last_refresh_time.tzinfo is None:
     st.session_state.last_refresh_time = get_now_myt()
 
-CACHE_TTL_SECONDS = 60  # 1 minute cache duration
+CACHE_TTL_SECONDS = 60  # Local Streamlit cache duration (Redis handles main caching)
 
 # Generate daily colors
 daily_colors = generate_daily_colors()
@@ -1186,109 +1186,29 @@ def render_dashboard(tab_name, group_by_zone=False):
     If group_by_zone=True, groups by Zone instead of Cell Group."""
     st.markdown("---")
 
-    # Calculate cache status
-    time_since_refresh = (get_now_myt() - st.session_state.last_refresh_time).total_seconds()
-    cache_remaining = max(0, CACHE_TTL_SECONDS - int(time_since_refresh))
-    cache_expired = cache_remaining == 0
-    qr_modal_open = st.session_state.get('show_qr_modal', False)
-
-    # Add refresh button with cache indicator (disabled until cache expires, OR enabled if QR modal is open)
+    # Simple refresh button - reads from Redis (no Sheets API call)
     col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
     with col_refresh2:
-        if cache_expired or qr_modal_open:
-            if st.button("Refresh Dashboard", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
-                # Increment refresh counter to invalidate local Streamlit cache
-                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                st.session_state.last_refresh_time = get_now_myt()
-                # Clear Redis cache to force fresh data from Google Sheets
-                clear_redis_cache_for_today(tab_name)
-                # Also clear local Streamlit cache
-                get_today_attendance_data.clear()
-                get_options_from_sheet.clear()
-                get_cell_to_zone_mapping.clear()
-                st.rerun()
-        else:
-            # Show disabled button with live countdown using HTML/JS
-            refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000
-            components.html(f"""
-            <style>
-                .disabled-btn {{
-                    background-color: transparent;
-                    color: {page_colors['primary']};
-                    border: 2px solid {page_colors['primary']};
-                    border-radius: 0px;
-                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-                    font-weight: 600;
-                    font-size: 14px;
-                    letter-spacing: 0.5px;
-                    padding: 0.5rem 1rem;
-                    width: 100%;
-                    opacity: 0.5;
-                    cursor: not-allowed;
-                }}
-            </style>
-            <button class="disabled-btn" disabled>
-                Refresh in <span id="btn-countdown-{tab_name}">{cache_remaining}s</span>
-            </button>
-            <script>
-                const refreshTime_{tab_name.replace(' ', '_')} = {refresh_timestamp};
-                const cacheDuration_{tab_name.replace(' ', '_')} = {CACHE_TTL_SECONDS} * 1000;
-                const countdownEl_{tab_name.replace(' ', '_')} = document.getElementById('btn-countdown-{tab_name}');
+        if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
+            # Increment refresh counter to invalidate local Streamlit cache
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            # Clear local Streamlit cache only - Redis stays intact
+            # This just re-reads from Redis, not from Google Sheets
+            get_today_attendance_data.clear()
+            get_options_from_sheet.clear()
+            get_cell_to_zone_mapping.clear()
+            st.rerun()
 
-                function updateBtnCountdown_{tab_name.replace(' ', '_')}() {{
-                    const now = Date.now();
-                    const elapsed = now - refreshTime_{tab_name.replace(' ', '_')};
-                    const remaining = Math.max(0, cacheDuration_{tab_name.replace(' ', '_')} - elapsed);
-
-                    if (remaining > 0) {{
-                        const mins = Math.floor(remaining / 60000);
-                        const secs = Math.floor((remaining % 60000) / 1000);
-                        countdownEl_{tab_name.replace(' ', '_')}.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
-                    }} else {{
-                        countdownEl_{tab_name.replace(' ', '_')}.textContent = 'now!';
-                    }}
-                }}
-
-                updateBtnCountdown_{tab_name.replace(' ', '_')}();
-                setInterval(updateBtnCountdown_{tab_name.replace(' ', '_')}, 1000);
-            </script>
-            """, height=45)
-
-    # Show cache status with live countdown timer
+    # Show last refresh time
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-    refresh_timestamp = st.session_state.last_refresh_time.timestamp() * 1000  # Convert to JS milliseconds
-
-    components.html(f"""
-    <div style="text-align: center; padding: 0.5rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        <span style="color: #888; font-size: 0.85rem;">
-            Last refreshed at <b>{last_refresh_str}</b> |
-            New data drops in <b><span id="countdown-{tab_name}">--</span></b>
+    st.markdown(f"""
+    <div style="text-align: center; padding: 0.3rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <span style="color: #888; font-size: 0.8rem;">
+            Last refreshed at <b>{last_refresh_str}</b>
         </span>
     </div>
-    <script>
-        const refreshTime2_{tab_name.replace(' ', '_')} = {refresh_timestamp};
-        const cacheDuration2_{tab_name.replace(' ', '_')} = {CACHE_TTL_SECONDS} * 1000;
-        const countdownEl2_{tab_name.replace(' ', '_')} = document.getElementById('countdown-{tab_name}');
-
-        function updateCountdown2_{tab_name.replace(' ', '_')}() {{
-            const now = Date.now();
-            const elapsed = now - refreshTime2_{tab_name.replace(' ', '_')};
-            const remaining = Math.max(0, cacheDuration2_{tab_name.replace(' ', '_')} - elapsed);
-
-            if (remaining > 0) {{
-                const mins = Math.floor(remaining / 60000);
-                const secs = Math.floor((remaining % 60000) / 1000);
-                countdownEl2_{tab_name.replace(' ', '_')}.textContent = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
-            }} else {{
-                countdownEl2_{tab_name.replace(' ', '_')}.textContent = 'now! hit refresh';
-                countdownEl2_{tab_name.replace(' ', '_')}.style.color = '#4CAF50';
-            }}
-        }}
-
-        updateCountdown2_{tab_name.replace(' ', '_')}();
-        setInterval(updateCountdown2_{tab_name.replace(' ', '_')}, 1000);
-    </script>
-    """, height=50)
+    """, unsafe_allow_html=True)
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
