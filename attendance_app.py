@@ -1042,7 +1042,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
 
 def render_qr_section():
-    """Render the I'm New QR code section"""
+    """Render the I'm New QR code section with newcomer form workflow"""
     st.markdown("<br><br>", unsafe_allow_html=True)
     col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
     with col_qr2:
@@ -1127,9 +1127,26 @@ def render_qr_section():
         </div>
         """, height=500)
 
-        # Close button using Streamlit
-        col_close1, col_close2, col_close3 = st.columns([2, 1, 2])
-        with col_close2:
+        # Buttons: Newcomer Form Filled and Close
+        col_filled, col_close = st.columns(2)
+        with col_filled:
+            if st.button("Newcomer Form Filled", type="secondary", use_container_width=True, key="newcomer_filled"):
+                # Hard refresh - clear all caches and reload from Google Sheets
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                # Clear local Streamlit caches
+                get_today_attendance_data.clear()
+                get_options_from_sheet.clear()
+                # Clear Redis cache for options
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        redis_client.delete(REDIS_OPTIONS_KEY)
+                    except Exception:
+                        pass
+                st.session_state.show_qr_modal = False
+                st.rerun()
+        with col_close:
             if st.button("Close", type="primary", use_container_width=True, key="close_modal"):
                 st.session_state.show_qr_modal = False
                 st.rerun()
