@@ -248,51 +248,56 @@ def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDA
         try:
             attendance_sheet = spreadsheet.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
-            return {}, []
-        
+            return {}, [], []
+
         # Get all rows from the Attendance sheet
         all_rows = attendance_sheet.get_all_values()
-        
+
         if len(all_rows) <= 1:  # Only header row or empty
-            return {}, []
-        
+            return {}, [], []
+
         # Get today's date in MYT
         today_myt = get_today_myt_date()
-        
+
         # Dictionary to store cell group -> list of names
         cell_group_data = {}
         # List to store all checked-in entries (for set deduplication)
         checked_in_set = set()
         checked_in_list = []  # Keep order for first occurrence
-        
+        # List to store recent check-ins with timestamps (timestamp, name_cell_group)
+        recent_checkins = []
+
         # Skip header row (index 0), check from row 1 onwards
         for row in all_rows[1:]:
             if len(row) < 2:  # Skip incomplete rows
                 continue
-            
+
             timestamp_str = row[0].strip() if row[0] else ""
             name_cell_group = row[1].strip() if len(row) > 1 and row[1] else ""
-            
+
             if not timestamp_str or not name_cell_group:
                 continue
-            
+
             # Parse timestamp - it should be in format "YYYY-MM-DD HH:MM:SS"
             # Extract just the date part (first 10 characters)
             try:
                 # Handle different timestamp formats
                 if len(timestamp_str) >= 10:
                     date_part = timestamp_str[:10]  # Get "YYYY-MM-DD" part
-                    
+
                     # Check if this timestamp is from today (MYT)
                     if date_part == today_myt:
-                        # Only add if not already in set (avoid duplicates)
+                        # Add to recent checkins (include duplicates for the table)
+                        recent_checkins.append((timestamp_str, name_cell_group))
+
+                        # Only add if not already in set (avoid duplicates for counts)
                         if name_cell_group not in checked_in_set:
                             checked_in_set.add(name_cell_group)
                             checked_in_list.append(name_cell_group)
-                            
+
                             # Parse name and cell group
                             name, cell_group = parse_name_cell_group(name_cell_group)
-                            
+
                             # Add to cell group data
                             if cell_group not in cell_group_data:
                                 cell_group_data[cell_group] = []
@@ -300,22 +305,25 @@ def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDA
             except Exception as e:
                 # If parsing fails, skip this row
                 continue
-        
-        return cell_group_data, checked_in_list
-        
+
+        # Sort recent_checkins by timestamp descending (most recent first)
+        recent_checkins.sort(key=lambda x: x[0], reverse=True)
+
+        return cell_group_data, checked_in_list, recent_checkins
+
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
             # Return empty data but don't show error (will use cached data if available)
-            return {}, []
-        return {}, []
+            return {}, [], []
+        return {}, [], []
     except Exception as e:
-        return {}, []
+        return {}, [], []
 
 def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
     """Get a set of people who have already checked in today (MYT date)"""
     try:
         refresh_key = st.session_state.get('refresh_counter', 0)
-        _, checked_in_list = get_today_attendance_data(client, sheet_id, refresh_key, tab_name)
+        _, checked_in_list, _ = get_today_attendance_data(client, sheet_id, refresh_key, tab_name)
         return set(checked_in_list)
     except Exception as e:
         # If there's an error reading attendance, return empty set (show all options)
@@ -564,7 +572,7 @@ option_type = list(options.keys())[0]
 all_option_values = list(options.values())[0]
 
 
-def render_check_in_form(tab_name, form_key):
+def render_check_in_form(tab_name, form_key, page_label="Check In"):
     """Render the check-in form for a specific tab"""
     # Get list of people who have already checked in today (MYT) for this specific tab
     with st.spinner("Checking today's attendance..."):
@@ -597,6 +605,21 @@ def render_check_in_form(tab_name, form_key):
                      z-index: 0;
                      opacity: 0.8;
                  " />
+            <!-- Page label badge -->
+            <div style="
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: {daily_colors['primary']};
+                color: #000;
+                padding: 0.4rem 1rem;
+                font-family: 'Inter', sans-serif;
+                font-weight: 800;
+                font-size: 0.85rem;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+                z-index: 2;
+            ">{page_label}</div>
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
 
@@ -675,8 +698,9 @@ def render_check_in_form(tab_name, form_key):
                 selected_display_options = st.multiselect(
                     f"Select {option_type}(s) *",
                     options=formatted_options,
-                    help="Select one or more people to check in at once. Names with ✓ are already checked in today.",
+                    help="Select up to 5 people to check in at once. Names with ✓ are already checked in today.",
                     default=[],
+                    max_selections=5,
                     format_func=lambda x: x  # Use as-is since we already formatted
                 )
 
@@ -864,6 +888,52 @@ def render_qr_section():
                 st.rerun()
 
 
+def render_recent_checkins_table(tab_name):
+    """Render a scrollable table showing recent check-ins ordered by latest first"""
+    # Get today's attendance data including recent check-ins
+    refresh_key = st.session_state.get('refresh_counter', 0)
+    _, _, recent_checkins = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
+
+    if not recent_checkins:
+        return
+
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="margin-bottom: 0.5rem;">
+        <span style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1rem;
+                     color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 1px;">
+            Recent Check-Ins
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Create dataframe for the table
+    table_data = []
+    for timestamp_str, name_cell_group in recent_checkins:
+        # Extract just the time part (HH:MM:SS) from timestamp
+        time_part = timestamp_str[11:19] if len(timestamp_str) >= 19 else timestamp_str
+        table_data.append({
+            "Time": time_part,
+            "Name - Cell Group": name_cell_group
+        })
+
+    df = pd.DataFrame(table_data)
+
+    # Calculate height for 5 rows (approximately 35px per row + header)
+    row_height = 35
+    header_height = 38
+    max_visible_rows = 5
+    table_height = header_height + (row_height * min(len(table_data), max_visible_rows))
+
+    # Display as a scrollable dataframe
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        height=table_height if len(table_data) > max_visible_rows else None
+    )
+
+
 def render_dashboard(tab_name, group_by_zone=False):
     """Render the dashboard section for a specific tab.
     If group_by_zone=True, groups by Zone instead of Cell Group."""
@@ -974,7 +1044,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
         refresh_key = st.session_state.get('refresh_counter', 0)
-        cell_group_data, checked_in_list = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
+        cell_group_data, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
     total_checked_in = len(checked_in_list)
 
@@ -1309,6 +1379,20 @@ def render_dashboard(tab_name, group_by_zone=False):
 
 
 # ========== SIDEBAR NAVIGATION ==========
+# Use query params for persistent page selection across refreshes
+query_params = st.query_params
+default_page = query_params.get("page", "nwst")
+
+# Map query param to page name
+page_map = {
+    "nwst": "NWST Check In",
+    "leaders": "Leaders Discipleship Check In"
+}
+reverse_page_map = {v: k for k, v in page_map.items()}
+
+# Get current page from query params (source of truth)
+current_page = page_map.get(default_page, "NWST Check In")
+
 with st.sidebar:
     st.markdown(f"""
     <h2 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 900; letter-spacing: 2px;">
@@ -1316,11 +1400,23 @@ with st.sidebar:
     </h2>
     """, unsafe_allow_html=True)
 
+    # Find the index of current page for the radio default
+    page_options = ["NWST Check In", "Leaders Discipleship Check In"]
+    default_index = page_options.index(current_page) if current_page in page_options else 0
+
     page = st.radio(
         "Select Check-In Type",
-        ["NWST Check In", "Leaders Discipleship Check In"],
+        page_options,
+        index=default_index,
+        key="sidebar_page_radio",
         label_visibility="collapsed"
     )
+
+    # Update URL when sidebar selection changes
+    new_page_param = reverse_page_map.get(page, "nwst")
+    if query_params.get("page") != new_page_param:
+        st.query_params["page"] = new_page_param
+        st.rerun()
 
     # Separator
     st.markdown("---")
@@ -1378,12 +1474,99 @@ with st.sidebar:
                 st.error(f"Error sending email: {str(e)}")
 
 # ========== RENDER SELECTED PAGE ==========
+# Add toggle tabs in main content area for switching between check-in types
+st.markdown(f"""
+<style>
+    .checkin-tabs {{
+        display: flex;
+        justify-content: center;
+        gap: 0;
+        margin-bottom: 1rem;
+    }}
+    .checkin-tab {{
+        padding: 0.8rem 1.5rem;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 0.9rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 2px solid {daily_colors['primary']};
+        text-decoration: none;
+    }}
+    .checkin-tab-active {{
+        background: {daily_colors['primary']};
+        color: #000;
+    }}
+    .checkin-tab-inactive {{
+        background: transparent;
+        color: {daily_colors['primary']};
+    }}
+    .checkin-tab-inactive:hover {{
+        background: rgba({int(daily_colors['primary'][1:3], 16)}, {int(daily_colors['primary'][3:5], 16)}, {int(daily_colors['primary'][5:7], 16)}, 0.2);
+    }}
+    .checkin-tab:first-child {{
+        border-right: none;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# Create tabs using columns and buttons
+tab_col1, tab_col2 = st.columns(2)
+with tab_col1:
+    nwst_active = page == "NWST Check In"
+    if st.button(
+        "NWST Check In",
+        type="primary" if nwst_active else "secondary",
+        use_container_width=True,
+        key="tab_nwst",
+        disabled=nwst_active
+    ):
+        st.query_params["page"] = "nwst"
+        st.rerun()
+
+with tab_col2:
+    leaders_active = page == "Leaders Discipleship Check In"
+    if st.button(
+        "Leaders Check In",
+        type="primary" if leaders_active else "secondary",
+        use_container_width=True,
+        key="tab_leaders",
+        disabled=leaders_active
+    ):
+        st.query_params["page"] = "leaders"
+        st.rerun()
+
+# Display clear page header
 if page == "NWST Check In":
-    render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form")
+    st.markdown(f"""
+    <div style="text-align: center; margin-bottom: 1.5rem;">
+        <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
+                   color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   margin: 0; padding: 1rem 0;">
+            NWST Check In
+        </h1>
+        <p style="color: #666; font-size: 0.9rem; margin: 0;">NWST Service Attendance</p>
+    </div>
+    """, unsafe_allow_html=True)
+    render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
     render_qr_section()
+    render_recent_checkins_table(ATTENDANCE_TAB_NAME)
     render_dashboard(ATTENDANCE_TAB_NAME)
 else:
-    render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form")
+    st.markdown(f"""
+    <div style="text-align: center; margin-bottom: 1.5rem;">
+        <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
+                   color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   margin: 0; padding: 1rem 0;">
+            Leaders Discipleship
+        </h1>
+        <p style="color: #666; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
+    </div>
+    """, unsafe_allow_html=True)
+    render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
+    render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
     render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
 # Footer
