@@ -747,5 +747,181 @@ def main():
         print(f"{'='*60}")
 
 
+def send_to_nwst_core_team():
+    """Send today's attendance report to NWST Core Team (same content as weekly report, different recipients)"""
+    print(f"{'='*60}")
+    print(f"NWST Core Team Report")
+    print(f"Running at: {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
+    print(f"{'='*60}")
+
+    # NWST Core Team recipients (To: Shaun and Narrowstreet account)
+    NWST_CORE_TEAM_TO = ["shaun.quek@sibkl.org.my", "narrowstreet.sibkl@gmail.com"]
+
+    # CC: Core Team members
+    NWST_CORE_TEAM_CC = [
+        "miracle.consumer@gmail.com",
+        "kuahexuan03@gmail.com",
+        "leongtengshan@gmail.com",
+        "joshuawjw99@gmail.com",
+        "fabiansim040806@gmail.com",
+        "mintyjo2004@gmail.com",
+        "sydneypang222@gmail.com",
+        "nataniahya@gmail.com",
+        "isabelheng7@gmail.com",
+        "gohjienhan@gmail.com",
+        "eszx1003@gmail.com",
+        "iamryanfung@gmail.com",
+        "sara.tkei22@gmail.com",
+        "thomasawtoft@gmail.com",
+        "seanwongcy@icloud.com",
+        "annabellechin888@gmail.com",
+        "Brycehk.tan@gmail.com",
+    ]
+
+    # Get Sheet ID
+    sheet_id = get_sheet_id()
+    if not sheet_id:
+        print("ERROR: ATTENDANCE_SHEET_ID not configured")
+        return
+
+    # Connect to Google Sheets
+    print("\n[1/5] Connecting to Google Sheets...")
+    client = get_gsheet_client()
+    if not client:
+        return
+    print("Connected successfully!")
+
+    # Get cell-to-zone mapping
+    print("\n[2/5] Loading zone mappings...")
+    cell_to_zone = get_cell_to_zone_mapping(client, sheet_id)
+    print(f"Loaded {len(cell_to_zone)} zone mappings")
+
+    # Get NWST attendance data
+    print("\n[3/5] Fetching NWST Check In data...")
+    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME)
+    print(f"Found {len(nwst_list)} NWST check-ins")
+
+    # Get Leaders attendance data
+    print("\n[4/5] Fetching Leaders Discipleship Check In data...")
+    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME)
+    print(f"Found {len(leaders_list)} Leaders check-ins")
+
+    # Generate charts and report (same as weekly report)
+    print("\n[5/5] Generating charts and email...")
+    daily_colors = generate_daily_colors()
+    print(f"Using daily color theme: {daily_colors['primary']}")
+
+    # NWST chart (by cell group)
+    nwst_chart = None
+    if nwst_cell_data:
+        nwst_chart = generate_bar_chart(
+            nwst_cell_data,
+            "Cell Group",
+            "NWST Check-Ins by Cell Group",
+            daily_colors['primary']
+        )
+
+    # Leaders chart (by zone)
+    leaders_chart = None
+    if leaders_cell_data:
+        zone_data = {}
+        for cell_group, names in leaders_cell_data.items():
+            zone = cell_to_zone.get(cell_group.lower(), cell_group)
+            if zone not in zone_data:
+                zone_data[zone] = []
+            zone_data[zone].extend(names)
+
+        leaders_chart = generate_bar_chart(
+            zone_data,
+            "Zone",
+            "Leaders Check-Ins by Zone",
+            daily_colors['primary']
+        )
+
+    # Generate HTML report (same format as weekly report)
+    html_content = generate_report_html(
+        (nwst_cell_data, nwst_list),
+        (leaders_cell_data, leaders_list),
+        cell_to_zone,
+        daily_colors
+    )
+
+    # Send email to NWST Core Team
+    print("\nSending email to NWST Core Team...")
+    success = send_nwst_core_team_email(html_content, nwst_chart, leaders_chart, NWST_CORE_TEAM_TO, NWST_CORE_TEAM_CC)
+
+    if success:
+        print(f"\n{'='*60}")
+        print("SUCCESS: Report sent to NWST Core Team!")
+        print(f"{'='*60}")
+    else:
+        print(f"\n{'='*60}")
+        print("Failed to send report. Please check configuration.")
+        print(f"{'='*60}")
+
+
+def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_bytes, recipients_to, recipients_cc):
+    """Send the weekly report email to NWST Core Team (same format, different recipients)"""
+
+    sender_email, sender_password = get_email_credentials()
+
+    if not sender_email or not sender_password:
+        print("ERROR: Email credentials not configured.")
+        return False
+
+    try:
+        msg = MIMEMultipart('related')
+        msg['Subject'] = f"Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}"
+        msg['From'] = sender_email
+        msg['To'] = ", ".join(recipients_to)
+        msg['Cc'] = ", ".join(recipients_cc)
+
+        # All recipients for sending (To + CC)
+        all_recipients = recipients_to + recipients_cc
+
+        msg_alternative = MIMEMultipart('alternative')
+        msg.attach(msg_alternative)
+
+        text_content = f"""
+Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}
+
+This email contains the weekly attendance dashboard report.
+Please view in an HTML-compatible email client to see the full report with charts.
+
+This is an automated report from the Church Check-In System.
+        """
+
+        msg_alternative.attach(MIMEText(text_content, 'plain'))
+        msg_alternative.attach(MIMEText(html_content, 'html'))
+
+        # Attach NWST chart if available
+        if nwst_chart_bytes:
+            img = MIMEImage(nwst_chart_bytes)
+            img.add_header('Content-ID', '<nwst_chart>')
+            img.add_header('Content-Disposition', 'inline', filename='nwst_chart.png')
+            msg.attach(img)
+
+        # Attach Leaders chart if available
+        if leaders_chart_bytes:
+            img = MIMEImage(leaders_chart_bytes)
+            img.add_header('Content-ID', '<leaders_chart>')
+            img.add_header('Content-Disposition', 'inline', filename='leaders_chart.png')
+            msg.attach(img)
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, all_recipients, msg.as_string())
+
+        print(f"SUCCESS: Email sent to {', '.join(recipients_to)}")
+        print(f"         CC: {len(recipients_cc)} recipients")
+        return True
+
+    except Exception as e:
+        print(f"ERROR sending email: {str(e)}")
+        return False
+
+
 if __name__ == "__main__":
     main()
