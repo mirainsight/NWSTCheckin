@@ -1,4 +1,5 @@
 import os
+import json
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -11,6 +12,13 @@ import hashlib
 import colorsys
 import qrcode
 from io import BytesIO
+
+# Upstash Redis for caching (reduces Google Sheets API calls)
+try:
+    from upstash_redis import Redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +35,71 @@ OPTIONS_TAB_NAME = "Options"  # Tab name where options are stored
 ATTENDANCE_TAB_NAME = "Attendance"  # Tab name where attendance is recorded
 LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"  # Tab name for leaders discipleship check-in
 KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
+
+# Redis cache configuration
+REDIS_CACHE_TTL = 86400  # 24 hours in seconds (cache resets daily via key)
+REDIS_OPTIONS_KEY = "attendance:options"
+REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date and tab name
+REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
+
+def get_today_myt_date():
+    """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt).strftime("%Y-%m-%d")
+
+def get_now_myt():
+    """Get current datetime in MYT timezone"""
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt)
+
+@st.cache_resource
+def get_redis_client():
+    """Initialize Upstash Redis client - cached as resource to reuse connection"""
+    if not REDIS_AVAILABLE:
+        return None
+
+    # Try environment variables first, then Streamlit secrets
+    redis_url = os.getenv("UPSTASH_REDIS_REST_URL", "")
+    redis_token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+
+    if not redis_url or not redis_token:
+        try:
+            if hasattr(st, 'secrets'):
+                redis_url = st.secrets.get("UPSTASH_REDIS_REST_URL", "")
+                redis_token = st.secrets.get("UPSTASH_REDIS_REST_TOKEN", "")
+        except:
+            pass
+
+    if redis_url and redis_token:
+        try:
+            return Redis(url=redis_url, token=redis_token)
+        except Exception as e:
+            st.warning(f"Redis connection failed: {e}. Falling back to Google Sheets.")
+            return None
+    return None
+
+def clear_redis_cache_for_today(tab_name=None):
+    """Clear Redis cache for today's attendance data. Used for manual refresh."""
+    redis_client = get_redis_client()
+    if not redis_client:
+        return
+
+    today_myt = get_today_myt_date()
+    try:
+        if tab_name:
+            # Clear specific tab
+            redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+            redis_client.delete(redis_key)
+        else:
+            # Clear all attendance tabs for today
+            for tn in [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]:
+                redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tn}"
+                redis_client.delete(redis_key)
+        # Also clear options and zone mapping
+        redis_client.delete(REDIS_OPTIONS_KEY)
+        redis_client.delete(REDIS_ZONE_MAPPING_KEY)
+    except Exception:
+        pass
 
 def get_gsheet_client():
     """Connect to Google Sheets - works with both local files and Streamlit secrets"""
@@ -97,41 +170,62 @@ def get_gsheet_client():
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds to reduce API calls
+@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
 def get_options_from_sheet(_client, sheet_id):
-    """Read options from Column C of the Options tab in Google Sheets"""
+    """Read options from Column C of the Options tab in Google Sheets.
+    Uses Redis cache to minimize API calls."""
+
+    # Try Redis cache first
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(REDIS_OPTIONS_KEY)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return data.get("options"), None
+        except Exception:
+            pass  # Redis failed, fall back to Sheets
+
+    # Read from Google Sheets
     try:
         spreadsheet = _client.open_by_key(sheet_id)
-        
+
         # Try to get the Options worksheet
         try:
             options_sheet = spreadsheet.worksheet(OPTIONS_TAB_NAME)
         except gspread.exceptions.WorksheetNotFound:
             return None, f"❌ Tab '{OPTIONS_TAB_NAME}' not found. Please create it in your Google Sheet."
-        
+
         # Read only column C (index 2: A=0, B=1, C=2)
         # Get all values from column C
         column_c_values = options_sheet.col_values(3)  # Column C is index 3 (1-indexed)
-        
+
         if not column_c_values:
             return {}, "⚠️ Column C in Options sheet is empty. Please add options to column C."
-        
+
         # Get the header from first row (C1)
         header = column_c_values[0].strip() if column_c_values[0] else "Name"
-        
+
         # Get all options from row 2 onwards (skip header row)
         option_values = []
         for value in column_c_values[1:]:  # Skip first row (header)
             value = value.strip()
             if value:  # Only add non-empty values
                 option_values.append(value)
-        
+
         if not option_values:
             return {}, "⚠️ No options found in column C (starting from row 2)."
-        
+
         # Return single option type with all column C values
         options = {header: option_values}
-        
+
+        # Store in Redis cache
+        if redis_client:
+            try:
+                redis_client.set(REDIS_OPTIONS_KEY, json.dumps({"options": options}), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass  # Redis write failed, continue anyway
+
         return options, None
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
@@ -140,10 +234,22 @@ def get_options_from_sheet(_client, sheet_id):
     except Exception as e:
         return None, f"❌ Error reading options from column C: {str(e)}"
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes since this changes rarely
+@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
 def get_cell_to_zone_mapping(_client, sheet_id):
     """Read cell-to-zone mapping from Key Values tab in Google Sheets.
-    Column A = Cell Names, Column C = Zones"""
+    Column A = Cell Names, Column C = Zones. Uses Redis cache."""
+
+    # Try Redis cache first
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(REDIS_ZONE_MAPPING_KEY)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return data.get("mapping", {}), None
+        except Exception:
+            pass  # Redis failed, fall back to Sheets
+
     try:
         spreadsheet = _client.open_by_key(sheet_id)
 
@@ -169,6 +275,13 @@ def get_cell_to_zone_mapping(_client, sheet_id):
                 if cell_name and zone:
                     cell_to_zone[cell_name.lower()] = zone
 
+        # Store in Redis cache
+        if redis_client:
+            try:
+                redis_client.set(REDIS_ZONE_MAPPING_KEY, json.dumps({"mapping": cell_to_zone}), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass
+
         return cell_to_zone, None
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
@@ -176,16 +289,6 @@ def get_cell_to_zone_mapping(_client, sheet_id):
         return {}, f"Error reading Key Values: {str(e)}"
     except Exception as e:
         return {}, f"Error reading Key Values: {str(e)}"
-
-def get_today_myt_date():
-    """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
-    myt = timezone(timedelta(hours=8))
-    return datetime.now(myt).strftime("%Y-%m-%d")
-
-def get_now_myt():
-    """Get current datetime in MYT timezone"""
-    myt = timezone(timedelta(hours=8))
-    return datetime.now(myt)
 
 def generate_daily_colors():
     """Generate random colors based on today's date (consistent throughout the day)"""
@@ -238,9 +341,30 @@ def parse_name_cell_group(name_cell_group_str):
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds to reduce API calls
+@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
 def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDANCE_TAB_NAME):
-    """Get today's attendance data with names and cell groups grouped"""
+    """Get today's attendance data with names and cell groups grouped.
+    Uses Redis cache to minimize API calls - cache key includes date so it resets daily."""
+
+    today_myt = get_today_myt_date()
+    redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+
+    # Try Redis cache first
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(redis_key)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return (
+                    data.get("cell_group_data", {}),
+                    data.get("checked_in_list", []),
+                    data.get("recent_checkins", [])
+                )
+        except Exception:
+            pass  # Redis failed, fall back to Sheets
+
+    # Read from Google Sheets
     try:
         spreadsheet = _client.open_by_key(sheet_id)
 
@@ -255,9 +379,6 @@ def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDA
 
         if len(all_rows) <= 1:  # Only header row or empty
             return {}, [], []
-
-        # Get today's date in MYT
-        today_myt = get_today_myt_date()
 
         # Dictionary to store cell group -> list of names
         cell_group_data = {}
@@ -309,6 +430,18 @@ def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDA
         # Sort recent_checkins by timestamp descending (most recent first)
         recent_checkins.sort(key=lambda x: x[0], reverse=True)
 
+        # Store in Redis cache
+        if redis_client:
+            try:
+                cache_data = {
+                    "cell_group_data": cell_group_data,
+                    "checked_in_list": checked_in_list,
+                    "recent_checkins": recent_checkins
+                }
+                redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass
+
         return cell_group_data, checked_in_list, recent_checkins
 
     except gspread.exceptions.APIError as e:
@@ -330,7 +463,8 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
         return set()
 
 def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
-    """Save attendance data to the specified tab - supports batch check-ins"""
+    """Save attendance data to the specified tab - supports batch check-ins.
+    Also updates Redis cache to ensure immediate visibility for other users."""
     try:
         spreadsheet = client.open_by_key(SHEET_ID)
 
@@ -356,6 +490,7 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
         # Get current time in Malaysia Time (MYT, UTC+8)
         myt = timezone(timedelta(hours=8))
         timestamp = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+        today_myt = get_today_myt_date()
 
         # Check if this is a batch check-in (list of options) or single
         selected_options = attendance_data.get("selected_options", [])
@@ -373,6 +508,52 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
 
         # Batch append all rows at once (single API call)
         attendance_sheet.append_rows(rows)
+
+        # Update Redis cache with new check-ins (so other users see immediately)
+        redis_client = get_redis_client()
+        if redis_client:
+            try:
+                redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+                cached = redis_client.get(redis_key)
+
+                if cached:
+                    # Update existing cache
+                    data = json.loads(cached) if isinstance(cached, str) else cached
+                    cell_group_data = data.get("cell_group_data", {})
+                    checked_in_list = data.get("checked_in_list", [])
+                    recent_checkins = data.get("recent_checkins", [])
+                else:
+                    # Initialize new cache
+                    cell_group_data = {}
+                    checked_in_list = []
+                    recent_checkins = []
+
+                # Add new check-ins to cache
+                checked_in_set = set(checked_in_list)
+                for option in selected_options:
+                    # Add to recent checkins
+                    recent_checkins.insert(0, (timestamp, option))
+
+                    # Only add to list if not already checked in
+                    if option not in checked_in_set:
+                        checked_in_set.add(option)
+                        checked_in_list.append(option)
+
+                        # Parse and add to cell group data
+                        name, cell_group = parse_name_cell_group(option)
+                        if cell_group not in cell_group_data:
+                            cell_group_data[cell_group] = []
+                        cell_group_data[cell_group].append(name)
+
+                # Save updated cache
+                cache_data = {
+                    "cell_group_data": cell_group_data,
+                    "checked_in_list": checked_in_list,
+                    "recent_checkins": recent_checkins
+                }
+                redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass  # Redis update failed, but Sheets save succeeded
 
         count = len(selected_options)
         return True, f"Checked in {count} {'person' if count == 1 else 'people'} successfully!"
@@ -831,12 +1012,11 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
 
                         if success:
-                            # Increment refresh counter to invalidate cache
+                            # Increment refresh counter to invalidate local Streamlit cache
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                             st.session_state.last_refresh_time = get_now_myt()
-                            # Also clear cache for immediate effect
-                            get_today_attendance_data.clear()
-                            get_options_from_sheet.clear()
+                            # Note: Redis cache is updated in save_attendance_to_sheet()
+                            # No need to clear caches - Redis has the updated data
 
                             st.success(f"{message}")
                             st.balloons()
@@ -1017,10 +1197,12 @@ def render_dashboard(tab_name, group_by_zone=False):
     with col_refresh2:
         if cache_expired or qr_modal_open:
             if st.button("Refresh Dashboard", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
-                # Increment refresh counter to invalidate cache
+                # Increment refresh counter to invalidate local Streamlit cache
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
-                # Also clear cache for immediate effect
+                # Clear Redis cache to force fresh data from Google Sheets
+                clear_redis_cache_for_today(tab_name)
+                # Also clear local Streamlit cache
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
                 get_cell_to_zone_mapping.clear()
