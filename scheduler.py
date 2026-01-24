@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-Scheduler for Weekly Email Report
+Scheduler for Weekly Email Reports
 
-Runs the weekly email report every Saturday at 8:30 PM MYT (Malaysia Time).
+Runs the following scheduled reports:
+  - NWST Core Team Report: Every Saturday at 4:45 PM MYT
+  - Weekly Report: Every Saturday at 8:30 PM MYT
 
 Usage:
-  python scheduler.py           # Run scheduler in foreground
-  python scheduler.py --now     # Send report immediately (for testing)
-  python scheduler.py --test    # Test email configuration without sending
+  python scheduler.py                    # Run scheduler in foreground
+  python scheduler.py --now              # Send weekly report immediately (for testing)
+  python scheduler.py --now-core-team    # Send NWST Core Team report immediately
+  python scheduler.py --test             # Test email configuration without sending
 """
 
 import argparse
 import schedule
 import time
 from datetime import datetime, timedelta, timezone
-from weekly_email_report import main as send_report, get_gsheet_client, get_email_credentials, SHEET_ID
+from weekly_email_report import main as send_report, send_to_nwst_core_team, get_gsheet_client, get_email_credentials, get_sheet_id
 
 # MYT Timezone (UTC+8)
 MYT = timezone(timedelta(hours=8))
@@ -25,12 +28,20 @@ def get_now_myt():
     return datetime.now(MYT)
 
 
-def job():
+def job_weekly_report():
     """Job to run the weekly email report"""
     print(f"\n{'='*60}")
-    print(f"Scheduled job triggered at {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
+    print(f"Weekly Report triggered at {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
     print(f"{'='*60}")
     send_report()
+
+
+def job_nwst_core_team():
+    """Job to run the NWST Core Team report"""
+    print(f"\n{'='*60}")
+    print(f"NWST Core Team Report triggered at {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
+    print(f"{'='*60}")
+    send_to_nwst_core_team()
 
 
 def test_configuration():
@@ -43,7 +54,8 @@ def test_configuration():
 
     # Test Google Sheets connection
     print("\n[1] Testing Google Sheets connection...")
-    if not SHEET_ID:
+    sheet_id = get_sheet_id()
+    if not sheet_id:
         errors.append("ATTENDANCE_SHEET_ID not configured in .env file")
         print("   FAILED: ATTENDANCE_SHEET_ID not configured")
     else:
@@ -79,14 +91,16 @@ def test_configuration():
     else:
         print("Configuration test PASSED!")
         print("\nYou can now run:")
-        print("  python scheduler.py --now    # Send report immediately")
-        print("  python scheduler.py          # Start scheduler")
+        print("  python scheduler.py --now              # Send weekly report immediately")
+        print("  python scheduler.py --now-core-team    # Send NWST Core Team report immediately")
+        print("  python scheduler.py                    # Start scheduler")
     print(f"{'='*60}")
 
 
 def main():
     parser = argparse.ArgumentParser(description='Weekly Email Report Scheduler')
-    parser.add_argument('--now', action='store_true', help='Send report immediately')
+    parser.add_argument('--now', action='store_true', help='Send weekly report immediately')
+    parser.add_argument('--now-core-team', action='store_true', help='Send NWST Core Team report immediately')
     parser.add_argument('--test', action='store_true', help='Test configuration')
     args = parser.parse_args()
 
@@ -95,26 +109,35 @@ def main():
         return
 
     if args.now:
-        print("Sending report immediately...")
+        print("Sending weekly report immediately...")
         send_report()
         return
 
-    # Schedule the job for every Saturday at 8:30 PM MYT
-    # Note: schedule library uses system time, so we need to calculate the correct time
+    if args.now_core_team:
+        print("Sending NWST Core Team report immediately...")
+        send_to_nwst_core_team()
+        return
+
+    # Schedule the jobs
     print(f"\n{'='*60}")
     print("Weekly Email Report Scheduler")
     print(f"{'='*60}")
     print(f"Current time: {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
-    print(f"Scheduled: Every Saturday at 8:30 PM MYT")
-    print(f"Recipients: shaun.quek@sibkl.org.my (CC: narrowstreet.sibkl@gmail.com)")
+    print(f"\nScheduled reports:")
+    print(f"  - NWST Core Team: Every Saturday at 4:45 PM MYT")
+    print(f"  - Weekly Report:  Every Saturday at 8:30 PM MYT")
     print(f"{'='*60}\n")
 
-    # Schedule for Saturday at 20:30 (8:30 PM)
-    # The schedule library uses local time, so adjust if needed
-    schedule.every().saturday.at("20:30").do(job)
+    # Schedule NWST Core Team report - Saturday 4:45 PM
+    schedule.every().saturday.at("16:45").do(job_nwst_core_team)
+
+    # Schedule Weekly report - Saturday 8:30 PM
+    schedule.every().saturday.at("20:30").do(job_weekly_report)
 
     print("Scheduler is running. Press Ctrl+C to stop.\n")
-    print(f"Next run: {schedule.next_run()}")
+    print(f"Next scheduled runs:")
+    for job in schedule.get_jobs():
+        print(f"  - {job.next_run}")
 
     while True:
         schedule.run_pending()
