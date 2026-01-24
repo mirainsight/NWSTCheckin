@@ -408,9 +408,43 @@ CACHE_TTL_SECONDS = 60  # 1 minute cache duration
 # Generate daily colors
 daily_colors = generate_daily_colors()
 
+# Determine current page early for color scheme
+_early_query_params = st.query_params
+_early_page = _early_query_params.get("page", "nwst")
+is_leaders_page = _early_page == "leaders"
+
+# Create color schemes for each page type
+if is_leaders_page:
+    # Leaders page: Light theme (white background, dark text)
+    page_colors = {
+        'primary': daily_colors['primary'],
+        'light': daily_colors['light'],
+        'background': '#ffffff',
+        'text': '#000000',
+        'text_muted': '#666666',
+        'card_bg': '#f5f5f5',
+        'border': daily_colors['primary']
+    }
+else:
+    # NWST page: Dark theme (black background, light text)
+    page_colors = {
+        'primary': daily_colors['primary'],
+        'light': daily_colors['light'],
+        'background': '#000000',
+        'text': '#ffffff',
+        'text_muted': '#999999',
+        'card_bg': '#0a0a0a',
+        'border': daily_colors['primary']
+    }
+
 # Add CSS to reduce Streamlit default spacing and style buttons with daily color
 st.markdown(f"""
 <style>
+    /* Base theme colors */
+    .stApp {{
+        background-color: {page_colors['background']} !important;
+    }}
+
     .element-container {{
         margin-top: 0rem !important;
         margin-bottom: 0rem !important;
@@ -436,8 +470,8 @@ st.markdown(f"""
     /* Style all buttons with daily color theme */
     .stButton > button {{
         background-color: transparent !important;
-        color: {daily_colors['primary']} !important;
-        border: 2px solid {daily_colors['primary']} !important;
+        color: {page_colors['primary']} !important;
+        border: 2px solid {page_colors['primary']} !important;
         border-radius: 0px !important;
         font-family: 'Inter', sans-serif !important;
         font-weight: 600 !important;
@@ -445,45 +479,45 @@ st.markdown(f"""
         transition: all 0.2s ease !important;
     }}
     .stButton > button:hover {{
-        background-color: {daily_colors['primary']} !important;
-        color: #000 !important;
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
         transform: scale(1.02) !important;
     }}
 
     /* Primary buttons (Check In, Close) */
     .stButton > button[kind="primary"] {{
-        background-color: {daily_colors['primary']} !important;
-        color: #000 !important;
-        border: 2px solid {daily_colors['primary']} !important;
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
+        border: 2px solid {page_colors['primary']} !important;
     }}
     .stButton > button[kind="primary"]:hover {{
-        background-color: {daily_colors['light']} !important;
-        border-color: {daily_colors['light']} !important;
+        background-color: {page_colors['light']} !important;
+        border-color: {page_colors['light']} !important;
     }}
 
     /* Form submit button */
     .stFormSubmitButton > button {{
-        background-color: {daily_colors['primary']} !important;
-        color: #000 !important;
-        border: 2px solid {daily_colors['primary']} !important;
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
+        border: 2px solid {page_colors['primary']} !important;
         border-radius: 0px !important;
         font-family: 'Inter', sans-serif !important;
         font-weight: 700 !important;
         letter-spacing: 1px !important;
     }}
     .stFormSubmitButton > button:hover {{
-        background-color: {daily_colors['light']} !important;
-        border-color: {daily_colors['light']} !important;
+        background-color: {page_colors['light']} !important;
+        border-color: {page_colors['light']} !important;
         transform: scale(1.02) !important;
     }}
 
     /* Multiselect styling */
     .stMultiSelect [data-baseweb="tag"] {{
-        background-color: {daily_colors['primary']} !important;
-        color: #000 !important;
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
     }}
     .stMultiSelect [data-baseweb="select"] > div {{
-        border-color: {daily_colors['primary']} !important;
+        border-color: {page_colors['primary']} !important;
     }}
 
     /* Style checked-in options (starting with ✓) in multiselect dropdown */
@@ -496,6 +530,33 @@ st.markdown(f"""
     [data-baseweb="menu"] [role="option"] {{
         transition: opacity 0.2s ease;
     }}
+
+    /* Text colors for leaders page */
+    {"" if not is_leaders_page else '''
+    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div {
+        color: #000000 !important;
+    }
+    /* Keep instruction text white on dark overlay */
+    .instruction-text {
+        color: #ffffff !important;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: #000000 !important;
+    }
+    .stRadio label {
+        color: #000000 !important;
+    }
+    [data-testid="stSidebar"] {
+        background-color: #f0f0f0 !important;
+    }
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span {
+        color: #000000 !important;
+    }
+    /* Form labels */
+    .stMultiSelect label, .stSelectbox label, .stTextInput label {
+        color: #000000 !important;
+    }
+    '''}
 </style>
 """, unsafe_allow_html=True)
 
@@ -590,7 +651,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             padding: 2rem;
             margin: 0;
             border-radius: 8px;
-            border: 2px solid {daily_colors['primary']};
+            border: 2px solid {page_colors['primary']};
             min-height: 250px;
             overflow: hidden;
         ">
@@ -610,8 +671,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 position: absolute;
                 top: 10px;
                 left: 10px;
-                background: {daily_colors['primary']};
-                color: #000;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
                 padding: 0.4rem 1rem;
                 font-family: 'Inter', sans-serif;
                 font-weight: 800;
@@ -629,16 +690,16 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         # Show instruction text
         if background_gif:
             st.markdown(f"""
-            <div style="
+            <div class="instruction-box" style="
                 background: rgba(0, 0, 0, 0.6);
                 padding: 0.75rem 1rem;
                 border-radius: 6px;
                 margin-bottom: 1rem;
             ">
-                <p style="
+                <p class="instruction-text" style="
                     font-size: 1rem;
                     margin: 0;
-                    color: white;
+                    color: #ffffff;
                     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
                     text-align: center;
                 ">Select your name from the dropdown below to check in.</p>
@@ -784,8 +845,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     else:
         # Show placeholder if no GIF
         st.markdown(f"""
-        <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: #0a0a0a; border: 2px dashed {daily_colors['primary']}; border-radius: 8px;">
-            <p style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
+        <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: {page_colors['card_bg']}; border: 2px dashed {page_colors['primary']}; border-radius: 8px;">
+            <p style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
                 Add your banner GIF by setting BANNER_GIF_URL in .env or placing banner.gif in the CHECK IN folder
             </p>
         </div>
@@ -901,7 +962,7 @@ def render_recent_checkins_table(tab_name):
     st.markdown(f"""
     <div style="margin-bottom: 0.5rem;">
         <span style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1rem;
-                     color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 1px;">
+                     color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 1px;">
             Recent Check-Ins
         </span>
     </div>
@@ -965,8 +1026,8 @@ def render_dashboard(tab_name, group_by_zone=False):
             <style>
                 .disabled-btn {{
                     background-color: transparent;
-                    color: {daily_colors['primary']};
-                    border: 2px solid {daily_colors['primary']};
+                    color: {page_colors['primary']};
+                    border: 2px solid {page_colors['primary']};
                     border-radius: 0px;
                     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
                     font-weight: 600;
@@ -1080,10 +1141,10 @@ def render_dashboard(tab_name, group_by_zone=False):
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap');
 
         .kpi-card {{
-            background: #000000;
+            background: {page_colors['card_bg']};
             padding: 2rem 2.5rem;
             border-radius: 0px;
-            border-left: 6px solid {daily_colors['primary']};
+            border-left: 6px solid {page_colors['primary']};
             margin-bottom: 2rem;
             box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
             transition: all 0.3s ease;
@@ -1097,7 +1158,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             font-family: 'Inter', sans-serif;
             font-size: 0.9rem;
             font-weight: 700;
-            color: #999;
+            color: {page_colors['text_muted']};
             text-transform: uppercase;
             letter-spacing: 2px;
             margin-bottom: 0.5rem;
@@ -1106,7 +1167,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             font-family: 'Inter', sans-serif;
             font-size: 5.5rem;
             font-weight: 900;
-            color: {daily_colors['primary']};
+            color: {page_colors['primary']};
             line-height: 1;
             margin: 0.5rem 0;
             text-shadow: 0 0 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
@@ -1114,33 +1175,33 @@ def render_dashboard(tab_name, group_by_zone=False):
         .kpi-subtitle {{
             font-family: 'Inter', sans-serif;
             font-size: 0.85rem;
-            color: #666;
+            color: {page_colors['text_muted']};
             margin-top: 0.5rem;
             font-weight: 500;
         }}
         .dashboard-section {{
-            background: #0a0a0a;
+            background: {page_colors['card_bg']};
             padding: 2rem;
             border-radius: 0px;
-            border: 2px solid {daily_colors['primary']};
+            border: 2px solid {page_colors['primary']};
             margin: 2rem 0;
         }}
         .section-title {{
             font-family: 'Inter', sans-serif;
             font-size: 1.8rem;
             font-weight: 900;
-            color: {daily_colors['primary']};
+            color: {page_colors['primary']};
             text-transform: uppercase;
             letter-spacing: 3px;
             margin-bottom: 1.5rem;
-            border-bottom: 3px solid {daily_colors['primary']};
+            border-bottom: 3px solid {page_colors['primary']};
             padding-bottom: 0.5rem;
             display: inline-block;
         }}
         .name-badge {{
-            background: #1a1a1a;
-            border: 1px solid {daily_colors['primary']};
-            color: {daily_colors['primary']};
+            background: {page_colors['background']};
+            border: 1px solid {page_colors['primary']};
+            color: {page_colors['primary']};
             padding: 0.6rem 1.2rem;
             margin: 0.4rem 0.4rem 0.4rem 0;
             border-radius: 0px;
@@ -1152,21 +1213,21 @@ def render_dashboard(tab_name, group_by_zone=False):
             transition: all 0.2s ease;
         }}
         .name-badge:hover {{
-            background: {daily_colors['primary']};
-            color: #000;
+            background: {page_colors['primary']};
+            color: {page_colors['background']};
             transform: scale(1.05);
         }}
         .empty-state {{
             text-align: center;
             padding: 4rem 2rem;
-            background: #0a0a0a;
-            border: 2px dashed #333;
+            background: {page_colors['card_bg']};
+            border: 2px dashed {page_colors['text_muted']};
             border-radius: 0px;
         }}
         .empty-state-text {{
             font-family: 'Inter', sans-serif;
             font-size: 1.5rem;
-            color: #666;
+            color: {page_colors['text_muted']};
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 2px;
@@ -1209,8 +1270,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                 margin-bottom: 2rem;
             }}
             .zone-tile {{
-                background: #0a0a0a;
-                border: 2px solid {daily_colors['primary']};
+                background: {page_colors['card_bg']};
+                border: 2px solid {page_colors['primary']};
                 padding: 1.2rem 1.5rem;
                 min-width: 140px;
                 flex: 1;
@@ -1225,7 +1286,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 font-family: 'Inter', sans-serif;
                 font-size: 0.85rem;
                 font-weight: 700;
-                color: #999;
+                color: {page_colors['text_muted']};
                 text-transform: uppercase;
                 letter-spacing: 1px;
                 margin-bottom: 0.3rem;
@@ -1234,7 +1295,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 font-family: 'Inter', sans-serif;
                 font-size: 2.5rem;
                 font-weight: 900;
-                color: {daily_colors['primary']};
+                color: {page_colors['primary']};
                 line-height: 1;
             }}
         </style>
@@ -1263,7 +1324,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             x=group_label,
             y='Count',
             color='Count',
-            color_continuous_scale=['#000000', daily_colors['primary']],
+            color_continuous_scale=[page_colors['background'], page_colors['primary']],
             text='Count',
             labels={'Count': 'Number of People', group_label: group_label},
             height=400
@@ -1271,22 +1332,22 @@ def render_dashboard(tab_name, group_by_zone=False):
 
         # Update layout for modern edgy style
         fig.update_layout(
-            plot_bgcolor='#000000',
-            paper_bgcolor='#0a0a0a',
-            font=dict(family='Inter, sans-serif', size=12, color=daily_colors['primary']),
+            plot_bgcolor=page_colors['background'],
+            paper_bgcolor=page_colors['card_bg'],
+            font=dict(family='Inter, sans-serif', size=12, color=page_colors['primary']),
             xaxis=dict(
-                title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
-                tickfont=dict(color='#999', family='Inter'),
-                gridcolor='#333',
-                linecolor=daily_colors['primary'],
+                title=dict(font=dict(size=14, color=page_colors['primary'], family='Inter')),
+                tickfont=dict(color=page_colors['text_muted'], family='Inter'),
+                gridcolor=page_colors['text_muted'],
+                linecolor=page_colors['primary'],
                 linewidth=2,
                 categoryorder='total descending'
             ),
             yaxis=dict(
-                title=dict(font=dict(size=14, color=daily_colors['primary'], family='Inter')),
-                tickfont=dict(color='#999', family='Inter'),
-                gridcolor='#333',
-                linecolor=daily_colors['primary'],
+                title=dict(font=dict(size=14, color=page_colors['primary'], family='Inter')),
+                tickfont=dict(color=page_colors['text_muted'], family='Inter'),
+                gridcolor=page_colors['text_muted'],
+                linecolor=page_colors['primary'],
                 linewidth=2
             ),
             coloraxis_showscale=False,
@@ -1296,12 +1357,12 @@ def render_dashboard(tab_name, group_by_zone=False):
 
         # Update bar style
         fig.update_traces(
-            textfont=dict(size=14, color='#000', family='Inter', weight='bold'),
+            textfont=dict(size=14, color=page_colors['background'], family='Inter', weight='bold'),
             textposition='inside',
             insidetextanchor='middle',
-            marker=dict(line=dict(color=daily_colors['primary'], width=2)),
+            marker=dict(line=dict(color=page_colors['primary'], width=2)),
             hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
-            hoverlabel=dict(bgcolor='#000', font=dict(color=daily_colors['primary'], family='Inter'))
+            hoverlabel=dict(bgcolor=page_colors['background'], font=dict(color=page_colors['primary'], family='Inter'))
         )
 
         st.plotly_chart(fig, use_container_width=True)
@@ -1330,9 +1391,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                 total_in_zone = sum(len(names) for names in cells.values())
                 st.markdown(f"""
                 <div style="margin-bottom: 2rem;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {daily_colors['primary']};
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {zone} <span style="color: #666; font-size: 0.9rem;">({total_in_zone})</span>
+                        {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({total_in_zone})</span>
                     </h3>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1342,9 +1403,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                     names = cells[cell_group]
                     st.markdown(f"""
                     <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
-                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: #999;
+                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
                                    letter-spacing: 1px; margin-bottom: 0.5rem;">
-                            {cell_group} <span style="color: #666; font-size: 0.85rem;">({len(names)})</span>
+                            {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">({len(names)})</span>
                         </h4>
                         <div>
                             {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
@@ -1357,9 +1418,9 @@ def render_dashboard(tab_name, group_by_zone=False):
             for group_name, names in sorted_groups_alpha:
                 st.markdown(f"""
                 <div style="margin-bottom: 2rem;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {daily_colors['primary']};
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {group_name} <span style="color: #666; font-size: 0.9rem;">({len(names)})</span>
+                        {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({len(names)})</span>
                     </h3>
                     <div>
                         {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
@@ -1367,11 +1428,11 @@ def render_dashboard(tab_name, group_by_zone=False):
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.markdown("""
+        st.markdown(f"""
         <div class="empty-state">
             <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
             <div class="empty-state-text">No check-ins yet today</div>
-            <div style="font-size: 1rem; color: #999; margin-top: 1rem; font-weight: 500;">
+            <div style="font-size: 1rem; color: {page_colors['text_muted']}; margin-top: 1rem; font-weight: 500;">
                 Be the first to check in!
             </div>
         </div>
@@ -1392,38 +1453,12 @@ reverse_page_map = {v: k for k, v in page_map.items()}
 
 # Get current page from query params (source of truth)
 current_page = page_map.get(default_page, "NWST Check In")
+page = current_page  # Set page variable for use later
 
 with st.sidebar:
-    st.markdown(f"""
-    <h2 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 900; letter-spacing: 2px;">
-        Navigation
-    </h2>
-    """, unsafe_allow_html=True)
-
-    # Find the index of current page for the radio default
-    page_options = ["NWST Check In", "Leaders Discipleship Check In"]
-    default_index = page_options.index(current_page) if current_page in page_options else 0
-
-    page = st.radio(
-        "Select Check-In Type",
-        page_options,
-        index=default_index,
-        key="sidebar_page_radio",
-        label_visibility="collapsed"
-    )
-
-    # Update URL when sidebar selection changes
-    new_page_param = reverse_page_map.get(page, "nwst")
-    if query_params.get("page") != new_page_param:
-        st.query_params["page"] = new_page_param
-        st.rerun()
-
-    # Separator
-    st.markdown("---")
-
     # Email Report Button
     st.markdown(f"""
-    <h3 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
+    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
         ADMIN ACTIONS
     </h3>
     """, unsafe_allow_html=True)
@@ -1492,19 +1527,19 @@ st.markdown(f"""
         text-transform: uppercase;
         cursor: pointer;
         transition: all 0.2s ease;
-        border: 2px solid {daily_colors['primary']};
+        border: 2px solid {page_colors['primary']};
         text-decoration: none;
     }}
     .checkin-tab-active {{
-        background: {daily_colors['primary']};
-        color: #000;
+        background: {page_colors['primary']};
+        color: {page_colors['background']};
     }}
     .checkin-tab-inactive {{
         background: transparent;
-        color: {daily_colors['primary']};
+        color: {page_colors['primary']};
     }}
     .checkin-tab-inactive:hover {{
-        background: rgba({int(daily_colors['primary'][1:3], 16)}, {int(daily_colors['primary'][3:5], 16)}, {int(daily_colors['primary'][5:7], 16)}, 0.2);
+        background: rgba({int(page_colors['primary'][1:3], 16)}, {int(page_colors['primary'][3:5], 16)}, {int(page_colors['primary'][5:7], 16)}, 0.2);
     }}
     .checkin-tab:first-child {{
         border-right: none;
@@ -1543,11 +1578,11 @@ if page == "NWST Check In":
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
-                   color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
                    margin: 0; padding: 1rem 0;">
             NWST Check In
         </h1>
-        <p style="color: #666; font-size: 0.9rem; margin: 0;">NWST Service Attendance</p>
+        <p style="color: {page_colors['text_muted']}; font-size: 0.9rem; margin: 0;">NWST Service Attendance</p>
     </div>
     """, unsafe_allow_html=True)
     render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
@@ -1558,11 +1593,11 @@ else:
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
-                   color: {daily_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
                    margin: 0; padding: 1rem 0;">
             Leaders Discipleship
         </h1>
-        <p style="color: #666; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
+        <p style="color: {page_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
     </div>
     """, unsafe_allow_html=True)
     render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
@@ -1572,7 +1607,7 @@ else:
 # Footer
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: #666; font-size: 0.9em;'>"
+    f"<div style='text-align: center; color: {page_colors['text_muted']}; font-size: 0.9em;'>"
     "Church Check-In System | Powered by Streamlit"
     "</div>",
     unsafe_allow_html=True
