@@ -1190,11 +1190,13 @@ def render_recent_checkins_table(tab_name):
     table_height = header_height + (row_height * min(len(table_data), max_visible_rows))
 
     # Display as a scrollable dataframe
+    # Calculate appropriate height - always provide a positive integer
+    display_height = table_height if len(table_data) > max_visible_rows else header_height + (row_height * len(table_data))
     st.dataframe(
         df,
         use_container_width=True,
         hide_index=True,
-        height=table_height if len(table_data) > max_visible_rows else None
+        height=max(display_height, header_height + row_height)  # Ensure minimum height for at least 1 row
     )
 
 
