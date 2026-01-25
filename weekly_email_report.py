@@ -20,6 +20,7 @@ import random
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from email.mime.application import MIMEApplication
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import gspread
@@ -27,6 +28,7 @@ from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 import pandas as pd
 import altair as alt
+from xhtml2pdf import pisa
 
 # Load environment variables (check current dir and parent dir)
 load_dotenv()  # Current directory
@@ -45,31 +47,40 @@ def get_email_credentials():
     """Get email credentials - works with both .env and Streamlit secrets"""
     try:
         import streamlit as st
-        if hasattr(st, 'secrets'):
+        if hasattr(st, 'secrets') and len(st.secrets) > 0:
             if 'SENDER_EMAIL' in st.secrets and 'SENDER_PASSWORD' in st.secrets:
                 print("Using Streamlit secrets for email credentials")
                 return st.secrets['SENDER_EMAIL'], st.secrets['SENDER_PASSWORD']
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         pass
-    except Exception as e:
-        print(f"Warning: Could not load email credentials from Streamlit secrets: {str(e)}")
+    except Exception:
+        pass  # Silently fall back to .env
 
-    return os.getenv("SENDER_EMAIL", ""), os.getenv("SENDER_PASSWORD", "")
+    # Fall back to .env
+    email = os.getenv("SENDER_EMAIL", "")
+    password = os.getenv("SENDER_PASSWORD", "")
+    if email and password:
+        print("Using .env for email credentials")
+    return email, password
 
 
 def get_sheet_id():
     """Get Sheet ID from .env or Streamlit secrets"""
     sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "")
-    if not sheet_id:
-        try:
-            import streamlit as st
-            if hasattr(st, 'secrets') and 'ATTENDANCE_SHEET_ID' in st.secrets:
-                sheet_id = st.secrets['ATTENDANCE_SHEET_ID']
+    if sheet_id:
+        return sheet_id
+
+    try:
+        import streamlit as st
+        if hasattr(st, 'secrets') and len(st.secrets) > 0:
+            if 'ATTENDANCE_SHEET_ID' in st.secrets:
                 print("Using Streamlit secrets for ATTENDANCE_SHEET_ID")
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"Warning: Could not load ATTENDANCE_SHEET_ID from Streamlit secrets: {str(e)}")
+                return st.secrets['ATTENDANCE_SHEET_ID']
+    except (ImportError, FileNotFoundError):
+        pass
+    except Exception:
+        pass  # Silently fall back
+
     return sheet_id
 
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "shaun.quek@sibkl.org.my")
@@ -411,6 +422,7 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             margin-bottom: 40px;
         }}
         .section-title {{
+            background-color: {primary_color};
             background: linear-gradient(135deg, {primary_color}, {light_color});
             color: white;
             padding: 15px 20px;
@@ -449,7 +461,7 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             margin-top: 20px;
         }}
         .zone-header {{
-            background: {light_color}22;
+            background-color: {light_color}22;
             padding: 12px 15px;
             border-radius: 4px;
             font-weight: bold;
@@ -523,7 +535,7 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             html += f"""
                 <div class="cell-header">{cell_group} ({len(names)})</div>
                 <div class="names-list">
-                    {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                    {' '.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
                 </div>
 """
         html += "</div>"
@@ -564,7 +576,7 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
                 html += f"""
                 <div class="cell-header">{cell_group} ({len(names)})</div>
                 <div class="names-list">
-                    {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                    {' '.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
                 </div>
 """
         html += "</div>"
@@ -586,7 +598,132 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
     return html
 
 
-def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes):
+def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_bytes=None):
+    """
+    Generate a simple, clean PDF report.
+    Uses basic HTML that xhtml2pdf renders reliably.
+    """
+    import base64
+    from datetime import datetime
+
+    # Get current date
+    today = get_now_myt().strftime("%A, %B %d, %Y")
+    current_time = get_now_myt().strftime("%I:%M %p MYT")
+
+    # Extract data from HTML using simple parsing
+    # We'll rebuild a simple PDF-friendly version
+
+    # Build simple PDF HTML
+    pdf_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        @page {{ margin: 2cm; }}
+        body {{ font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.5; }}
+        h1 {{ color: #e6a64a; font-size: 24px; text-align: center; margin-bottom: 5px; }}
+        h2 {{ color: #e6a64a; font-size: 16px; background-color: #f5f5f5; padding: 10px; margin-top: 25px; }}
+        .date {{ text-align: center; color: #666; margin-bottom: 20px; }}
+        .kpi {{ font-size: 36px; color: #e6a64a; font-weight: bold; }}
+        .kpi-label {{ color: #666; font-size: 11px; text-transform: uppercase; }}
+        .section {{ margin-bottom: 20px; padding: 10px; background: #fafafa; }}
+        .group {{ margin: 10px 0; padding-left: 15px; border-left: 3px solid #e6a64a; }}
+        .group-title {{ font-weight: bold; color: #333; }}
+        .names {{ color: #666; margin-top: 5px; }}
+        .chart {{ text-align: center; margin: 15px 0; }}
+        .chart img {{ max-width: 500px; }}
+        .footer {{ text-align: center; color: #999; font-size: 10px; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 10px; }}
+    </style>
+</head>
+<body>
+    <h1>Weekly Check-In Report</h1>
+    <p class="date">{today} | Generated at {current_time}</p>
+"""
+
+    # Parse the original HTML to extract data (simple approach - look for key elements)
+    import re
+
+    # Extract NWST total
+    nwst_match = re.search(r'NWST Check In.*?class="kpi-number">(\d+)', html_content, re.DOTALL)
+    nwst_total = nwst_match.group(1) if nwst_match else "0"
+
+    # Extract Leaders total
+    leaders_match = re.search(r'Leaders Discipleship.*?class="kpi-number">(\d+)', html_content, re.DOTALL)
+    leaders_total = leaders_match.group(1) if leaders_match else "0"
+
+    # NWST Section
+    pdf_html += f"""
+    <h2>NWST Check In</h2>
+    <div class="section">
+        <span class="kpi">{nwst_total}</span>
+        <span class="kpi-label"> Total Checked In</span>
+"""
+
+    # Add NWST chart if available
+    if nwst_chart_bytes:
+        nwst_b64 = base64.b64encode(nwst_chart_bytes).decode('utf-8')
+        pdf_html += f'<div class="chart"><img src="data:image/png;base64,{nwst_b64}"></div>'
+
+    # Extract NWST cell groups and names
+    nwst_section = re.search(r'NWST Check In.*?(?=Leaders Discipleship|$)', html_content, re.DOTALL)
+    if nwst_section:
+        cell_groups = re.findall(r'class="cell-header">([^<]+)</div>\s*<div class="names-list">(.*?)</div>', nwst_section.group(), re.DOTALL)
+        for group_name, names_html in cell_groups:
+            names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
+            if names:
+                pdf_html += f'<div class="group"><span class="group-title">{group_name}</span><div class="names">{", ".join(names)}</div></div>'
+
+    pdf_html += "</div>"
+
+    # Leaders Section
+    pdf_html += f"""
+    <h2>Leaders Discipleship Check In</h2>
+    <div class="section">
+        <span class="kpi">{leaders_total}</span>
+        <span class="kpi-label"> Total Checked In</span>
+"""
+
+    # Add Leaders chart if available
+    if leaders_chart_bytes:
+        leaders_b64 = base64.b64encode(leaders_chart_bytes).decode('utf-8')
+        pdf_html += f'<div class="chart"><img src="data:image/png;base64,{leaders_b64}"></div>'
+
+    # Extract Leaders zone/cell groups and names
+    leaders_section = re.search(r'Leaders Discipleship.*', html_content, re.DOTALL)
+    if leaders_section:
+        # Get zone headers and their content
+        zones = re.findall(r'class="zone-header">([^<]+)</div>(.*?)(?=class="zone-header"|</div>\s*<!--|$)', leaders_section.group(), re.DOTALL)
+        for zone_name, zone_content in zones:
+            pdf_html += f'<div class="group"><span class="group-title" style="color:#e6a64a;">{zone_name}</span>'
+            cell_groups = re.findall(r'class="cell-header">([^<]+)</div>\s*<div class="names-list">(.*?)</div>', zone_content, re.DOTALL)
+            for group_name, names_html in cell_groups:
+                names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
+                if names:
+                    pdf_html += f'<div style="margin-left:15px;"><span class="group-title">{group_name}</span><div class="names">{", ".join(names)}</div></div>'
+            pdf_html += '</div>'
+
+    pdf_html += """
+    </div>
+    <div class="footer">
+        <p>This is an automated weekly report from the Church Check-In System.</p>
+    </div>
+</body>
+</html>
+"""
+
+    # Generate PDF using xhtml2pdf
+    pdf_buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(pdf_html, dest=pdf_buffer)
+
+    if pisa_status.err:
+        raise Exception(f"PDF generation failed with {pisa_status.err} errors")
+
+    pdf_buffer.seek(0)
+    return pdf_buffer.read()
+
+
+def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes, attach_pdf=True):
     """Send the email report with embedded charts"""
 
     # Get email credentials
@@ -638,6 +775,21 @@ This is an automated report from the Church Check-In System.
             img.add_header('Content-ID', '<leaders_chart>')
             img.add_header('Content-Disposition', 'inline', filename='leaders_chart.png')
             msg.attach(img)
+
+        # Generate and attach PDF copy of the report
+        if attach_pdf:
+            try:
+                print("Generating PDF attachment...")
+                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes)
+                date_str = get_now_myt().strftime('%Y-%m-%d')
+                pdf_attachment = MIMEApplication(pdf_bytes, _subtype='pdf')
+                pdf_attachment.add_header('Content-Disposition', 'attachment',
+                                          filename=f'Weekly_Check_In_Report_{date_str}.pdf')
+                msg.attach(pdf_attachment)
+                print("PDF attachment added successfully")
+            except Exception as pdf_error:
+                print(f"WARNING: Could not generate PDF attachment: {str(pdf_error)}")
+                print("Email will be sent without PDF attachment")
 
         # Send email
         context = ssl.create_default_context()
@@ -860,7 +1012,7 @@ def send_to_nwst_core_team():
         print(f"{'='*60}")
 
 
-def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_bytes, recipients_to, recipients_cc):
+def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_bytes, recipients_to, recipients_cc, attach_pdf=True):
     """Send the weekly report email to NWST Core Team (same format, different recipients)"""
 
     sender_email, sender_password = get_email_credentials()
@@ -907,6 +1059,21 @@ This is an automated report from the Church Check-In System.
             img.add_header('Content-ID', '<leaders_chart>')
             img.add_header('Content-Disposition', 'inline', filename='leaders_chart.png')
             msg.attach(img)
+
+        # Generate and attach PDF copy of the report
+        if attach_pdf:
+            try:
+                print("Generating PDF attachment...")
+                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes)
+                date_str = get_now_myt().strftime('%Y-%m-%d')
+                pdf_attachment = MIMEApplication(pdf_bytes, _subtype='pdf')
+                pdf_attachment.add_header('Content-Disposition', 'attachment',
+                                          filename=f'Weekly_Check_In_Report_{date_str}.pdf')
+                msg.attach(pdf_attachment)
+                print("PDF attachment added successfully")
+            except Exception as pdf_error:
+                print(f"WARNING: Could not generate PDF attachment: {str(pdf_error)}")
+                print("Email will be sent without PDF attachment")
 
         context = ssl.create_default_context()
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
