@@ -154,8 +154,8 @@ def get_gsheet_client():
             **For local development, you need:**
             1. Download `credentials.json` from Google Cloud Console
             2. Place it in one of these locations:
-               - `/Users/miracle.wong/Desktop/Cursor/disc-app/DISC/CHECK IN/credentials.json` ✅ (preferred)
-               - `/Users/miracle.wong/Desktop/Cursor/disc-app/DISC/credentials.json`
+               - `/Users/miracle.wong/Desktop/Cursor/disc-app/PROJECTS/CHECK IN/credentials.json` ✅ (preferred)
+               - `/Users/miracle.wong/Desktop/Cursor/disc-app/PROJECTS/credentials.json`
             
             **Checked locations:**
             {location_status}
@@ -290,8 +290,55 @@ def get_cell_to_zone_mapping(_client, sheet_id):
     except Exception as e:
         return {}, f"Error reading Key Values: {str(e)}"
 
+def generate_colors_for_date(date_str):
+    """Generate random colors based on a specific date (consistent for that date)
+    Args:
+        date_str: Date string in format 'YYYY-MM-DD'
+    Returns:
+        dict with 'primary', 'light', 'background', 'accent' colors
+    """
+    # Use date as seed for consistent colors throughout the day
+    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
+
+    # Generate vibrant colors using the seed
+    import random
+    random.seed(seed)
+
+    # Generate a primary accent color (bright, vibrant)
+    hue = random.random()  # 0.0 to 1.0
+    saturation = random.uniform(0.7, 1.0)
+    lightness = random.uniform(0.45, 0.65)
+
+    # Convert HSL to RGB then to hex
+    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
+    primary_color = '#{:02x}{:02x}{:02x}'.format(
+        int(rgb[0]*255),
+        int(rgb[1]*255),
+        int(rgb[2]*255)
+    )
+
+    # Generate a lighter variant for accents
+    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
+    light_color = '#{:02x}{:02x}{:02x}'.format(
+        int(rgb_light[0]*255),
+        int(rgb_light[1]*255),
+        int(rgb_light[2]*255)
+    )
+
+    return {
+        'primary': primary_color,
+        'light': light_color,
+        'background': '#000000',  # Keep black background for edgy style
+        'accent': primary_color
+    }
+
 def generate_daily_colors():
     """Generate random colors based on today's date (consistent throughout the day)"""
+    today = get_today_myt_date()
+    return generate_colors_for_date(today)
+
+def generate_daily_colors_legacy():
+    """Legacy version - kept for reference"""
     today = get_today_myt_date()
     # Use date as seed for consistent colors throughout the day
     seed = int(hashlib.md5(today.encode()).hexdigest(), 16)
@@ -461,6 +508,90 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
     except Exception as e:
         # If there's an error reading attendance, return empty set (show all options)
         return set()
+
+def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTENDANCE_TAB_NAME):
+    """Get attendance data for a specific date (YYYY-MM-DD format).
+    This reads directly from Google Sheets without caching for historical data.
+    Args:
+        _client: Google Sheets client
+        sheet_id: Google Sheet ID
+        target_date: Date string in 'YYYY-MM-DD' format
+        tab_name: Tab name to read from
+    Returns:
+        tuple: (cell_group_data, checked_in_list, recent_checkins)
+    """
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+
+        # Try to get the specified worksheet
+        try:
+            attendance_sheet = spreadsheet.worksheet(tab_name)
+        except gspread.exceptions.WorksheetNotFound:
+            return {}, [], []
+
+        # Get all rows from the Attendance sheet
+        all_rows = attendance_sheet.get_all_values()
+
+        if len(all_rows) <= 1:  # Only header row or empty
+            return {}, [], []
+
+        # Dictionary to store cell group -> list of names
+        cell_group_data = {}
+        # List to store all checked-in entries (for set deduplication)
+        checked_in_set = set()
+        checked_in_list = []  # Keep order for first occurrence
+        # List to store recent check-ins with timestamps (timestamp, name_cell_group)
+        recent_checkins = []
+
+        # Skip header row (index 0), check from row 1 onwards
+        for row in all_rows[1:]:
+            if len(row) < 2:  # Skip incomplete rows
+                continue
+
+            timestamp_str = row[0].strip() if row[0] else ""
+            name_cell_group = row[1].strip() if len(row) > 1 and row[1] else ""
+
+            if not timestamp_str or not name_cell_group:
+                continue
+
+            # Parse timestamp - it should be in format "YYYY-MM-DD HH:MM:SS"
+            # Extract just the date part (first 10 characters)
+            try:
+                if len(timestamp_str) >= 10:
+                    date_part = timestamp_str[:10]  # Get "YYYY-MM-DD" part
+
+                    # Check if this timestamp matches target date
+                    if date_part == target_date:
+                        # Add to recent checkins (include duplicates for the table)
+                        recent_checkins.append((timestamp_str, name_cell_group))
+
+                        # Only add if not already in set (avoid duplicates for counts)
+                        if name_cell_group not in checked_in_set:
+                            checked_in_set.add(name_cell_group)
+                            checked_in_list.append(name_cell_group)
+
+                            # Parse name and cell group
+                            name, cell_group = parse_name_cell_group(name_cell_group)
+
+                            # Add to cell group data
+                            if cell_group not in cell_group_data:
+                                cell_group_data[cell_group] = []
+                            cell_group_data[cell_group].append(name)
+            except Exception:
+                # If parsing fails, skip this row
+                continue
+
+        # Sort recent_checkins by timestamp descending (most recent first)
+        recent_checkins.sort(key=lambda x: x[0], reverse=True)
+
+        return cell_group_data, checked_in_list, recent_checkins
+
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return {}, [], []
+        return {}, [], []
+    except Exception:
+        return {}, [], []
 
 def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
     """Save attendance data to the specified tab - supports batch check-ins.
@@ -1236,6 +1367,25 @@ def render_dashboard(tab_name, group_by_zone=False):
 
     total_checked_in = len(checked_in_list)
 
+    # Get all team members from Options tab and group by cell group
+    all_members_by_cell_group = {}
+    options_data, _ = get_options_from_sheet(client, SHEET_ID)
+    if options_data:
+        for header, values in options_data.items():
+            for value in values:
+                name, cell_group = parse_name_cell_group(value)
+                if name and cell_group:
+                    if cell_group not in all_members_by_cell_group:
+                        all_members_by_cell_group[cell_group] = []
+                    all_members_by_cell_group[cell_group].append(name)
+
+    # Create a set of checked-in names for quick lookup
+    checked_in_names_set = set()
+    for name_cell_group in checked_in_list:
+        name, _ = parse_name_cell_group(name_cell_group)
+        if name:
+            checked_in_names_set.add(name)
+
     # If grouping by zone, convert cell_group_data to zone_data
     if group_by_zone:
         # Get zone mapping from Key Values tab (cell name -> zone)
@@ -1343,6 +1493,20 @@ def render_dashboard(tab_name, group_by_zone=False):
             background: {page_colors['primary']};
             color: {page_colors['background']};
             transform: scale(1.05);
+        }}
+        .name-badge-pending {{
+            background: {page_colors['background']};
+            border: 1px solid {page_colors['text_muted']};
+            color: {page_colors['text_muted']};
+            padding: 0.6rem 1.2rem;
+            margin: 0.4rem 0.4rem 0.4rem 0;
+            border-radius: 0px;
+            display: inline-block;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            opacity: 0.5;
         }}
         .empty-state {{
             text-align: center;
@@ -1501,7 +1665,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Display names for each group
         if group_by_zone:
             # For zone grouping, show Zone -> Cell -> Names hierarchy
-            # Build zone -> cell -> names structure
+            # Build zone -> cell -> names structure (checked-in only)
             zone_cell_names = {}
             cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
             for cell_group, names in cell_group_data.items():
@@ -1512,49 +1676,96 @@ def render_dashboard(tab_name, group_by_zone=False):
                     zone_cell_names[zone][cell_group] = []
                 zone_cell_names[zone][cell_group].extend(names)
 
+            # Build zone -> cell -> all members structure (for pending display)
+            zone_cell_all_members = {}
+            for cell_group, members in all_members_by_cell_group.items():
+                zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+                if zone not in zone_cell_all_members:
+                    zone_cell_all_members[zone] = {}
+                if cell_group not in zone_cell_all_members[zone]:
+                    zone_cell_all_members[zone][cell_group] = []
+                zone_cell_all_members[zone][cell_group].extend(members)
+
+            # Get all zones (from both checked-in and all members)
+            all_zones = set(zone_cell_names.keys()) | set(zone_cell_all_members.keys())
+
             # Display with hierarchy
-            for zone in sorted(zone_cell_names.keys(), key=str.lower):
-                cells = zone_cell_names[zone]
-                total_in_zone = sum(len(names) for names in cells.values())
+            for zone in sorted(all_zones, key=str.lower):
+                cells_checked_in = zone_cell_names.get(zone, {})
+                cells_all = zone_cell_all_members.get(zone, {})
+                all_cells_in_zone = set(cells_checked_in.keys()) | set(cells_all.keys())
+
+                total_checked_in_zone = sum(len(names) for names in cells_checked_in.values())
+                total_in_zone = sum(len(members) for members in cells_all.values())
+
                 st.markdown(f"""
                 <div style="margin-bottom: 2rem;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({total_in_zone})</span>
+                        {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({total_checked_in_zone}/{total_in_zone})</span>
                     </h3>
                 </div>
                 """, unsafe_allow_html=True)
 
                 # Show each cell within the zone
-                for cell_group in sorted(cells.keys(), key=str.lower):
-                    names = cells[cell_group]
+                for cell_group in sorted(all_cells_in_zone, key=str.lower):
+                    checked_in_names = cells_checked_in.get(cell_group, [])
+                    all_names_in_cell = cells_all.get(cell_group, [])
+
+                    # Get pending names (not checked in)
+                    pending_names = [name for name in all_names_in_cell if name not in checked_in_names_set]
+
+                    # Build name badges: checked-in first (sorted), then pending (sorted)
+                    checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
+                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+
+                    checked_count = len(checked_in_names)
+                    total_count = len(all_names_in_cell)
+
                     st.markdown(f"""
                     <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
                         <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
                                    letter-spacing: 1px; margin-bottom: 0.5rem;">
-                            {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">({len(names)})</span>
+                            {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_count})</span>
                         </h4>
                         <div>
-                            {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                            {checked_in_badges}{pending_badges}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
         else:
             # Regular cell group display - sorted alphabetically
-            sorted_groups_alpha = sorted(display_data.items(), key=lambda x: x[0].lower())
-            for group_name, names in sorted_groups_alpha:
+            # Show all cell groups from options (not just those with check-ins)
+            all_cell_groups = set(all_members_by_cell_group.keys()) | set(display_data.keys())
+            sorted_groups_alpha = sorted(all_cell_groups, key=str.lower)
+
+            for group_name in sorted_groups_alpha:
+                checked_in_names = display_data.get(group_name, [])
+                all_names_in_group = all_members_by_cell_group.get(group_name, [])
+
+                # Get pending names (not checked in)
+                pending_names = [name for name in all_names_in_group if name not in checked_in_names_set]
+
+                # Build name badges: checked-in first (sorted), then pending (sorted)
+                checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
+                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+
+                total_in_group = len(all_names_in_group)
+                checked_count = len(checked_in_names)
+
                 st.markdown(f"""
                 <div style="margin-bottom: 2rem;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({len(names)})</span>
+                        {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
                     </h3>
                     <div>
-                        {''.join([f'<span class="name-badge">{name}</span>' for name in sorted(names)])}
+                        {checked_in_badges}{pending_badges}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
+        # Show empty state message and all pending members greyed out
         st.markdown(f"""
         <div class="empty-state">
             <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
@@ -1564,6 +1775,564 @@ def render_dashboard(tab_name, group_by_zone=False):
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+        # Show all members greyed out even when no check-ins
+        if all_members_by_cell_group:
+            st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Attendees by Cell Group"}</div>', unsafe_allow_html=True)
+
+            if group_by_zone:
+                # Build zone -> cell -> all members structure
+                cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+                zone_cell_all_members = {}
+                for cell_group, members in all_members_by_cell_group.items():
+                    zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+                    if zone not in zone_cell_all_members:
+                        zone_cell_all_members[zone] = {}
+                    if cell_group not in zone_cell_all_members[zone]:
+                        zone_cell_all_members[zone][cell_group] = []
+                    zone_cell_all_members[zone][cell_group].extend(members)
+
+                for zone in sorted(zone_cell_all_members.keys(), key=str.lower):
+                    cells_all = zone_cell_all_members[zone]
+                    total_in_zone = sum(len(members) for members in cells_all.values())
+
+                    st.markdown(f"""
+                    <div style="margin-bottom: 2rem;">
+                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
+                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                            {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
+                        </h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    for cell_group in sorted(cells_all.keys(), key=str.lower):
+                        all_names_in_cell = cells_all[cell_group]
+                        pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
+
+                        st.markdown(f"""
+                        <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                            <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
+                                       letter-spacing: 1px; margin-bottom: 0.5rem;">
+                                {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
+                            </h4>
+                            <div>
+                                {pending_badges}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                # Regular cell group display - all greyed out
+                for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
+                    all_names_in_group = all_members_by_cell_group[group_name]
+                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
+                    total_in_group = len(all_names_in_group)
+
+                    st.markdown(f"""
+                    <div style="margin-bottom: 2rem;">
+                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
+                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                            {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
+                        </h3>
+                        <div>
+                            {pending_badges}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
+def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
+    """Render the dashboard for a historical date with custom colors.
+    Args:
+        tab_name: Tab name to read from
+        target_date: Date string in 'YYYY-MM-DD' format
+        colors: Color dictionary with 'primary', 'light', 'background', etc.
+        group_by_zone: If True, groups by Zone instead of Cell Group
+    """
+    st.markdown("---")
+
+    # Format date for display
+    try:
+        display_date_formatted = datetime.strptime(target_date, "%Y-%m-%d").strftime("%d %b %Y")
+    except:
+        display_date_formatted = target_date
+
+    st.markdown(f"""
+    <div style="text-align: center; padding: 1rem; margin-bottom: 1rem;">
+        <span style="
+            background: {colors['primary']};
+            color: {colors['background']};
+            padding: 0.5rem 1rem;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 1rem;
+            letter-spacing: 1px;
+        ">HISTORICAL DATA - {display_date_formatted}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Get historical attendance data for the specific tab and date
+    with st.spinner(f"Loading data for {display_date_formatted}..."):
+        cell_group_data, checked_in_list, recent_checkins = get_attendance_data_for_date(
+            client, SHEET_ID, target_date, tab_name
+        )
+
+    total_checked_in = len(checked_in_list)
+
+    # Get all team members from Options tab and group by cell group
+    all_members_by_cell_group = {}
+    options_data, _ = get_options_from_sheet(client, SHEET_ID)
+    if options_data:
+        for header, values in options_data.items():
+            for value in values:
+                name, cell_group = parse_name_cell_group(value)
+                if name and cell_group:
+                    if cell_group not in all_members_by_cell_group:
+                        all_members_by_cell_group[cell_group] = []
+                    all_members_by_cell_group[cell_group].append(name)
+
+    # Create a set of checked-in names for quick lookup
+    checked_in_names_set = set()
+    for name_cell_group in checked_in_list:
+        name, _ = parse_name_cell_group(name_cell_group)
+        if name:
+            checked_in_names_set.add(name)
+
+    # If grouping by zone, convert cell_group_data to zone_data
+    if group_by_zone:
+        cell_to_zone, zone_error = get_cell_to_zone_mapping(client, SHEET_ID)
+        zone_data = {}
+        for cell_group, names in cell_group_data.items():
+            zone = cell_to_zone.get(cell_group.lower(), cell_group)
+            if zone not in zone_data:
+                zone_data[zone] = []
+            zone_data[zone].extend(names)
+        display_data = zone_data
+        group_label = "Zone"
+    else:
+        display_data = cell_group_data
+        group_label = "Cell Group"
+
+    # Convert hex color to RGB for rgba shadows
+    def hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    primary_rgb = hex_to_rgb(colors['primary'])
+
+    # Modern Edgy Dashboard Styling with Historical Colors
+    st.markdown(f"""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap');
+
+        .historical-kpi-card {{
+            background: {colors['card_bg']};
+            padding: 2rem 2.5rem;
+            border-radius: 0px;
+            border-left: 6px solid {colors['primary']};
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
+            transition: all 0.3s ease;
+        }}
+        .historical-kpi-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.25);
+            border-left-width: 8px;
+        }}
+        .historical-kpi-label {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: {colors['text_muted']};
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }}
+        .historical-kpi-number {{
+            font-family: 'Inter', sans-serif;
+            font-size: 5.5rem;
+            font-weight: 900;
+            color: {colors['primary']};
+            line-height: 1;
+            margin: 0.5rem 0;
+            text-shadow: 0 0 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
+        }}
+        .historical-kpi-subtitle {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            color: {colors['text_muted']};
+            margin-top: 0.5rem;
+            font-weight: 500;
+        }}
+        .historical-section-title {{
+            font-family: 'Inter', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 900;
+            color: {colors['primary']};
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 1.5rem;
+            border-bottom: 3px solid {colors['primary']};
+            padding-bottom: 0.5rem;
+            display: inline-block;
+        }}
+        .historical-name-badge {{
+            background: {colors['background']};
+            border: 1px solid {colors['primary']};
+            color: {colors['primary']};
+            padding: 0.6rem 1.2rem;
+            margin: 0.4rem 0.4rem 0.4rem 0;
+            border-radius: 0px;
+            display: inline-block;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            transition: all 0.2s ease;
+        }}
+        .historical-name-badge:hover {{
+            background: {colors['primary']};
+            color: {colors['background']};
+            transform: scale(1.05);
+        }}
+        .historical-name-badge-pending {{
+            background: {colors['background']};
+            border: 1px solid {colors['text_muted']};
+            color: {colors['text_muted']};
+            padding: 0.6rem 1.2rem;
+            margin: 0.4rem 0.4rem 0.4rem 0;
+            border-radius: 0px;
+            display: inline-block;
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            opacity: 0.5;
+        }}
+        .historical-empty-state {{
+            text-align: center;
+            padding: 4rem 2rem;
+            background: {colors['card_bg']};
+            border: 2px dashed {colors['text_muted']};
+            border-radius: 0px;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # KPI Card - Total Checked In
+    st.markdown(f"""
+    <div class="historical-kpi-card">
+        <div class="historical-kpi-label">Total Checked In on {display_date_formatted}</div>
+        <div class="historical-kpi-number">{total_checked_in}</div>
+        <div class="historical-kpi-subtitle">People checked in on this date</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Zone tiles (only for zone grouping)
+    if group_by_zone and total_checked_in > 0 and cell_group_data:
+        cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+        zone_counts = {}
+        for cell_group, names in cell_group_data.items():
+            zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+            if zone not in zone_counts:
+                zone_counts[zone] = 0
+            zone_counts[zone] += len(names)
+
+        sorted_zones_for_tiles = sorted(zone_counts.items(), key=lambda x: x[0].lower())
+
+        st.markdown(f"""
+        <style>
+            .historical-zone-tiles-container {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1rem;
+                margin-bottom: 2rem;
+            }}
+            .historical-zone-tile {{
+                background: {colors['card_bg']};
+                border: 2px solid {colors['primary']};
+                padding: 1.2rem 1.5rem;
+                min-width: 140px;
+                flex: 1;
+                text-align: center;
+                transition: all 0.2s ease;
+            }}
+            .historical-zone-tile:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 4px 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
+            }}
+            .historical-zone-name {{
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 700;
+                color: {colors['text_muted']};
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 0.3rem;
+            }}
+            .historical-zone-count {{
+                font-family: 'Inter', sans-serif;
+                font-size: 2.5rem;
+                font-weight: 900;
+                color: {colors['primary']};
+                line-height: 1;
+            }}
+        </style>
+        <div class="historical-zone-tiles-container">
+            {''.join([f'<div class="historical-zone-tile"><div class="historical-zone-name">{zone}</div><div class="historical-zone-count">{count}</div></div>' for zone, count in sorted_zones_for_tiles])}
+        </div>
+        """, unsafe_allow_html=True)
+
+    if total_checked_in > 0:
+        # Recent Check-ins Table for historical date
+        if recent_checkins:
+            st.markdown(f"""
+            <div style="margin-bottom: 0.5rem;">
+                <span style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1rem;
+                             color: {colors['primary']}; text-transform: uppercase; letter-spacing: 1px;">
+                    Check-Ins on {display_date_formatted}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            table_data = []
+            for timestamp_str, name_cell_group in recent_checkins:
+                time_part = timestamp_str[11:19] if len(timestamp_str) >= 19 else timestamp_str
+                table_data.append({
+                    "Time": time_part,
+                    "Name - Cell Group": name_cell_group
+                })
+
+            df = pd.DataFrame(table_data)
+            row_height = 35
+            header_height = 38
+            max_visible_rows = 5
+            display_height = header_height + (row_height * min(len(table_data), max_visible_rows))
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                height=max(display_height, header_height + row_height)
+            )
+
+        st.markdown("---")
+
+        # Bar Chart Section
+        chart_title = f"Attendance by Zone on {display_date_formatted}" if group_by_zone else f"Check-Ins by Cell Group on {display_date_formatted}"
+        st.markdown(f'<div class="historical-section-title">{chart_title}</div>', unsafe_allow_html=True)
+
+        sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
+
+        chart_data = {
+            group_label: [group for group, _ in sorted_groups],
+            'Count': [len(names) for _, names in sorted_groups]
+        }
+        df_chart = pd.DataFrame(chart_data)
+
+        fig = px.bar(
+            df_chart,
+            x=group_label,
+            y='Count',
+            color='Count',
+            color_continuous_scale=[colors['background'], colors['primary']],
+            text='Count',
+            labels={'Count': 'Number of People', group_label: group_label},
+            height=400
+        )
+
+        fig.update_layout(
+            plot_bgcolor=colors['background'],
+            paper_bgcolor=colors['card_bg'],
+            font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
+            xaxis=dict(
+                title=dict(font=dict(size=14, color=colors['primary'], family='Inter')),
+                tickfont=dict(color=colors['text_muted'], family='Inter'),
+                gridcolor=colors['text_muted'],
+                linecolor=colors['primary'],
+                linewidth=2,
+                categoryorder='total descending'
+            ),
+            yaxis=dict(
+                title=dict(font=dict(size=14, color=colors['primary'], family='Inter')),
+                tickfont=dict(color=colors['text_muted'], family='Inter'),
+                gridcolor=colors['text_muted'],
+                linecolor=colors['primary'],
+                linewidth=2
+            ),
+            coloraxis_showscale=False,
+            showlegend=False,
+            margin=dict(l=50, r=50, t=60, b=50)
+        )
+
+        fig.update_traces(
+            textfont=dict(size=14, color=colors['background'], family='Inter', weight='bold'),
+            textposition='inside',
+            insidetextanchor='middle',
+            marker=dict(line=dict(color=colors['primary'], width=2)),
+            hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
+            hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter'))
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Names Breakdown Section
+        names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
+        st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
+
+        if group_by_zone:
+            # Build zone -> cell -> all members structure
+            cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+            zone_cell_all_members = {}
+            for cell_group, members in all_members_by_cell_group.items():
+                zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+                if zone not in zone_cell_all_members:
+                    zone_cell_all_members[zone] = {}
+                if cell_group not in zone_cell_all_members[zone]:
+                    zone_cell_all_members[zone][cell_group] = []
+                zone_cell_all_members[zone][cell_group].extend(members)
+
+            for zone in sorted(zone_cell_all_members.keys(), key=str.lower):
+                cells_all = zone_cell_all_members[zone]
+                # Count checked-in for this zone
+                checked_in_zone = 0
+                total_in_zone = sum(len(members) for members in cells_all.values())
+                for cell_group, members in cells_all.items():
+                    for member in members:
+                        if member in checked_in_names_set:
+                            checked_in_zone += 1
+
+                st.markdown(f"""
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
+                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                        {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_in_zone}/{total_in_zone})</span>
+                    </h3>
+                </div>
+                """, unsafe_allow_html=True)
+
+                for cell_group in sorted(cells_all.keys(), key=str.lower):
+                    all_names_in_cell = cells_all[cell_group]
+                    checked_names = [name for name in all_names_in_cell if name in checked_in_names_set]
+                    pending_names = [name for name in all_names_in_cell if name not in checked_in_names_set]
+                    checked_count = len(checked_names)
+                    total_in_cell = len(all_names_in_cell)
+
+                    checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
+                    pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+
+                    st.markdown(f"""
+                    <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
+                                   letter-spacing: 1px; margin-bottom: 0.5rem;">
+                            {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_in_cell})</span>
+                        </h4>
+                        <div>
+                            {checked_in_badges}{pending_badges}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Get all cell groups from both checked-in and all members
+            all_cell_groups = set(all_members_by_cell_group.keys()) | set(display_data.keys())
+
+            for group_name in sorted(all_cell_groups, key=str.lower):
+                all_names_in_group = all_members_by_cell_group.get(group_name, [])
+                checked_names = [name for name in all_names_in_group if name in checked_in_names_set]
+                pending_names = [name for name in all_names_in_group if name not in checked_in_names_set]
+                checked_count = len(checked_names)
+                total_in_group = len(all_names_in_group)
+
+                checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
+                pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+
+                st.markdown(f"""
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
+                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                        {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
+                    </h3>
+                    <div>
+                        {checked_in_badges}{pending_badges}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        # No check-ins - show empty state and all pending members greyed out
+        st.markdown(f"""
+        <div class="historical-empty-state">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+            <div style="font-family: 'Inter', sans-serif; font-size: 1.5rem; color: {colors['text_muted']}; font-weight: 700;
+                        text-transform: uppercase; letter-spacing: 2px;">
+                No check-ins on {display_date_formatted}
+            </div>
+            <div style="font-size: 1rem; color: {colors['text_muted']}; margin-top: 1rem; font-weight: 500;">
+                No attendance records found for this date.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show all members greyed out even when no check-ins
+        if all_members_by_cell_group:
+            names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
+            st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
+
+            if group_by_zone:
+                # Build zone -> cell -> all members structure
+                cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+                zone_cell_all_members = {}
+                for cell_group, members in all_members_by_cell_group.items():
+                    zone = cell_to_zone_map.get(cell_group.lower(), cell_group)
+                    if zone not in zone_cell_all_members:
+                        zone_cell_all_members[zone] = {}
+                    if cell_group not in zone_cell_all_members[zone]:
+                        zone_cell_all_members[zone][cell_group] = []
+                    zone_cell_all_members[zone][cell_group].extend(members)
+
+                for zone in sorted(zone_cell_all_members.keys(), key=str.lower):
+                    cells_all = zone_cell_all_members[zone]
+                    total_in_zone = sum(len(members) for members in cells_all.values())
+
+                    st.markdown(f"""
+                    <div style="margin-bottom: 2rem;">
+                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
+                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                            {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
+                        </h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    for cell_group in sorted(cells_all.keys(), key=str.lower):
+                        all_names_in_cell = cells_all[cell_group]
+                        pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
+
+                        st.markdown(f"""
+                        <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                            <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
+                                       letter-spacing: 1px; margin-bottom: 0.5rem;">
+                                {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
+                            </h4>
+                            <div>
+                                {pending_badges}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                # Regular cell group display - all greyed out
+                for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
+                    all_names_in_group = all_members_by_cell_group[group_name]
+                    pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
+                    total_in_group = len(all_names_in_group)
+
+                    st.markdown(f"""
+                    <div style="margin-bottom: 2rem;">
+                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
+                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
+                            {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
+                        </h3>
+                        <div>
+                            {pending_badges}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 
 # ========== SIDEBAR NAVIGATION ==========
@@ -1590,7 +2359,7 @@ with st.sidebar:
     </h3>
     """, unsafe_allow_html=True)
 
-    if st.button("📧 Email Report Now", type="secondary", use_container_width=True, key="send_email_btn"):
+    if st.button("📤 Send to PSQ", type="secondary", use_container_width=True, key="send_email_btn"):
         st.session_state.show_email_confirm = True
 
     # Email confirmation dialog
@@ -1683,6 +2452,71 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Error sending: {str(e)}")
 
+    st.markdown("---")
+
+    # ========== HISTORICAL VIEW SECTION ==========
+    st.markdown(f"""
+    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
+        VIEW HISTORICAL DATA
+    </h3>
+    """, unsafe_allow_html=True)
+
+    # Password protection for historical view
+    HISTORICAL_PASSWORD = "miraiscool"
+
+    # Initialize session state for historical view
+    if 'historical_authenticated' not in st.session_state:
+        st.session_state.historical_authenticated = False
+    if 'historical_date' not in st.session_state:
+        st.session_state.historical_date = None
+    if 'viewing_historical' not in st.session_state:
+        st.session_state.viewing_historical = False
+
+    # Show password input if not authenticated
+    if not st.session_state.historical_authenticated:
+        password_input = st.text_input("Enter password", type="password", key="historical_password")
+        if st.button("Unlock Historical View", type="secondary", use_container_width=True, key="unlock_historical"):
+            if password_input == HISTORICAL_PASSWORD:
+                st.session_state.historical_authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+    else:
+        # Show date picker if authenticated
+        st.success("Authenticated!")
+
+        # Date picker for historical view
+        today_myt_date = datetime.strptime(get_today_myt_date(), "%Y-%m-%d").date()
+        selected_date = st.date_input(
+            "Select date to view",
+            value=today_myt_date,
+            max_value=today_myt_date,
+            key="historical_date_picker"
+        )
+
+        # Convert to string format
+        selected_date_str = selected_date.strftime("%Y-%m-%d")
+
+        col_view, col_reset = st.columns(2)
+        with col_view:
+            if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
+                st.session_state.historical_date = selected_date_str
+                st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
+                st.rerun()
+
+        with col_reset:
+            if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
+                st.session_state.historical_date = None
+                st.session_state.viewing_historical = False
+                st.rerun()
+
+        # Lock button to re-lock historical view
+        if st.button("Lock Historical View", type="secondary", use_container_width=True, key="lock_historical"):
+            st.session_state.historical_authenticated = False
+            st.session_state.historical_date = None
+            st.session_state.viewing_historical = False
+            st.rerun()
+
 # ========== RENDER SELECTED PAGE ==========
 # Add toggle tabs in main content area for switching between check-in types
 st.markdown(f"""
@@ -1748,36 +2582,111 @@ with tab_col2:
         st.query_params["page"] = "leaders"
         st.rerun()
 
+# Determine if viewing historical data
+viewing_historical = st.session_state.get('viewing_historical', False)
+historical_date = st.session_state.get('historical_date', None)
+
+# If viewing historical, generate colors for that date
+if viewing_historical and historical_date:
+    historical_colors = generate_colors_for_date(historical_date)
+    # Override page_colors with historical colors
+    if is_leaders_page:
+        display_colors = {
+            'primary': historical_colors['primary'],
+            'light': historical_colors['light'],
+            'background': '#ffffff',
+            'text': '#000000',
+            'text_muted': '#666666',
+            'card_bg': '#f5f5f5',
+            'border': historical_colors['primary']
+        }
+    else:
+        display_colors = {
+            'primary': historical_colors['primary'],
+            'light': historical_colors['light'],
+            'background': '#000000',
+            'text': '#ffffff',
+            'text_muted': '#999999',
+            'card_bg': '#0a0a0a',
+            'border': historical_colors['primary']
+        }
+else:
+    display_colors = page_colors
+    historical_date = get_today_myt_date()
+
+# Display historical sticker if viewing past data
+if viewing_historical:
+    # Format date for display
+    try:
+        display_date = datetime.strptime(historical_date, "%Y-%m-%d").strftime("%d %b %Y")
+    except:
+        display_date = historical_date
+
+    st.markdown(f"""
+    <div style="
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        background: linear-gradient(135deg, {display_colors['primary']}, {display_colors['light']});
+        color: {display_colors['background']};
+        padding: 0.8rem 1.5rem;
+        border-radius: 8px;
+        font-family: 'Inter', sans-serif;
+        font-weight: 800;
+        font-size: 0.85rem;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        z-index: 9999;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    ">
+        <span style="font-size: 1.2rem;">📅</span>
+        <span>Viewing: {display_date}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
 # Display clear page header
 if page == "NWST Check In":
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
-                   color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   color: {display_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
                    margin: 0; padding: 1rem 0;">
             NWST Check In
         </h1>
-        <p style="color: {page_colors['text_muted']}; font-size: 0.9rem; margin: 0;">NWST Service Attendance</p>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">NWST Service Attendance</p>
     </div>
     """, unsafe_allow_html=True)
-    render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
-    render_qr_section()
-    render_recent_checkins_table(ATTENDANCE_TAB_NAME)
-    render_dashboard(ATTENDANCE_TAB_NAME)
+
+    # If viewing historical, show historical dashboard only (no check-in form)
+    if viewing_historical:
+        render_historical_dashboard(ATTENDANCE_TAB_NAME, historical_date, display_colors)
+    else:
+        render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
+        render_qr_section()
+        render_recent_checkins_table(ATTENDANCE_TAB_NAME)
+        render_dashboard(ATTENDANCE_TAB_NAME)
 else:
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
-                   color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   color: {display_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
                    margin: 0; padding: 1rem 0;">
             Leaders Discipleship
         </h1>
-        <p style="color: {page_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
     </div>
     """, unsafe_allow_html=True)
-    render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
-    render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
-    render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
+
+    # If viewing historical, show historical dashboard only (no check-in form)
+    if viewing_historical:
+        render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
+    else:
+        render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
+        render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
+        render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
 # Footer
 st.markdown("---")
