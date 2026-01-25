@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install gspread google-auth upstash-redis
+          pip install -r requirements.txt
 
       - name: Run sync script
         env:
@@ -32,4 +32,5 @@ jobs:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
         run: |
+          cd "CHECK IN"
           python sync_sheets_to_redis.py
