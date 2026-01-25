@@ -38,8 +38,10 @@ KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
 
 # Redis cache configuration
 REDIS_CACHE_TTL = 86400  # 24 hours in seconds (cache resets daily via key)
+REDIS_HISTORICAL_TTL = 86400  # 24 hours for historical data (past data doesn't change)
 REDIS_OPTIONS_KEY = "attendance:options"
 REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date and tab name
+REDIS_HISTORICAL_KEY_PREFIX = "attendance:historical:"  # For historical date queries
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 
 def get_today_myt_date():
@@ -511,7 +513,7 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
 
 def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTENDANCE_TAB_NAME):
     """Get attendance data for a specific date (YYYY-MM-DD format).
-    This reads directly from Google Sheets without caching for historical data.
+    Uses Redis caching for historical data to reduce Google Sheets API calls.
     Args:
         _client: Google Sheets client
         sheet_id: Google Sheet ID
@@ -520,6 +522,20 @@ def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTEND
     Returns:
         tuple: (cell_group_data, checked_in_list, recent_checkins)
     """
+    # Try Redis cache first for historical data
+    redis_client = get_redis_client()
+    cache_key = f"{REDIS_HISTORICAL_KEY_PREFIX}{target_date}:{tab_name}"
+
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return data["cell_group_data"], data["checked_in_list"], data["recent_checkins"]
+        except Exception:
+            pass  # Cache miss or error, continue to fetch from Sheets
+
+    # Cache miss - fetch from Google Sheets
     try:
         spreadsheet = _client.open_by_key(sheet_id)
 
@@ -583,6 +599,18 @@ def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTEND
 
         # Sort recent_checkins by timestamp descending (most recent first)
         recent_checkins.sort(key=lambda x: x[0], reverse=True)
+
+        # Store in Redis cache for future requests (only if we got data)
+        if redis_client:
+            try:
+                cache_data = {
+                    "cell_group_data": cell_group_data,
+                    "checked_in_list": checked_in_list,
+                    "recent_checkins": recent_checkins
+                }
+                redis_client.setex(cache_key, REDIS_HISTORICAL_TTL, json.dumps(cache_data))
+            except Exception:
+                pass  # Cache write failed, not critical
 
         return cell_group_data, checked_in_list, recent_checkins
 
@@ -1662,6 +1690,96 @@ def render_dashboard(tab_name, group_by_zone=False):
         names_title = "Attendees by Zone" if group_by_zone else "Attendees by Cell Group"
         st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
 
+        # Search bar for cell group/zone filtering with auto-scroll
+        # Build list of searchable groups (include both zones and cell groups when in zone view)
+        all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
+
+        if group_by_zone:
+            cell_to_zone_map_search, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+            all_zones_search = set()
+            for cell_group in all_cell_groups_search:
+                zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
+                all_zones_search.add(zone)
+            zones_list = sorted(all_zones_search, key=str.lower)
+            # Combine: zones first, then cell groups
+            searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+        else:
+            searchable_groups = all_cell_groups_search
+
+        # Add search selectbox
+        search_options = [""] + searchable_groups
+        search_key = "today_search_zone" if group_by_zone else "today_search_cell_group"
+        selected_group = st.selectbox(
+            f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
+            options=search_options,
+            format_func=lambda x: x if x else "Jump to...",
+            key=search_key,
+            help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
+        )
+
+        # JavaScript for auto-scroll functionality using postMessage and direct DOM access
+        if selected_group:
+            # Parse the selection to get the actual group name and type
+            if selected_group.startswith("Zone: "):
+                actual_group = selected_group[6:]  # Remove "Zone: " prefix
+                target_id = f"group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            elif selected_group.startswith("Cell: "):
+                actual_group = selected_group[6:]  # Remove "Cell: " prefix
+                # For cell groups in zone view, we need to find the cell group element
+                target_id = f"cell-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            else:
+                actual_group = selected_group
+                target_id = f"group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            scroll_script = f"""
+            <script>
+                (function() {{
+                    function findAndScroll() {{
+                        var targetId = '{target_id}';
+                        var docs = [document];
+                        // Try to access parent frames
+                        try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
+                        try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+
+                        for (var i = 0; i < docs.length; i++) {{
+                            var el = docs[i].getElementById(targetId);
+                            if (el) {{
+                                el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                                el.style.transition = 'all 0.3s ease';
+                                el.style.boxShadow = '0 0 20px {page_colors['primary']}';
+                                el.style.backgroundColor = '{page_colors['light']}';
+                                setTimeout(function() {{
+                                    el.style.boxShadow = 'none';
+                                    el.style.backgroundColor = 'transparent';
+                                }}, 2500);
+                                return true;
+                            }}
+                        }}
+                        // Try using querySelector with data attribute as fallback
+                        for (var i = 0; i < docs.length; i++) {{
+                            try {{
+                                var el = docs[i].querySelector('[id="' + targetId + '"]');
+                                if (el) {{
+                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                                    return true;
+                                }}
+                            }} catch(e) {{}}
+                        }}
+                        return false;
+                    }}
+                    // Multiple retry attempts with increasing delays
+                    var attempts = 0;
+                    var maxAttempts = 5;
+                    function tryScroll() {{
+                        if (findAndScroll() || attempts >= maxAttempts) return;
+                        attempts++;
+                        setTimeout(tryScroll, 400 * attempts);
+                    }}
+                    setTimeout(tryScroll, 100);
+                }})();
+            </script>
+            """
+            components.html(scroll_script, height=0, scrolling=False)
+
         # Display names for each group
         if group_by_zone:
             # For zone grouping, show Zone -> Cell -> Names hierarchy
@@ -1698,8 +1816,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                 total_checked_in_zone = sum(len(names) for names in cells_checked_in.values())
                 total_in_zone = sum(len(members) for members in cells_all.values())
 
+                zone_id = zone.replace(" ", "-").replace("'", "").lower()
                 st.markdown(f"""
-                <div style="margin-bottom: 2rem;">
+                <div id="group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                         {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({total_checked_in_zone}/{total_in_zone})</span>
@@ -1722,8 +1841,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                     checked_count = len(checked_in_names)
                     total_count = len(all_names_in_cell)
 
+                    cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                    <div id="cell-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
                         <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
                                    letter-spacing: 1px; margin-bottom: 0.5rem;">
                             {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_count})</span>
@@ -1753,8 +1873,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                 total_in_group = len(all_names_in_group)
                 checked_count = len(checked_in_names)
 
+                group_id = group_name.replace(" ", "-").replace("'", "").lower()
                 st.markdown(f"""
-                <div style="margin-bottom: 2rem;">
+                <div id="group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                         {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
@@ -1780,6 +1901,82 @@ def render_dashboard(tab_name, group_by_zone=False):
         if all_members_by_cell_group:
             st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Attendees by Cell Group"}</div>', unsafe_allow_html=True)
 
+            # Search bar for cell group/zone filtering with auto-scroll (empty state)
+            all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
+
+            if group_by_zone:
+                cell_to_zone_map_search, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+                all_zones_search = set()
+                for cell_group in all_cell_groups_search:
+                    zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
+                    all_zones_search.add(zone)
+                zones_list = sorted(all_zones_search, key=str.lower)
+                searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+            else:
+                searchable_groups = all_cell_groups_search
+
+            search_options = [""] + searchable_groups
+            search_key = "today_empty_search_zone" if group_by_zone else "today_empty_search_cell_group"
+            selected_group = st.selectbox(
+                f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
+                options=search_options,
+                format_func=lambda x: x if x else "Jump to...",
+                key=search_key,
+                help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
+            )
+
+            if selected_group:
+                if selected_group.startswith("Zone: "):
+                    actual_group = selected_group[6:]
+                    target_id = f"group-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                elif selected_group.startswith("Cell: "):
+                    actual_group = selected_group[6:]
+                    target_id = f"cell-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                else:
+                    actual_group = selected_group
+                    target_id = f"group-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                scroll_script = f"""
+                <script>
+                    (function() {{
+                        function findAndScroll() {{
+                            var targetId = '{target_id}';
+                            var docs = [document];
+                            try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
+                            try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+                            for (var i = 0; i < docs.length; i++) {{
+                                var el = docs[i].getElementById(targetId);
+                                if (el) {{
+                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                                    el.style.transition = 'all 0.3s ease';
+                                    el.style.boxShadow = '0 0 20px {page_colors['primary']}';
+                                    el.style.backgroundColor = '{page_colors['light']}';
+                                    setTimeout(function() {{
+                                        el.style.boxShadow = 'none';
+                                        el.style.backgroundColor = 'transparent';
+                                    }}, 2500);
+                                    return true;
+                                }}
+                            }}
+                            for (var i = 0; i < docs.length; i++) {{
+                                try {{
+                                    var el = docs[i].querySelector('[id="' + targetId + '"]');
+                                    if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
+                                }} catch(e) {{}}
+                            }}
+                            return false;
+                        }}
+                        var attempts = 0;
+                        function tryScroll() {{
+                            if (findAndScroll() || attempts >= 5) return;
+                            attempts++;
+                            setTimeout(tryScroll, 400 * attempts);
+                        }}
+                        setTimeout(tryScroll, 100);
+                    }})();
+                </script>
+                """
+                components.html(scroll_script, height=0, scrolling=False)
+
             if group_by_zone:
                 # Build zone -> cell -> all members structure
                 cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
@@ -1796,8 +1993,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                     cells_all = zone_cell_all_members[zone]
                     total_in_zone = sum(len(members) for members in cells_all.values())
 
+                    zone_id = zone.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-bottom: 2rem;">
+                    <div id="group-empty-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                         <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                             {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
@@ -1809,8 +2007,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                         all_names_in_cell = cells_all[cell_group]
                         pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
 
+                        cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         st.markdown(f"""
-                        <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                        <div id="cell-empty-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
                             <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
                                        letter-spacing: 1px; margin-bottom: 0.5rem;">
                                 {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
@@ -1827,8 +2026,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                     pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
 
+                    group_id = group_name.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-bottom: 2rem;">
+                    <div id="group-empty-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                         <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
                                    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                             {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
@@ -2178,6 +2378,82 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
         st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
+        # Search bar for cell group/zone filtering with auto-scroll (historical)
+        all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
+
+        if group_by_zone:
+            cell_to_zone_map_search, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+            all_zones_search = set()
+            for cell_group in all_cell_groups_search:
+                zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
+                all_zones_search.add(zone)
+            zones_list = sorted(all_zones_search, key=str.lower)
+            searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+        else:
+            searchable_groups = all_cell_groups_search
+
+        search_options = [""] + searchable_groups
+        search_key = f"hist_search_zone_{target_date}" if group_by_zone else f"hist_search_cell_group_{target_date}"
+        selected_group = st.selectbox(
+            f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
+            options=search_options,
+            format_func=lambda x: x if x else "Jump to...",
+            key=search_key,
+            help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
+        )
+
+        if selected_group:
+            if selected_group.startswith("Zone: "):
+                actual_group = selected_group[6:]
+                target_id = f"hist-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            elif selected_group.startswith("Cell: "):
+                actual_group = selected_group[6:]
+                target_id = f"hist-cell-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            else:
+                actual_group = selected_group
+                target_id = f"hist-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            scroll_script = f"""
+            <script>
+                (function() {{
+                    function findAndScroll() {{
+                        var targetId = '{target_id}';
+                        var docs = [document];
+                        try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
+                        try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+                        for (var i = 0; i < docs.length; i++) {{
+                            var el = docs[i].getElementById(targetId);
+                            if (el) {{
+                                el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                                el.style.transition = 'all 0.3s ease';
+                                el.style.boxShadow = '0 0 20px {colors['primary']}';
+                                el.style.backgroundColor = '{colors['light']}';
+                                setTimeout(function() {{
+                                    el.style.boxShadow = 'none';
+                                    el.style.backgroundColor = 'transparent';
+                                }}, 2500);
+                                return true;
+                            }}
+                        }}
+                        for (var i = 0; i < docs.length; i++) {{
+                            try {{
+                                var el = docs[i].querySelector('[id="' + targetId + '"]');
+                                if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
+                            }} catch(e) {{}}
+                        }}
+                        return false;
+                    }}
+                    var attempts = 0;
+                    function tryScroll() {{
+                        if (findAndScroll() || attempts >= 5) return;
+                        attempts++;
+                        setTimeout(tryScroll, 400 * attempts);
+                    }}
+                    setTimeout(tryScroll, 100);
+                }})();
+            </script>
+            """
+            components.html(scroll_script, height=0, scrolling=False)
+
         if group_by_zone:
             # Build zone -> cell -> all members structure
             cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
@@ -2200,8 +2476,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                         if member in checked_in_names_set:
                             checked_in_zone += 1
 
+                zone_id = zone.replace(" ", "-").replace("'", "").lower()
                 st.markdown(f"""
-                <div style="margin-bottom: 2rem;">
+                <div id="hist-group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                         {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_in_zone}/{total_in_zone})</span>
@@ -2219,8 +2496,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
                     pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
 
+                    cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                    <div id="hist-cell-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
                         <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
                                    letter-spacing: 1px; margin-bottom: 0.5rem;">
                             {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_in_cell})</span>
@@ -2244,8 +2522,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
                 pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
 
+                group_id = group_name.replace(" ", "-").replace("'", "").lower()
                 st.markdown(f"""
-                <div style="margin-bottom: 2rem;">
+                <div id="hist-group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                     <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
                                text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                         {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
@@ -2275,6 +2554,82 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
             st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
+            # Search bar for cell group/zone filtering with auto-scroll (historical empty state)
+            all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
+
+            if group_by_zone:
+                cell_to_zone_map_search, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+                all_zones_search = set()
+                for cell_group in all_cell_groups_search:
+                    zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
+                    all_zones_search.add(zone)
+                zones_list = sorted(all_zones_search, key=str.lower)
+                searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+            else:
+                searchable_groups = all_cell_groups_search
+
+            search_options = [""] + searchable_groups
+            search_key = f"hist_empty_search_zone_{target_date}" if group_by_zone else f"hist_empty_search_cell_group_{target_date}"
+            selected_group = st.selectbox(
+                f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
+                options=search_options,
+                format_func=lambda x: x if x else "Jump to...",
+                key=search_key,
+                help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
+            )
+
+            if selected_group:
+                if selected_group.startswith("Zone: "):
+                    actual_group = selected_group[6:]
+                    target_id = f"hist-empty-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                elif selected_group.startswith("Cell: "):
+                    actual_group = selected_group[6:]
+                    target_id = f"hist-cell-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                else:
+                    actual_group = selected_group
+                    target_id = f"hist-empty-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                scroll_script = f"""
+                <script>
+                    (function() {{
+                        function findAndScroll() {{
+                            var targetId = '{target_id}';
+                            var docs = [document];
+                            try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
+                            try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+                            for (var i = 0; i < docs.length; i++) {{
+                                var el = docs[i].getElementById(targetId);
+                                if (el) {{
+                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                                    el.style.transition = 'all 0.3s ease';
+                                    el.style.boxShadow = '0 0 20px {colors['primary']}';
+                                    el.style.backgroundColor = '{colors['light']}';
+                                    setTimeout(function() {{
+                                        el.style.boxShadow = 'none';
+                                        el.style.backgroundColor = 'transparent';
+                                    }}, 2500);
+                                    return true;
+                                }}
+                            }}
+                            for (var i = 0; i < docs.length; i++) {{
+                                try {{
+                                    var el = docs[i].querySelector('[id="' + targetId + '"]');
+                                    if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
+                                }} catch(e) {{}}
+                            }}
+                            return false;
+                        }}
+                        var attempts = 0;
+                        function tryScroll() {{
+                            if (findAndScroll() || attempts >= 5) return;
+                            attempts++;
+                            setTimeout(tryScroll, 400 * attempts);
+                        }}
+                        setTimeout(tryScroll, 100);
+                    }})();
+                </script>
+                """
+                components.html(scroll_script, height=0, scrolling=False)
+
             if group_by_zone:
                 # Build zone -> cell -> all members structure
                 cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
@@ -2291,8 +2646,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     cells_all = zone_cell_all_members[zone]
                     total_in_zone = sum(len(members) for members in cells_all.values())
 
+                    zone_id = zone.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-bottom: 2rem;">
+                    <div id="hist-empty-group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                         <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
                                    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                             {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
@@ -2304,8 +2660,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                         all_names_in_cell = cells_all[cell_group]
                         pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
 
+                        cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         st.markdown(f"""
-                        <div style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                        <div id="hist-cell-empty-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
                             <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
                                        letter-spacing: 1px; margin-bottom: 0.5rem;">
                                 {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
@@ -2322,8 +2679,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
 
+                    group_id = group_name.replace(" ", "-").replace("'", "").lower()
                     st.markdown(f"""
-                    <div style="margin-bottom: 2rem;">
+                    <div id="hist-empty-group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
                         <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
                                    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
                             {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
@@ -2379,7 +2737,9 @@ with st.sidebar:
     # Handle email sending
     if st.session_state.get('sending_email', False):
         st.session_state.sending_email = False
-        with st.spinner("Sending email report..."):
+        # Determine which date to send - use historical date if viewing historical, otherwise None (today)
+        report_date = st.session_state.get('historical_date') if st.session_state.get('viewing_historical', False) else None
+        with st.spinner(f"Sending email report{' for ' + report_date if report_date else ''}..."):
             try:
                 from weekly_email_report import main as send_weekly_report
                 # Redirect stdout to capture output
@@ -2388,13 +2748,13 @@ with st.sidebar:
                 old_stdout = sys.stdout
                 sys.stdout = io.StringIO()
 
-                send_weekly_report()
+                send_weekly_report(target_date=report_date)
 
                 output = sys.stdout.getvalue()
                 sys.stdout = old_stdout
 
                 if "SUCCESS" in output:
-                    st.success("Email report sent successfully!")
+                    st.success(f"Email report sent successfully!{' (Date: ' + report_date + ')' if report_date else ''}")
                 else:
                     st.error("Failed to send email. Check configuration.")
                     if output:
@@ -2427,7 +2787,9 @@ with st.sidebar:
     # Handle NWST Core Team email sending
     if st.session_state.get('sending_nwst_core', False):
         st.session_state.sending_nwst_core = False
-        with st.spinner("Sending to NWST Core Team..."):
+        # Determine which date to send - use historical date if viewing historical, otherwise None (today)
+        report_date = st.session_state.get('historical_date') if st.session_state.get('viewing_historical', False) else None
+        with st.spinner(f"Sending to NWST Core Team{' for ' + report_date if report_date else ''}..."):
             try:
                 from weekly_email_report import send_to_nwst_core_team
                 # Redirect stdout to capture output
@@ -2436,13 +2798,13 @@ with st.sidebar:
                 old_stdout = sys.stdout
                 sys.stdout = io.StringIO()
 
-                send_to_nwst_core_team()
+                send_to_nwst_core_team(target_date=report_date)
 
                 output = sys.stdout.getvalue()
                 sys.stdout = old_stdout
 
                 if "SUCCESS" in output:
-                    st.success("Report sent to NWST Core Team!")
+                    st.success(f"Report sent to NWST Core Team!{' (Date: ' + report_date + ')' if report_date else ''}")
                 else:
                     st.error("Failed to send. Check configuration.")
                     if output:
