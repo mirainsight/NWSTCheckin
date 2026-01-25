@@ -1,0 +1,33 @@
+name: Weekly Email Report
+
+on:
+  schedule:
+    - cron: '45 8 * * 6'
+
+  workflow_dispatch:
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install gspread google-auth python-dotenv
+
+      - name: Send NWST Core Team Report
+        env:
+          ATTENDANCE_SHEET_ID: ${{ secrets.ATTENDANCE_SHEET_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+        run: |
+          python scheduler.py --now-core-team
