@@ -9,3 +9,4 @@ schedule
 altair
 vl-convert-python
 upstash-redis
+weasyprint
