@@ -102,11 +102,11 @@ def get_today_myt_date():
     return get_now_myt().strftime("%Y-%m-%d")
 
 
-def generate_daily_colors():
-    """Generate random colors based on today's date (consistent throughout the day)"""
-    today = get_today_myt_date()
+def generate_daily_colors(target_date=None):
+    """Generate random colors based on a date (consistent throughout the day)"""
+    date_str = target_date if target_date else get_today_myt_date()
     # Use date as seed for consistent colors throughout the day
-    seed = int(hashlib.md5(today.encode()).hexdigest(), 16)
+    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
 
     # Generate vibrant colors using the seed
     random.seed(seed)
@@ -193,6 +193,46 @@ def get_gsheet_client():
         return None
 
 
+def get_all_members_from_options(client, sheet_id):
+    """Read all members from Options tab (Column C) and group by cell group.
+
+    Returns:
+        dict: {cell_group: [list of names]} for all members in the roster
+    """
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+
+        try:
+            options_sheet = spreadsheet.worksheet(OPTIONS_TAB_NAME)
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"Warning: Options tab not found")
+            return {}
+
+        # Read column C (1-indexed, so 3 = Column C)
+        column_c_values = options_sheet.col_values(3)
+
+        if not column_c_values or len(column_c_values) <= 1:
+            return {}
+
+        # Parse "Name - Cell Group" format and group by cell group
+        all_members_by_cell_group = {}
+
+        for value in column_c_values[1:]:  # Skip header row
+            value = value.strip()
+            if value:
+                name, cell_group = parse_name_cell_group(value)
+                if name and cell_group:
+                    if cell_group not in all_members_by_cell_group:
+                        all_members_by_cell_group[cell_group] = []
+                    all_members_by_cell_group[cell_group].append(name)
+
+        return all_members_by_cell_group
+
+    except Exception as e:
+        print(f"Warning: Could not read Options tab: {str(e)}")
+        return {}
+
+
 def get_cell_to_zone_mapping(client, sheet_id):
     """Read cell-to-zone mapping from Key Values tab in Google Sheets."""
     try:
@@ -229,8 +269,8 @@ def parse_name_cell_group(name_cell_group_str):
         return parts[0].strip(), "Unknown"
 
 
-def get_today_attendance_data(client, sheet_id, tab_name):
-    """Get today's attendance data with names and cell groups grouped"""
+def get_today_attendance_data(client, sheet_id, tab_name, target_date=None):
+    """Get attendance data with names and cell groups grouped for a specific date (defaults to today)"""
     try:
         spreadsheet = client.open_by_key(sheet_id)
 
@@ -244,7 +284,7 @@ def get_today_attendance_data(client, sheet_id, tab_name):
         if len(all_rows) <= 1:
             return {}, []
 
-        today_myt = get_today_myt_date()
+        date_to_match = target_date if target_date else get_today_myt_date()
         cell_group_data = {}
         checked_in_set = set()
         checked_in_list = []
@@ -263,7 +303,7 @@ def get_today_attendance_data(client, sheet_id, tab_name):
                 if len(timestamp_str) >= 10:
                     date_part = timestamp_str[:10]
 
-                    if date_part == today_myt:
+                    if date_part == date_to_match:
                         if name_cell_group not in checked_in_set:
                             checked_in_set.add(name_cell_group)
                             checked_in_list.append(name_cell_group)
@@ -354,8 +394,19 @@ def generate_bar_chart(display_data, group_label, title, primary_color="#00aa66"
         return None
 
 
-def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, has_nwst_chart=True, has_leaders_chart=True):
-    """Generate HTML email content with dashboard summary"""
+def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, all_members=None, has_nwst_chart=True, has_leaders_chart=True):
+    """Generate HTML email content with dashboard summary.
+
+    Args:
+        nwst_data: Tuple of (cell_group_data, checked_in_list) for NWST
+        leaders_data: Tuple of (cell_group_data, checked_in_list) for Leaders
+        cell_to_zone: Dict mapping cell groups to zones
+        daily_colors: Dict with color theme
+        all_members: Dict of {cell_group: [names]} for ALL members (from Options tab)
+                     If provided, pending members will be shown greyed out
+        has_nwst_chart: Whether NWST chart is available
+        has_leaders_chart: Whether Leaders chart is available
+    """
     today = get_now_myt().strftime("%A, %B %d, %Y")
     current_time = get_now_myt().strftime("%I:%M %p MYT")
     primary_color = daily_colors['primary']
@@ -381,6 +432,10 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
         if cell_group not in zone_cell_names[zone]:
             zone_cell_names[zone][cell_group] = []
         zone_cell_names[zone][cell_group].extend(names)
+
+    # Calculate total members if all_members provided
+    total_nwst_members = sum(len(names) for names in all_members.values()) if all_members else 0
+    total_leaders_members = total_nwst_members  # Same roster for now
 
     html = f"""
 <!DOCTYPE html>
@@ -448,6 +503,11 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             text-transform: uppercase;
             letter-spacing: 1px;
         }}
+        .kpi-secondary {{
+            font-size: 16px;
+            color: #888;
+            margin-top: 5px;
+        }}
         .chart-container {{
             text-align: center;
             margin: 20px 0;
@@ -488,6 +548,28 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             border-radius: 15px;
             font-size: 13px;
         }}
+        .name-badge-pending {{
+            display: inline-block;
+            background: #f0f0f0;
+            color: #999999;
+            padding: 4px 10px;
+            margin: 3px;
+            border-radius: 15px;
+            font-size: 13px;
+            opacity: 0.6;
+        }}
+        .legend {{
+            margin: 15px 0;
+            padding: 10px 15px;
+            background: #fafafa;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+        }}
+        .legend-item {{
+            display: inline-block;
+            margin-right: 20px;
+        }}
         .footer {{
             text-align: center;
             color: #999999;
@@ -517,19 +599,60 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             <div class="kpi-box">
                 <div class="kpi-number">{nwst_total}</div>
                 <div class="kpi-label">Total Checked In Today</div>
+"""
+
+    # Add attendance rate if all_members provided
+    if all_members and total_nwst_members > 0:
+        attendance_rate = (nwst_total / total_nwst_members) * 100
+        html += f'<div class="kpi-secondary">{nwst_total} of {total_nwst_members} members ({attendance_rate:.0f}%)</div>'
+
+    html += """
             </div>
 """
 
-    # Add NWST chart placeholder
+    # Add NWST chart and breakdown
     if nwst_total > 0:
         html += """
             <div class="chart-container">
                 <img src="cid:nwst_chart" alt="NWST Attendance Chart">
             </div>
+"""
+
+    # Show breakdown with all members (checked-in + pending)
+    if all_members:
+        html += """
+            <div class="legend">
+                <span class="legend-item"><span class="name-badge">Name</span> = Checked In</span>
+                <span class="legend-item"><span class="name-badge-pending">Name</span> = Pending</span>
+            </div>
             <div class="breakdown">
                 <h3>Cell Group Breakdown</h3>
 """
-        # Add cell group breakdown for NWST
+        # Get all cell groups (from all_members and checked-in data)
+        all_cell_groups = set(all_members.keys()) | set(nwst_cell_data.keys())
+
+        for cell_group in sorted(all_cell_groups, key=str.lower):
+            all_names_in_group = set(all_members.get(cell_group, []))
+            checked_in_names = set(nwst_cell_data.get(cell_group, []))
+            pending_names = all_names_in_group - checked_in_names
+
+            checked_count = len(checked_in_names)
+            total_count = len(all_names_in_group) if all_names_in_group else checked_count
+
+            html += f"""
+                <div class="cell-header">{cell_group} ({checked_count}/{total_count})</div>
+                <div class="names-list">
+                    {' '.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])}
+                    {' '.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])}
+                </div>
+"""
+        html += "</div>"
+    elif nwst_total > 0:
+        # Fallback: only show checked-in names (no all_members data)
+        html += """
+            <div class="breakdown">
+                <h3>Cell Group Breakdown</h3>
+"""
         for cell_group in sorted(nwst_cell_data.keys(), key=str.lower):
             names = nwst_cell_data[cell_group]
             html += f"""
@@ -553,6 +676,14 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             <div class="kpi-box">
                 <div class="kpi-number">{leaders_total}</div>
                 <div class="kpi-label">Total Checked In Today</div>
+"""
+
+    # Add attendance rate if all_members provided
+    if all_members and total_leaders_members > 0:
+        leaders_rate = (leaders_total / total_leaders_members) * 100
+        html += f'<div class="kpi-secondary">{leaders_total} of {total_leaders_members} members ({leaders_rate:.0f}%)</div>'
+
+    html += """
             </div>
 """
 
@@ -562,10 +693,65 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
             <div class="chart-container">
                 <img src="cid:leaders_chart" alt="Leaders Attendance Chart">
             </div>
+"""
+
+    # Show breakdown with all members (checked-in + pending) for Leaders
+    if all_members:
+        # Convert all_members to zone structure
+        zone_cell_all_members = {}
+        for cell_group, members in all_members.items():
+            zone = cell_to_zone.get(cell_group.lower(), cell_group)
+            if zone not in zone_cell_all_members:
+                zone_cell_all_members[zone] = {}
+            if cell_group not in zone_cell_all_members[zone]:
+                zone_cell_all_members[zone][cell_group] = []
+            zone_cell_all_members[zone][cell_group].extend(members)
+
+        html += """
+            <div class="legend">
+                <span class="legend-item"><span class="name-badge">Name</span> = Checked In</span>
+                <span class="legend-item"><span class="name-badge-pending">Name</span> = Pending</span>
+            </div>
             <div class="breakdown">
                 <h3>Zone & Cell Breakdown</h3>
 """
-        # Add zone -> cell -> names breakdown for Leaders
+        # Get all zones (from all_members and checked-in data)
+        all_zones = set(zone_cell_all_members.keys()) | set(zone_cell_names.keys())
+
+        for zone in sorted(all_zones, key=str.lower):
+            cells_checked = zone_cell_names.get(zone, {})
+            cells_all = zone_cell_all_members.get(zone, {})
+
+            all_cell_groups_in_zone = set(cells_all.keys()) | set(cells_checked.keys())
+
+            # Calculate zone totals
+            zone_checked = sum(len(names) for names in cells_checked.values())
+            zone_total = sum(len(names) for names in cells_all.values()) if cells_all else zone_checked
+
+            html += f'<div class="zone-header">{zone} ({zone_checked}/{zone_total})</div>'
+
+            for cell_group in sorted(all_cell_groups_in_zone, key=str.lower):
+                all_names_in_cell = set(cells_all.get(cell_group, []))
+                checked_in_names = set(cells_checked.get(cell_group, []))
+                pending_names = all_names_in_cell - checked_in_names
+
+                checked_count = len(checked_in_names)
+                total_count = len(all_names_in_cell) if all_names_in_cell else checked_count
+
+                html += f"""
+                <div class="cell-header">{cell_group} ({checked_count}/{total_count})</div>
+                <div class="names-list">
+                    {' '.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])}
+                    {' '.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])}
+                </div>
+"""
+        html += "</div>"
+    elif leaders_total > 0:
+        # Fallback: only show checked-in names
+        html += """
+            <div class="breakdown">
+                <h3>Zone & Cell Breakdown</h3>
+"""
         for zone in sorted(zone_cell_names.keys(), key=str.lower):
             cells = zone_cell_names[zone]
             total_in_zone = sum(len(names) for names in cells.values())
@@ -598,17 +784,26 @@ def generate_report_html(nwst_data, leaders_data, cell_to_zone, daily_colors, ha
     return html
 
 
-def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_bytes=None):
+def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_bytes=None, target_date=None):
     """
     Generate a simple, clean PDF report.
     Uses basic HTML that xhtml2pdf renders reliably.
+    Now includes pending (greyed out) members.
     """
     import base64
     from datetime import datetime
 
-    # Get current date
-    today = get_now_myt().strftime("%A, %B %d, %Y")
+    # Get date for display - use target_date if provided, otherwise today
+    if target_date:
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        today = date_obj.strftime("%A, %B %d, %Y")
+    else:
+        today = get_now_myt().strftime("%A, %B %d, %Y")
     current_time = get_now_myt().strftime("%I:%M %p MYT")
+
+    # Get the daily color theme for the target date
+    daily_colors = generate_daily_colors(target_date)
+    primary_color = daily_colors['primary']
 
     # Extract data from HTML using simple parsing
     # We'll rebuild a simple PDF-friendly version
@@ -622,15 +817,19 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
     <style>
         @page {{ margin: 2cm; }}
         body {{ font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.5; }}
-        h1 {{ color: #e6a64a; font-size: 24px; text-align: center; margin-bottom: 5px; }}
-        h2 {{ color: #e6a64a; font-size: 16px; background-color: #f5f5f5; padding: 10px; margin-top: 25px; }}
+        h1 {{ color: {primary_color}; font-size: 24px; text-align: center; margin-bottom: 5px; }}
+        h2 {{ color: {primary_color}; font-size: 16px; background-color: #f5f5f5; padding: 10px; margin-top: 25px; }}
         .date {{ text-align: center; color: #666; margin-bottom: 20px; }}
-        .kpi {{ font-size: 36px; color: #e6a64a; font-weight: bold; }}
+        .kpi {{ font-size: 36px; color: {primary_color}; font-weight: bold; }}
         .kpi-label {{ color: #666; font-size: 11px; text-transform: uppercase; }}
+        .kpi-secondary {{ color: #888; font-size: 12px; margin-top: 3px; }}
         .section {{ margin-bottom: 20px; padding: 10px; background: #fafafa; }}
-        .group {{ margin: 10px 0; padding-left: 15px; border-left: 3px solid #e6a64a; }}
+        .group {{ margin: 10px 0; padding-left: 15px; border-left: 3px solid {primary_color}; }}
         .group-title {{ font-weight: bold; color: #333; }}
         .names {{ color: #666; margin-top: 5px; }}
+        .names-checked {{ color: #1565c0; }}
+        .names-pending {{ color: #999; font-style: italic; }}
+        .legend {{ margin: 10px 0; padding: 8px; background: #f0f0f0; font-size: 10px; color: #666; }}
         .chart {{ text-align: center; margin: 15px 0; }}
         .chart img {{ max-width: 500px; }}
         .footer {{ text-align: center; color: #999; font-size: 10px; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 10px; }}
@@ -644,13 +843,21 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
     # Parse the original HTML to extract data (simple approach - look for key elements)
     import re
 
-    # Extract NWST total
+    # Extract NWST total and secondary info
     nwst_match = re.search(r'NWST Check In.*?class="kpi-number">(\d+)', html_content, re.DOTALL)
     nwst_total = nwst_match.group(1) if nwst_match else "0"
+
+    # Extract attendance rate if present
+    nwst_secondary_match = re.search(r'NWST Check In.*?class="kpi-secondary">([^<]+)', html_content, re.DOTALL)
+    nwst_secondary = nwst_secondary_match.group(1) if nwst_secondary_match else ""
 
     # Extract Leaders total
     leaders_match = re.search(r'Leaders Discipleship.*?class="kpi-number">(\d+)', html_content, re.DOTALL)
     leaders_total = leaders_match.group(1) if leaders_match else "0"
+
+    # Extract leaders attendance rate if present
+    leaders_secondary_match = re.search(r'Leaders Discipleship.*?class="kpi-secondary">([^<]+)', html_content, re.DOTALL)
+    leaders_secondary = leaders_secondary_match.group(1) if leaders_secondary_match else ""
 
     # NWST Section
     pdf_html += f"""
@@ -660,19 +867,36 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
         <span class="kpi-label"> Total Checked In</span>
 """
 
+    if nwst_secondary:
+        pdf_html += f'<div class="kpi-secondary">{nwst_secondary}</div>'
+
     # Add NWST chart if available
     if nwst_chart_bytes:
         nwst_b64 = base64.b64encode(nwst_chart_bytes).decode('utf-8')
         pdf_html += f'<div class="chart"><img src="data:image/png;base64,{nwst_b64}"></div>'
 
-    # Extract NWST cell groups and names
+    # Check if there are pending members (legend present)
+    has_pending = 'name-badge-pending' in html_content
+    if has_pending:
+        pdf_html += '<div class="legend">Legend: <span class="names-checked">Blue = Checked In</span> | <span class="names-pending">Grey/Italic = Pending</span></div>'
+
+    # Extract NWST cell groups and names (both checked-in and pending)
     nwst_section = re.search(r'NWST Check In.*?(?=Leaders Discipleship|$)', html_content, re.DOTALL)
     if nwst_section:
         cell_groups = re.findall(r'class="cell-header">([^<]+)</div>\s*<div class="names-list">(.*?)</div>', nwst_section.group(), re.DOTALL)
         for group_name, names_html in cell_groups:
-            names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
-            if names:
-                pdf_html += f'<div class="group"><span class="group-title">{group_name}</span><div class="names">{", ".join(names)}</div></div>'
+            # Extract checked-in names
+            checked_names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
+            # Extract pending names
+            pending_names = re.findall(r'class="name-badge-pending">([^<]+)</span>', names_html)
+
+            if checked_names or pending_names:
+                pdf_html += f'<div class="group"><span class="group-title">{group_name}</span>'
+                if checked_names:
+                    pdf_html += f'<div class="names names-checked">{", ".join(checked_names)}</div>'
+                if pending_names:
+                    pdf_html += f'<div class="names names-pending">{", ".join(pending_names)}</div>'
+                pdf_html += '</div>'
 
     pdf_html += "</div>"
 
@@ -684,10 +908,16 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
         <span class="kpi-label"> Total Checked In</span>
 """
 
+    if leaders_secondary:
+        pdf_html += f'<div class="kpi-secondary">{leaders_secondary}</div>'
+
     # Add Leaders chart if available
     if leaders_chart_bytes:
         leaders_b64 = base64.b64encode(leaders_chart_bytes).decode('utf-8')
         pdf_html += f'<div class="chart"><img src="data:image/png;base64,{leaders_b64}"></div>'
+
+    if has_pending:
+        pdf_html += '<div class="legend">Legend: <span class="names-checked">Blue = Checked In</span> | <span class="names-pending">Grey/Italic = Pending</span></div>'
 
     # Extract Leaders zone/cell groups and names
     leaders_section = re.search(r'Leaders Discipleship.*', html_content, re.DOTALL)
@@ -695,12 +925,21 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
         # Get zone headers and their content
         zones = re.findall(r'class="zone-header">([^<]+)</div>(.*?)(?=class="zone-header"|</div>\s*<!--|$)', leaders_section.group(), re.DOTALL)
         for zone_name, zone_content in zones:
-            pdf_html += f'<div class="group"><span class="group-title" style="color:#e6a64a;">{zone_name}</span>'
+            pdf_html += f'<div class="group"><span class="group-title" style="color:{primary_color};">{zone_name}</span>'
             cell_groups = re.findall(r'class="cell-header">([^<]+)</div>\s*<div class="names-list">(.*?)</div>', zone_content, re.DOTALL)
             for group_name, names_html in cell_groups:
-                names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
-                if names:
-                    pdf_html += f'<div style="margin-left:15px;"><span class="group-title">{group_name}</span><div class="names">{", ".join(names)}</div></div>'
+                # Extract checked-in names
+                checked_names = re.findall(r'class="name-badge">([^<]+)</span>', names_html)
+                # Extract pending names
+                pending_names = re.findall(r'class="name-badge-pending">([^<]+)</span>', names_html)
+
+                if checked_names or pending_names:
+                    pdf_html += f'<div style="margin-left:15px;"><span class="group-title">{group_name}</span>'
+                    if checked_names:
+                        pdf_html += f'<div class="names names-checked">{", ".join(checked_names)}</div>'
+                    if pending_names:
+                        pdf_html += f'<div class="names names-pending">{", ".join(pending_names)}</div>'
+                    pdf_html += '</div>'
             pdf_html += '</div>'
 
     pdf_html += """
@@ -723,7 +962,7 @@ def generate_pdf_from_html(html_content, nwst_chart_bytes=None, leaders_chart_by
     return pdf_buffer.read()
 
 
-def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes, attach_pdf=True):
+def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes, attach_pdf=True, target_date=None):
     """Send the email report with embedded charts"""
 
     # Get email credentials
@@ -734,10 +973,18 @@ def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes, attac
         print("Please set SENDER_EMAIL and SENDER_PASSWORD in .env file")
         return False
 
+    # Format date for subject line
+    if target_date:
+        from datetime import datetime
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        date_display = date_obj.strftime('%B %d, %Y')
+    else:
+        date_display = get_now_myt().strftime('%B %d, %Y')
+
     try:
         # Create message
         msg = MIMEMultipart('related')
-        msg['Subject'] = f"Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}"
+        msg['Subject'] = f"Weekly Check-In Report - {date_display}"
         msg['From'] = sender_email
         msg['To'] = EMAIL_RECIPIENT
         msg['Cc'] = EMAIL_CC
@@ -751,7 +998,7 @@ def send_email_report(html_content, nwst_chart_bytes, leaders_chart_bytes, attac
 
         # Plain text fallback
         text_content = f"""
-Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}
+Weekly Check-In Report - {date_display}
 
 This email contains the weekly attendance dashboard report.
 Please view this email in an HTML-compatible email client to see the full report with charts.
@@ -780,8 +1027,8 @@ This is an automated report from the Church Check-In System.
         if attach_pdf:
             try:
                 print("Generating PDF attachment...")
-                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes)
-                date_str = get_now_myt().strftime('%Y-%m-%d')
+                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes, target_date)
+                date_str = target_date if target_date else get_now_myt().strftime('%Y-%m-%d')
                 pdf_attachment = MIMEApplication(pdf_bytes, _subtype='pdf')
                 pdf_attachment.add_header('Content-Disposition', 'attachment',
                                           filename=f'Weekly_Check_In_Report_{date_str}.pdf')
@@ -806,10 +1053,16 @@ This is an automated report from the Church Check-In System.
         return False
 
 
-def main():
-    """Main function to generate and send the weekly report"""
+def main(target_date=None):
+    """Main function to generate and send the weekly report
+
+    Args:
+        target_date: Optional date string in YYYY-MM-DD format. If None, uses today's date.
+    """
+    date_display = target_date if target_date else get_today_myt_date()
     print(f"{'='*60}")
     print(f"Weekly Email Report Generator")
+    print(f"Report date: {date_display}")
     print(f"Running at: {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
     print(f"{'='*60}")
 
@@ -821,32 +1074,38 @@ def main():
         return
 
     # Connect to Google Sheets
-    print("\n[1/5] Connecting to Google Sheets...")
+    print("\n[1/6] Connecting to Google Sheets...")
     client = get_gsheet_client()
     if not client:
         return
     print("Connected successfully!")
 
     # Get cell-to-zone mapping
-    print("\n[2/5] Loading zone mappings...")
+    print("\n[2/6] Loading zone mappings...")
     cell_to_zone = get_cell_to_zone_mapping(client, sheet_id)
     print(f"Loaded {len(cell_to_zone)} zone mappings")
 
+    # Get all members from Options tab (for showing pending/greyed out names)
+    print("\n[3/6] Fetching all members from Options tab...")
+    all_members = get_all_members_from_options(client, sheet_id)
+    total_members = sum(len(names) for names in all_members.values())
+    print(f"Found {total_members} total members in {len(all_members)} cell groups")
+
     # Get NWST attendance data
-    print("\n[3/5] Fetching NWST Check In data...")
-    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME)
+    print("\n[4/6] Fetching NWST Check In data...")
+    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME, target_date)
     print(f"Found {len(nwst_list)} NWST check-ins")
 
     # Get Leaders attendance data
-    print("\n[4/5] Fetching Leaders Discipleship Check In data...")
-    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME)
+    print("\n[5/6] Fetching Leaders Discipleship Check In data...")
+    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME, target_date)
     print(f"Found {len(leaders_list)} Leaders check-ins")
 
     # Generate charts
-    print("\n[5/5] Generating charts and email...")
+    print("\n[6/6] Generating charts and email...")
 
-    # Get daily color theme
-    daily_colors = generate_daily_colors()
+    # Get daily color theme (based on target date)
+    daily_colors = generate_daily_colors(target_date)
     print(f"Using daily color theme: {daily_colors['primary']}")
 
     # NWST chart (by cell group)
@@ -882,12 +1141,13 @@ def main():
         (nwst_cell_data, nwst_list),
         (leaders_cell_data, leaders_list),
         cell_to_zone,
-        daily_colors
+        daily_colors,
+        all_members=all_members
     )
 
     # Send email
     print("\nSending email report...")
-    success = send_email_report(html_content, nwst_chart, leaders_chart)
+    success = send_email_report(html_content, nwst_chart, leaders_chart, target_date=target_date)
 
     if success:
         print(f"\n{'='*60}")
@@ -899,10 +1159,16 @@ def main():
         print(f"{'='*60}")
 
 
-def send_to_nwst_core_team():
-    """Send today's attendance report to NWST Core Team (same content as weekly report, different recipients)"""
+def send_to_nwst_core_team(target_date=None):
+    """Send attendance report to NWST Core Team (same content as weekly report, different recipients)
+
+    Args:
+        target_date: Optional date string in YYYY-MM-DD format. If None, uses today's date.
+    """
+    date_display = target_date if target_date else get_today_myt_date()
     print(f"{'='*60}")
     print(f"NWST Core Team Report")
+    print(f"Report date: {date_display}")
     print(f"Running at: {get_now_myt().strftime('%Y-%m-%d %H:%M:%S MYT')}")
     print(f"{'='*60}")
 
@@ -937,30 +1203,36 @@ def send_to_nwst_core_team():
         return
 
     # Connect to Google Sheets
-    print("\n[1/5] Connecting to Google Sheets...")
+    print("\n[1/6] Connecting to Google Sheets...")
     client = get_gsheet_client()
     if not client:
         return
     print("Connected successfully!")
 
     # Get cell-to-zone mapping
-    print("\n[2/5] Loading zone mappings...")
+    print("\n[2/6] Loading zone mappings...")
     cell_to_zone = get_cell_to_zone_mapping(client, sheet_id)
     print(f"Loaded {len(cell_to_zone)} zone mappings")
 
+    # Get all members from Options tab (for showing pending/greyed out names)
+    print("\n[3/6] Fetching all members from Options tab...")
+    all_members = get_all_members_from_options(client, sheet_id)
+    total_members = sum(len(names) for names in all_members.values())
+    print(f"Found {total_members} total members in {len(all_members)} cell groups")
+
     # Get NWST attendance data
-    print("\n[3/5] Fetching NWST Check In data...")
-    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME)
+    print("\n[4/6] Fetching NWST Check In data...")
+    nwst_cell_data, nwst_list = get_today_attendance_data(client, sheet_id, ATTENDANCE_TAB_NAME, target_date)
     print(f"Found {len(nwst_list)} NWST check-ins")
 
     # Get Leaders attendance data
-    print("\n[4/5] Fetching Leaders Discipleship Check In data...")
-    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME)
+    print("\n[5/6] Fetching Leaders Discipleship Check In data...")
+    leaders_cell_data, leaders_list = get_today_attendance_data(client, sheet_id, LEADERS_ATTENDANCE_TAB_NAME, target_date)
     print(f"Found {len(leaders_list)} Leaders check-ins")
 
     # Generate charts and report (same as weekly report)
-    print("\n[5/5] Generating charts and email...")
-    daily_colors = generate_daily_colors()
+    print("\n[6/6] Generating charts and email...")
+    daily_colors = generate_daily_colors(target_date)
     print(f"Using daily color theme: {daily_colors['primary']}")
 
     # NWST chart (by cell group)
@@ -995,12 +1267,13 @@ def send_to_nwst_core_team():
         (nwst_cell_data, nwst_list),
         (leaders_cell_data, leaders_list),
         cell_to_zone,
-        daily_colors
+        daily_colors,
+        all_members=all_members
     )
 
     # Send email to NWST Core Team
     print("\nSending email to NWST Core Team...")
-    success = send_nwst_core_team_email(html_content, nwst_chart, leaders_chart, NWST_CORE_TEAM_TO, NWST_CORE_TEAM_CC)
+    success = send_nwst_core_team_email(html_content, nwst_chart, leaders_chart, NWST_CORE_TEAM_TO, NWST_CORE_TEAM_CC, target_date=target_date)
 
     if success:
         print(f"\n{'='*60}")
@@ -1012,7 +1285,7 @@ def send_to_nwst_core_team():
         print(f"{'='*60}")
 
 
-def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_bytes, recipients_to, recipients_cc, attach_pdf=True):
+def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_bytes, recipients_to, recipients_cc, attach_pdf=True, target_date=None):
     """Send the weekly report email to NWST Core Team (same format, different recipients)"""
 
     sender_email, sender_password = get_email_credentials()
@@ -1021,9 +1294,17 @@ def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_byte
         print("ERROR: Email credentials not configured.")
         return False
 
+    # Format date for subject line
+    if target_date:
+        from datetime import datetime
+        date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+        date_display = date_obj.strftime('%B %d, %Y')
+    else:
+        date_display = get_now_myt().strftime('%B %d, %Y')
+
     try:
         msg = MIMEMultipart('related')
-        msg['Subject'] = f"Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}"
+        msg['Subject'] = f"Weekly Check-In Report - {date_display}"
         msg['From'] = sender_email
         msg['To'] = ", ".join(recipients_to)
         msg['Cc'] = ", ".join(recipients_cc)
@@ -1035,7 +1316,7 @@ def send_nwst_core_team_email(html_content, nwst_chart_bytes, leaders_chart_byte
         msg.attach(msg_alternative)
 
         text_content = f"""
-Weekly Check-In Report - {get_now_myt().strftime('%B %d, %Y')}
+Weekly Check-In Report - {date_display}
 
 This email contains the weekly attendance dashboard report.
 Please view in an HTML-compatible email client to see the full report with charts.
@@ -1064,8 +1345,8 @@ This is an automated report from the Church Check-In System.
         if attach_pdf:
             try:
                 print("Generating PDF attachment...")
-                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes)
-                date_str = get_now_myt().strftime('%Y-%m-%d')
+                pdf_bytes = generate_pdf_from_html(html_content, nwst_chart_bytes, leaders_chart_bytes, target_date)
+                date_str = target_date if target_date else get_now_myt().strftime('%Y-%m-%d')
                 pdf_attachment = MIMEApplication(pdf_bytes, _subtype='pdf')
                 pdf_attachment.add_header('Content-Disposition', 'attachment',
                                           filename=f'Weekly_Check_In_Report_{date_str}.pdf')
