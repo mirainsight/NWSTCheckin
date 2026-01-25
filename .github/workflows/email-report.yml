@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install gspread google-auth python-dotenv
+          pip install gspread google-auth python-dotenv schedule
 
       - name: Send NWST Core Team Report
         env:
