@@ -902,6 +902,52 @@ st.markdown(f"""
         color: #000000 !important;
     }
     '''}
+
+    /* Collapsible cell group styles */
+    .cell-collapsible {{
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.2s ease;
+    }}
+    .cell-collapsible:hover {{
+        opacity: 0.8;
+    }}
+    .cell-content {{
+        overflow: hidden;
+        transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
+        max-height: 0;
+        opacity: 0;
+    }}
+    .cell-content.expanded {{
+        max-height: 2000px;
+        opacity: 1;
+    }}
+    .cell-toggle {{
+        display: inline-block;
+        margin-right: 0.5rem;
+        transition: transform 0.2s ease;
+        font-size: 0.85rem;
+    }}
+    .cell-toggle.expanded {{
+        transform: rotate(90deg);
+    }}
+    .expand-collapse-btn {{
+        background: transparent;
+        border: 1px solid {page_colors['primary']};
+        color: {page_colors['primary']};
+        padding: 0.3rem 0.8rem;
+        margin-right: 0.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.8rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }}
+    .expand-collapse-btn:hover {{
+        background: {page_colors['primary']};
+        color: {page_colors['background']};
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1702,8 +1748,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         names_title = "Attendees by Zone" if group_by_zone else "Attendees by Cell Group"
         st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
 
-        # Search bar for cell group/zone filtering with auto-scroll
-        # Build list of searchable groups (include both zones and cell groups when in zone view)
+        # Build search options for the HTML select
         all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
 
         if group_by_zone:
@@ -1713,84 +1758,212 @@ def render_dashboard(tab_name, group_by_zone=False):
                 zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
                 all_zones_search.add(zone)
             zones_list = sorted(all_zones_search, key=str.lower)
-            # Combine: zones first, then cell groups
-            searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+            searchable_groups = [("zone", z) for z in zones_list] + [("cell", c) for c in all_cell_groups_search]
         else:
-            searchable_groups = all_cell_groups_search
+            searchable_groups = [("group", g) for g in all_cell_groups_search]
 
-        # Add search selectbox
-        search_options = [""] + searchable_groups
-        search_key = "today_search_zone" if group_by_zone else "today_search_cell_group"
-        selected_group = st.selectbox(
-            f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
-            options=search_options,
-            format_func=lambda x: x if x else "Jump to...",
-            key=search_key,
-            help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
-        )
+        # Build collapsible breakdown HTML - must be in single components.html() for JS to work
+        breakdown_html = f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-        # JavaScript for auto-scroll functionality using postMessage and direct DOM access
-        if selected_group:
-            # Parse the selection to get the actual group name and type
-            if selected_group.startswith("Zone: "):
-                actual_group = selected_group[6:]  # Remove "Zone: " prefix
-                target_id = f"group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-            elif selected_group.startswith("Cell: "):
-                actual_group = selected_group[6:]  # Remove "Cell: " prefix
-                # For cell groups in zone view, we need to find the cell group element
-                target_id = f"cell-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            * {{
+                font-family: 'Inter', sans-serif !important;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: 'Inter', sans-serif !important;
+                margin: 0;
+                padding: 0;
+            }}
+            .cell-collapsible {{
+                cursor: pointer;
+                user-select: none;
+                transition: all 0.2s ease;
+            }}
+            .cell-collapsible:hover {{
+                opacity: 0.8;
+            }}
+            .cell-content {{
+                overflow: hidden;
+                transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding 0.3s ease-out;
+                max-height: 0;
+                opacity: 0;
+                padding: 0;
+            }}
+            .cell-content.expanded {{
+                max-height: 2000px;
+                opacity: 1;
+                padding-top: 0.5rem;
+            }}
+            .cell-toggle {{
+                display: inline-block;
+                margin-right: 0.5rem;
+                transition: transform 0.2s ease;
+                font-size: 0.85rem;
+            }}
+            .cell-toggle.expanded {{
+                transform: rotate(90deg);
+            }}
+            .expand-collapse-btn {{
+                background: transparent;
+                border: 1px solid {page_colors['primary']};
+                color: {page_colors['primary']};
+                padding: 0.4rem 1rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                transition: all 0.2s ease;
+                min-width: 120px;
+            }}
+            .expand-collapse-btn:hover {{
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+            }}
+            .search-select {{
+                padding: 0.5rem;
+                border: 1px solid {page_colors['primary']};
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 500;
+                background: {page_colors['background']};
+                color: {page_colors['text']};
+                min-width: 200px;
+                cursor: pointer;
+            }}
+            .search-select:focus {{
+                outline: none;
+                border-color: {page_colors['primary']};
+                box-shadow: 0 0 5px {page_colors['primary']}40;
+            }}
+            .controls-row {{
+                display: flex;
+                gap: 1rem;
+                align-items: center;
+                margin-bottom: 1rem;
+                flex-wrap: wrap;
+            }}
+            .name-badge {{
+                display: inline-block;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 50px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge:hover {{
+                transform: scale(1.05);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            }}
+            .name-badge-pending {{
+                display: inline-block;
+                background: transparent;
+                color: {page_colors['text_muted']};
+                border: 1px solid {page_colors['text_muted']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 50px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                opacity: 0.5;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge-pending:hover {{
+                transform: scale(1.05);
+                opacity: 0.7;
+            }}
+            .zone-header {{
+                font-family: 'Inter', sans-serif;
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: {page_colors['primary']};
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 1rem;
+                margin-top: 1.5rem;
+            }}
+            .zone-header:first-of-type {{
+                margin-top: 0;
+            }}
+            .cell-header {{
+                font-family: 'Inter', sans-serif;
+                font-size: 1rem;
+                font-weight: 700;
+                color: {page_colors['text_muted']};
+                letter-spacing: 1px;
+                margin-bottom: 0.3rem;
+            }}
+            .cell-container {{
+                margin-left: 1.5rem;
+                margin-bottom: 0.8rem;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            }}
+            .group-header {{
+                font-family: 'Inter', sans-serif;
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: {page_colors['primary']};
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 0.3rem;
+            }}
+            .group-container {{
+                margin-bottom: 1rem;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            }}
+            .count-label {{
+                color: {page_colors['text_muted']};
+                font-size: 0.85rem;
+                font-weight: normal;
+                text-transform: none;
+                letter-spacing: normal;
+            }}
+            .highlight {{
+                box-shadow: 0 0 20px {page_colors['primary']};
+                background-color: {page_colors['light']}20;
+            }}
+        </style>
+        <div class="controls-row">
+            <select id="searchSelect" class="search-select" onchange="jumpToGroup(this.value)">
+                <option value="">Jump to...</option>
+        """
+
+        # Add search options to dropdown
+        for group_type, group_name in searchable_groups:
+            if group_type == "zone":
+                target_id = f"group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = f"Zone: {group_name}"
+            elif group_type == "cell":
+                target_id = f"cell-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = f"Cell: {group_name}"
             else:
-                actual_group = selected_group
-                target_id = f"group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-            scroll_script = f"""
-            <script>
-                (function() {{
-                    function findAndScroll() {{
-                        var targetId = '{target_id}';
-                        var docs = [document];
-                        // Try to access parent frames
-                        try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
-                        try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
+                target_id = f"group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = group_name
+            breakdown_html += f'<option value="{target_id}">{display_name}</option>'
 
-                        for (var i = 0; i < docs.length; i++) {{
-                            var el = docs[i].getElementById(targetId);
-                            if (el) {{
-                                el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                el.style.transition = 'all 0.3s ease';
-                                el.style.boxShadow = '0 0 20px {page_colors['primary']}';
-                                el.style.backgroundColor = '{page_colors['light']}';
-                                setTimeout(function() {{
-                                    el.style.boxShadow = 'none';
-                                    el.style.backgroundColor = 'transparent';
-                                }}, 2500);
-                                return true;
-                            }}
-                        }}
-                        // Try using querySelector with data attribute as fallback
-                        for (var i = 0; i < docs.length; i++) {{
-                            try {{
-                                var el = docs[i].querySelector('[id="' + targetId + '"]');
-                                if (el) {{
-                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                    return true;
-                                }}
-                            }} catch(e) {{}}
-                        }}
-                        return false;
-                    }}
-                    // Multiple retry attempts with increasing delays
-                    var attempts = 0;
-                    var maxAttempts = 5;
-                    function tryScroll() {{
-                        if (findAndScroll() || attempts >= maxAttempts) return;
-                        attempts++;
-                        setTimeout(tryScroll, 400 * attempts);
-                    }}
-                    setTimeout(tryScroll, 100);
-                }})();
-            </script>
-            """
-            components.html(scroll_script, height=0, scrolling=False)
+        breakdown_html += f"""
+            </select>
+            <button id="toggleAllBtn" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
+        </div>
+        """
 
         # Display names for each group
         if group_by_zone:
@@ -1829,14 +2002,11 @@ def render_dashboard(tab_name, group_by_zone=False):
                 total_in_zone = sum(len(members) for members in cells_all.values())
 
                 zone_id = zone.replace(" ", "-").replace("'", "").lower()
-                st.markdown(f"""
-                <div id="group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
-                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({total_checked_in_zone}/{total_in_zone})</span>
-                    </h3>
+                breakdown_html += f"""
+                <div id="group-{zone_id}" class="zone-header">
+                    {zone} <span class="count-label">({total_checked_in_zone}/{total_in_zone})</span>
                 </div>
-                """, unsafe_allow_html=True)
+                """
 
                 # Show each cell within the zone
                 for cell_group in sorted(all_cells_in_zone, key=str.lower):
@@ -1854,17 +2024,17 @@ def render_dashboard(tab_name, group_by_zone=False):
                     total_count = len(all_names_in_cell)
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="cell-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
-                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
-                                   letter-spacing: 1px; margin-bottom: 0.5rem;">
-                            {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_count})</span>
-                        </h4>
-                        <div>
+                    breakdown_html += f"""
+                    <div id="cell-{cell_id}" class="cell-container">
+                        <div class="cell-collapsible cell-header" onclick="toggleCell('{cell_id}')">
+                            <span id="toggle-{cell_id}" class="cell-toggle">▶</span>
+                            {cell_group} <span class="count-label">({checked_count}/{total_count})</span>
+                        </div>
+                        <div id="content-{cell_id}" class="cell-content">
                             {checked_in_badges}{pending_badges}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
         else:
             # Regular cell group display - sorted alphabetically
             # Show all cell groups from options (not just those with check-ins)
@@ -1886,17 +2056,82 @@ def render_dashboard(tab_name, group_by_zone=False):
                 checked_count = len(checked_in_names)
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
-                st.markdown(f"""
-                <div id="group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
-                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
-                    </h3>
-                    <div>
+                breakdown_html += f"""
+                <div id="group-{group_id}" class="group-container">
+                    <div class="cell-collapsible group-header" onclick="toggleCell('{group_id}')">
+                        <span id="toggle-{group_id}" class="cell-toggle">▶</span>
+                        {group_name} <span class="count-label">({checked_count}/{total_in_group})</span>
+                    </div>
+                    <div id="content-{group_id}" class="cell-content">
                         {checked_in_badges}{pending_badges}
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """
+
+        # Add JavaScript and close the HTML
+        breakdown_html += """
+        <script>
+            var isExpanded = false;
+
+            function toggleAll() {
+                var btn = document.getElementById('toggleAllBtn');
+                if (isExpanded) {
+                    // Collapse all
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                    btn.textContent = 'Expand All';
+                    isExpanded = false;
+                } else {
+                    // Expand all
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                    btn.textContent = 'Collapse All';
+                    isExpanded = true;
+                }
+            }
+
+            function toggleCell(cellId) {
+                var content = document.getElementById('content-' + cellId);
+                var toggle = document.getElementById('toggle-' + cellId);
+                if (content && toggle) {
+                    content.classList.toggle('expanded');
+                    toggle.classList.toggle('expanded');
+                }
+            }
+
+            function jumpToGroup(targetId) {
+                if (!targetId) return;
+
+                var el = document.getElementById(targetId);
+                if (el) {
+                    // Expand the cell content if it's collapsed
+                    var content = document.getElementById('content-' + targetId.replace('group-', '').replace('cell-', ''));
+                    var toggle = document.getElementById('toggle-' + targetId.replace('group-', '').replace('cell-', ''));
+                    if (content && !content.classList.contains('expanded')) {
+                        content.classList.add('expanded');
+                        if (toggle) toggle.classList.add('expanded');
+                    }
+
+                    // Scroll to element
+                    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+
+                    // Highlight effect
+                    el.classList.add('highlight');
+                    setTimeout(function() {
+                        el.classList.remove('highlight');
+                    }, 2500);
+                }
+
+                // Reset dropdown
+                document.getElementById('searchSelect').value = '';
+            }
+        </script>
+        """
+
+        # Calculate height based on content
+        num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+        estimated_height = 150 + (num_items * 60)  # Base height + per-item height
+        components.html(breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -1913,7 +2148,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         if all_members_by_cell_group:
             st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Attendees by Cell Group"}</div>', unsafe_allow_html=True)
 
-            # Search bar for cell group/zone filtering with auto-scroll (empty state)
+            # Build search options for the HTML select (empty state)
             all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
 
             if group_by_zone:
@@ -1923,71 +2158,193 @@ def render_dashboard(tab_name, group_by_zone=False):
                     zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
                     all_zones_search.add(zone)
                 zones_list = sorted(all_zones_search, key=str.lower)
-                searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+                searchable_groups_empty = [("zone", z) for z in zones_list] + [("cell", c) for c in all_cell_groups_search]
             else:
-                searchable_groups = all_cell_groups_search
+                searchable_groups_empty = [("group", g) for g in all_cell_groups_search]
 
-            search_options = [""] + searchable_groups
-            search_key = "today_empty_search_zone" if group_by_zone else "today_empty_search_cell_group"
-            selected_group = st.selectbox(
-                f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
-                options=search_options,
-                format_func=lambda x: x if x else "Jump to...",
-                key=search_key,
-                help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
-            )
+            # Build collapsible breakdown HTML for empty state
+            empty_breakdown_html = f"""
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-            if selected_group:
-                if selected_group.startswith("Zone: "):
-                    actual_group = selected_group[6:]
-                    target_id = f"group-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-                elif selected_group.startswith("Cell: "):
-                    actual_group = selected_group[6:]
-                    target_id = f"cell-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                * {{
+                    font-family: 'Inter', sans-serif !important;
+                    box-sizing: border-box;
+                }}
+                body {{
+                    font-family: 'Inter', sans-serif !important;
+                    margin: 0;
+                    padding: 0;
+                }}
+                .cell-collapsible {{
+                    cursor: pointer;
+                    user-select: none;
+                    transition: all 0.2s ease;
+                }}
+                .cell-collapsible:hover {{
+                    opacity: 0.8;
+                }}
+                .cell-content {{
+                    overflow: hidden;
+                    transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding 0.3s ease-out;
+                    max-height: 0;
+                    opacity: 0;
+                    padding: 0;
+                }}
+                .cell-content.expanded {{
+                    max-height: 2000px;
+                    opacity: 1;
+                    padding-top: 0.5rem;
+                }}
+                .cell-toggle {{
+                    display: inline-block;
+                    margin-right: 0.5rem;
+                    transition: transform 0.2s ease;
+                    font-size: 0.85rem;
+                }}
+                .cell-toggle.expanded {{
+                    transform: rotate(90deg);
+                }}
+                .expand-collapse-btn {{
+                    background: transparent;
+                    border: 1px solid {page_colors['primary']};
+                    color: {page_colors['primary']};
+                    padding: 0.4rem 1rem;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    transition: all 0.2s ease;
+                    min-width: 120px;
+                }}
+                .expand-collapse-btn:hover {{
+                    background: {page_colors['primary']};
+                    color: {page_colors['background']};
+                }}
+                .search-select {{
+                    padding: 0.5rem;
+                    border: 1px solid {page_colors['primary']};
+                    border-radius: 4px;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.9rem;
+                    font-weight: 500;
+                    background: {page_colors['background']};
+                    color: {page_colors['text']};
+                    min-width: 200px;
+                    cursor: pointer;
+                }}
+                .search-select:focus {{
+                    outline: none;
+                    border-color: {page_colors['primary']};
+                    box-shadow: 0 0 5px {page_colors['primary']}40;
+                }}
+                .controls-row {{
+                    display: flex;
+                    gap: 1rem;
+                    align-items: center;
+                    margin-bottom: 1rem;
+                    flex-wrap: wrap;
+                }}
+                .name-badge-pending {{
+                    display: inline-block;
+                    background: transparent;
+                    color: {page_colors['text_muted']};
+                    border: 1px solid {page_colors['text_muted']};
+                    padding: 0.6rem 1.2rem;
+                    margin: 0.25rem;
+                    border-radius: 50px;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.9rem;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    opacity: 0.5;
+                    transition: all 0.2s ease;
+                    cursor: default;
+                }}
+                .name-badge-pending:hover {{
+                    transform: scale(1.05);
+                    opacity: 0.7;
+                }}
+                .zone-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1.3rem;
+                    font-weight: 900;
+                    color: {page_colors['primary']};
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    margin-bottom: 1rem;
+                    margin-top: 1.5rem;
+                }}
+                .zone-header:first-of-type {{
+                    margin-top: 0;
+                }}
+                .cell-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1rem;
+                    font-weight: 700;
+                    color: {page_colors['text_muted']};
+                    letter-spacing: 1px;
+                    margin-bottom: 0.3rem;
+                }}
+                .cell-container {{
+                    margin-left: 1.5rem;
+                    margin-bottom: 0.8rem;
+                    padding: 0.5rem;
+                    border-radius: 8px;
+                    transition: all 0.3s ease;
+                }}
+                .group-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1.3rem;
+                    font-weight: 900;
+                    color: {page_colors['primary']};
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    margin-bottom: 0.3rem;
+                }}
+                .group-container {{
+                    margin-bottom: 1rem;
+                    padding: 0.5rem;
+                    border-radius: 8px;
+                    transition: all 0.3s ease;
+                }}
+                .count-label {{
+                    color: {page_colors['text_muted']};
+                    font-size: 0.85rem;
+                    font-weight: normal;
+                    text-transform: none;
+                    letter-spacing: normal;
+                }}
+                .highlight {{
+                    box-shadow: 0 0 20px {page_colors['primary']};
+                    background-color: {page_colors['light']}20;
+                }}
+            </style>
+            <div class="controls-row">
+                <select id="searchSelectEmpty" class="search-select" onchange="jumpToGroup(this.value)">
+                    <option value="">Jump to...</option>
+            """
+
+            # Add search options to dropdown
+            for group_type, group_name in searchable_groups_empty:
+                if group_type == "zone":
+                    target_id = f"group-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = f"Zone: {group_name}"
+                elif group_type == "cell":
+                    target_id = f"cell-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = f"Cell: {group_name}"
                 else:
-                    actual_group = selected_group
-                    target_id = f"group-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-                scroll_script = f"""
-                <script>
-                    (function() {{
-                        function findAndScroll() {{
-                            var targetId = '{target_id}';
-                            var docs = [document];
-                            try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
-                            try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
-                            for (var i = 0; i < docs.length; i++) {{
-                                var el = docs[i].getElementById(targetId);
-                                if (el) {{
-                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                    el.style.transition = 'all 0.3s ease';
-                                    el.style.boxShadow = '0 0 20px {page_colors['primary']}';
-                                    el.style.backgroundColor = '{page_colors['light']}';
-                                    setTimeout(function() {{
-                                        el.style.boxShadow = 'none';
-                                        el.style.backgroundColor = 'transparent';
-                                    }}, 2500);
-                                    return true;
-                                }}
-                            }}
-                            for (var i = 0; i < docs.length; i++) {{
-                                try {{
-                                    var el = docs[i].querySelector('[id="' + targetId + '"]');
-                                    if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
-                                }} catch(e) {{}}
-                            }}
-                            return false;
-                        }}
-                        var attempts = 0;
-                        function tryScroll() {{
-                            if (findAndScroll() || attempts >= 5) return;
-                            attempts++;
-                            setTimeout(tryScroll, 400 * attempts);
-                        }}
-                        setTimeout(tryScroll, 100);
-                    }})();
-                </script>
-                """
-                components.html(scroll_script, height=0, scrolling=False)
+                    target_id = f"group-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = group_name
+                empty_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
+
+            empty_breakdown_html += f"""
+                </select>
+                <button id="toggleAllBtnEmpty" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
+            </div>
+            """
 
             if group_by_zone:
                 # Build zone -> cell -> all members structure
@@ -2006,31 +2363,28 @@ def render_dashboard(tab_name, group_by_zone=False):
                     total_in_zone = sum(len(members) for members in cells_all.values())
 
                     zone_id = zone.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="group-empty-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
-                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                            {zone} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
-                        </h3>
+                    empty_breakdown_html += f"""
+                    <div id="group-empty-{zone_id}" class="zone-header">
+                        {zone} <span class="count-label">(0/{total_in_zone})</span>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
                         pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
-                        st.markdown(f"""
-                        <div id="cell-empty-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
-                            <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {page_colors['text_muted']};
-                                       letter-spacing: 1px; margin-bottom: 0.5rem;">
-                                {cell_group} <span style="color: {page_colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
-                            </h4>
-                            <div>
+                        empty_breakdown_html += f"""
+                        <div id="cell-empty-{cell_id}" class="cell-container">
+                            <div class="cell-collapsible cell-header" onclick="toggleCell('empty-{cell_id}')">
+                                <span id="toggle-empty-{cell_id}" class="cell-toggle">▶</span>
+                                {cell_group} <span class="count-label">(0/{len(all_names_in_cell)})</span>
+                            </div>
+                            <div id="content-empty-{cell_id}" class="cell-content">
                                 {pending_badges}
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """
             else:
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
@@ -2039,17 +2393,71 @@ def render_dashboard(tab_name, group_by_zone=False):
                     total_in_group = len(all_names_in_group)
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="group-empty-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']};
-                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                            {group_name} <span style="color: {page_colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
-                        </h3>
-                        <div>
+                    empty_breakdown_html += f"""
+                    <div id="group-empty-{group_id}" class="group-container">
+                        <div class="cell-collapsible group-header" onclick="toggleCell('empty-{group_id}')">
+                            <span id="toggle-empty-{group_id}" class="cell-toggle">▶</span>
+                            {group_name} <span class="count-label">(0/{total_in_group})</span>
+                        </div>
+                        <div id="content-empty-{group_id}" class="cell-content">
                             {pending_badges}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
+
+            # Add JavaScript
+            empty_breakdown_html += """
+            <script>
+                var isExpanded = false;
+
+                function toggleAll() {
+                    var btn = document.getElementById('toggleAllBtnEmpty');
+                    if (isExpanded) {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                        btn.textContent = 'Expand All';
+                        isExpanded = false;
+                    } else {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                        btn.textContent = 'Collapse All';
+                        isExpanded = true;
+                    }
+                }
+
+                function toggleCell(cellId) {
+                    var content = document.getElementById('content-' + cellId);
+                    var toggle = document.getElementById('toggle-' + cellId);
+                    if (content && toggle) {
+                        content.classList.toggle('expanded');
+                        toggle.classList.toggle('expanded');
+                    }
+                }
+
+                function jumpToGroup(targetId) {
+                    if (!targetId) return;
+                    var el = document.getElementById(targetId);
+                    if (el) {
+                        var cellId = targetId.replace('group-empty-', 'empty-').replace('cell-empty-', 'empty-');
+                        var content = document.getElementById('content-' + cellId);
+                        var toggle = document.getElementById('toggle-' + cellId);
+                        if (content && !content.classList.contains('expanded')) {
+                            content.classList.add('expanded');
+                            if (toggle) toggle.classList.add('expanded');
+                        }
+                        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        el.classList.add('highlight');
+                        setTimeout(function() { el.classList.remove('highlight'); }, 2500);
+                    }
+                    document.getElementById('searchSelectEmpty').value = '';
+                }
+            </script>
+            """
+
+            # Calculate height and render
+            num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+            estimated_height_empty = 150 + (num_items_empty * 60)
+            components.html(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
@@ -2390,7 +2798,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
         st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
-        # Search bar for cell group/zone filtering with auto-scroll (historical)
+        # Build search options for the HTML select (historical)
         all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
 
         if group_by_zone:
@@ -2400,71 +2808,212 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
                 all_zones_search.add(zone)
             zones_list = sorted(all_zones_search, key=str.lower)
-            searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+            searchable_groups_hist = [("zone", z) for z in zones_list] + [("cell", c) for c in all_cell_groups_search]
         else:
-            searchable_groups = all_cell_groups_search
+            searchable_groups_hist = [("group", g) for g in all_cell_groups_search]
 
-        search_options = [""] + searchable_groups
-        search_key = f"hist_search_zone_{target_date}" if group_by_zone else f"hist_search_cell_group_{target_date}"
-        selected_group = st.selectbox(
-            f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
-            options=search_options,
-            format_func=lambda x: x if x else "Jump to...",
-            key=search_key,
-            help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
-        )
+        # Build collapsible breakdown HTML for historical view
+        hist_breakdown_html = f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-        if selected_group:
-            if selected_group.startswith("Zone: "):
-                actual_group = selected_group[6:]
-                target_id = f"hist-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-            elif selected_group.startswith("Cell: "):
-                actual_group = selected_group[6:]
-                target_id = f"hist-cell-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+            * {{
+                font-family: 'Inter', sans-serif !important;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: 'Inter', sans-serif !important;
+                margin: 0;
+                padding: 0;
+            }}
+            .cell-collapsible {{
+                cursor: pointer;
+                user-select: none;
+                transition: all 0.2s ease;
+            }}
+            .cell-collapsible:hover {{
+                opacity: 0.8;
+            }}
+            .cell-content {{
+                overflow: hidden;
+                transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding 0.3s ease-out;
+                max-height: 0;
+                opacity: 0;
+                padding: 0;
+            }}
+            .cell-content.expanded {{
+                max-height: 2000px;
+                opacity: 1;
+                padding-top: 0.5rem;
+            }}
+            .cell-toggle {{
+                display: inline-block;
+                margin-right: 0.5rem;
+                transition: transform 0.2s ease;
+                font-size: 0.85rem;
+            }}
+            .cell-toggle.expanded {{
+                transform: rotate(90deg);
+            }}
+            .expand-collapse-btn {{
+                background: transparent;
+                border: 1px solid {colors['primary']};
+                color: {colors['primary']};
+                padding: 0.4rem 1rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.85rem;
+                font-weight: 600;
+                transition: all 0.2s ease;
+                min-width: 120px;
+            }}
+            .expand-collapse-btn:hover {{
+                background: {colors['primary']};
+                color: {colors['background']};
+            }}
+            .search-select {{
+                padding: 0.5rem;
+                border: 1px solid {colors['primary']};
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 500;
+                background: {colors['background']};
+                color: {colors['text']};
+                min-width: 200px;
+                cursor: pointer;
+            }}
+            .search-select:focus {{
+                outline: none;
+                border-color: {colors['primary']};
+                box-shadow: 0 0 5px {colors['primary']}40;
+            }}
+            .controls-row {{
+                display: flex;
+                gap: 1rem;
+                align-items: center;
+                margin-bottom: 1rem;
+                flex-wrap: wrap;
+            }}
+            .name-badge {{
+                display: inline-block;
+                background: {colors['primary']};
+                color: {colors['background']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 50px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge:hover {{
+                transform: scale(1.05);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            }}
+            .name-badge-pending {{
+                display: inline-block;
+                background: transparent;
+                color: {colors['text_muted']};
+                border: 1px solid {colors['text_muted']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 50px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                opacity: 0.5;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge-pending:hover {{
+                transform: scale(1.05);
+                opacity: 0.7;
+            }}
+            .zone-header {{
+                font-family: 'Inter', sans-serif !important;
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: {colors['primary']};
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 1rem;
+                margin-top: 1.5rem;
+            }}
+            .zone-header:first-of-type {{
+                margin-top: 0;
+            }}
+            .cell-header {{
+                font-family: 'Inter', sans-serif !important;
+                font-size: 1rem;
+                font-weight: 700;
+                color: {colors['text_muted']};
+                letter-spacing: 1px;
+                margin-bottom: 0.3rem;
+            }}
+            .cell-container {{
+                margin-left: 1.5rem;
+                margin-bottom: 0.8rem;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            }}
+            .group-header {{
+                font-family: 'Inter', sans-serif !important;
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: {colors['primary']};
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 0.3rem;
+            }}
+            .group-container {{
+                margin-bottom: 1rem;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            }}
+            .count-label {{
+                color: {colors['text_muted']};
+                font-size: 0.85rem;
+                font-weight: normal;
+                text-transform: none;
+                letter-spacing: normal;
+            }}
+            .highlight {{
+                box-shadow: 0 0 20px {colors['primary']};
+                background-color: {colors['light']}20;
+            }}
+        </style>
+        <div class="controls-row">
+            <select id="searchSelectHist" class="search-select" onchange="jumpToGroup(this.value)">
+                <option value="">Jump to...</option>
+        """
+
+        # Add search options to dropdown
+        for group_type, group_name in searchable_groups_hist:
+            if group_type == "zone":
+                target_id = f"hist-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = f"Zone: {group_name}"
+            elif group_type == "cell":
+                target_id = f"hist-cell-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = f"Cell: {group_name}"
             else:
-                actual_group = selected_group
-                target_id = f"hist-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-            scroll_script = f"""
-            <script>
-                (function() {{
-                    function findAndScroll() {{
-                        var targetId = '{target_id}';
-                        var docs = [document];
-                        try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
-                        try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
-                        for (var i = 0; i < docs.length; i++) {{
-                            var el = docs[i].getElementById(targetId);
-                            if (el) {{
-                                el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                el.style.transition = 'all 0.3s ease';
-                                el.style.boxShadow = '0 0 20px {colors['primary']}';
-                                el.style.backgroundColor = '{colors['light']}';
-                                setTimeout(function() {{
-                                    el.style.boxShadow = 'none';
-                                    el.style.backgroundColor = 'transparent';
-                                }}, 2500);
-                                return true;
-                            }}
-                        }}
-                        for (var i = 0; i < docs.length; i++) {{
-                            try {{
-                                var el = docs[i].querySelector('[id="' + targetId + '"]');
-                                if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
-                            }} catch(e) {{}}
-                        }}
-                        return false;
-                    }}
-                    var attempts = 0;
-                    function tryScroll() {{
-                        if (findAndScroll() || attempts >= 5) return;
-                        attempts++;
-                        setTimeout(tryScroll, 400 * attempts);
-                    }}
-                    setTimeout(tryScroll, 100);
-                }})();
-            </script>
-            """
-            components.html(scroll_script, height=0, scrolling=False)
+                target_id = f"hist-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                display_name = group_name
+            hist_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
+
+        hist_breakdown_html += f"""
+            </select>
+            <button id="toggleAllBtnHist" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
+        </div>
+        """
 
         if group_by_zone:
             # Build zone -> cell -> all members structure
@@ -2480,7 +3029,6 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
             for zone in sorted(zone_cell_all_members.keys(), key=str.lower):
                 cells_all = zone_cell_all_members[zone]
-                # Count checked-in for this zone
                 checked_in_zone = 0
                 total_in_zone = sum(len(members) for members in cells_all.values())
                 for cell_group, members in cells_all.items():
@@ -2489,14 +3037,11 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                             checked_in_zone += 1
 
                 zone_id = zone.replace(" ", "-").replace("'", "").lower()
-                st.markdown(f"""
-                <div id="hist-group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
-                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_in_zone}/{total_in_zone})</span>
-                    </h3>
+                hist_breakdown_html += f"""
+                <div id="hist-group-{zone_id}" class="zone-header">
+                    {zone} <span class="count-label">({checked_in_zone}/{total_in_zone})</span>
                 </div>
-                """, unsafe_allow_html=True)
+                """
 
                 for cell_group in sorted(cells_all.keys(), key=str.lower):
                     all_names_in_cell = cells_all[cell_group]
@@ -2505,21 +3050,21 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     checked_count = len(checked_names)
                     total_in_cell = len(all_names_in_cell)
 
-                    checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
-                    pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                    checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_names)])
+                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="hist-cell-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
-                        <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
-                                   letter-spacing: 1px; margin-bottom: 0.5rem;">
-                            {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">({checked_count}/{total_in_cell})</span>
-                        </h4>
-                        <div>
+                    hist_breakdown_html += f"""
+                    <div id="hist-cell-{cell_id}" class="cell-container">
+                        <div class="cell-collapsible cell-header" onclick="toggleCell('hist-{cell_id}')">
+                            <span id="toggle-hist-{cell_id}" class="cell-toggle">▶</span>
+                            {cell_group} <span class="count-label">({checked_count}/{total_in_cell})</span>
+                        </div>
+                        <div id="content-hist-{cell_id}" class="cell-content">
                             {checked_in_badges}{pending_badges}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
         else:
             # Get all cell groups from both checked-in and all members
             all_cell_groups = set(all_members_by_cell_group.keys()) | set(display_data.keys())
@@ -2531,21 +3076,75 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 checked_count = len(checked_names)
                 total_in_group = len(all_names_in_group)
 
-                checked_in_badges = ''.join([f'<span class="historical-name-badge">{name}</span>' for name in sorted(checked_names)])
-                pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_names)])
+                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
-                st.markdown(f"""
-                <div id="hist-group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                    <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
-                               text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                        {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">({checked_count}/{total_in_group})</span>
-                    </h3>
-                    <div>
+                hist_breakdown_html += f"""
+                <div id="hist-group-{group_id}" class="group-container">
+                    <div class="cell-collapsible group-header" onclick="toggleCell('hist-{group_id}')">
+                        <span id="toggle-hist-{group_id}" class="cell-toggle">▶</span>
+                        {group_name} <span class="count-label">({checked_count}/{total_in_group})</span>
+                    </div>
+                    <div id="content-hist-{group_id}" class="cell-content">
                         {checked_in_badges}{pending_badges}
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """
+
+        # Add JavaScript
+        hist_breakdown_html += """
+        <script>
+            var isExpanded = false;
+
+            function toggleAll() {
+                var btn = document.getElementById('toggleAllBtnHist');
+                if (isExpanded) {
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                    btn.textContent = 'Expand All';
+                    isExpanded = false;
+                } else {
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                    btn.textContent = 'Collapse All';
+                    isExpanded = true;
+                }
+            }
+
+            function toggleCell(cellId) {
+                var content = document.getElementById('content-' + cellId);
+                var toggle = document.getElementById('toggle-' + cellId);
+                if (content && toggle) {
+                    content.classList.toggle('expanded');
+                    toggle.classList.toggle('expanded');
+                }
+            }
+
+            function jumpToGroup(targetId) {
+                if (!targetId) return;
+                var el = document.getElementById(targetId);
+                if (el) {
+                    var cellId = targetId.replace('hist-group-', 'hist-').replace('hist-cell-', 'hist-');
+                    var content = document.getElementById('content-' + cellId);
+                    var toggle = document.getElementById('toggle-' + cellId);
+                    if (content && !content.classList.contains('expanded')) {
+                        content.classList.add('expanded');
+                        if (toggle) toggle.classList.add('expanded');
+                    }
+                    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    el.classList.add('highlight');
+                    setTimeout(function() { el.classList.remove('highlight'); }, 2500);
+                }
+                document.getElementById('searchSelectHist').value = '';
+            }
+        </script>
+        """
+
+        # Calculate height and render
+        num_items_hist = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+        estimated_height_hist = 150 + (num_items_hist * 60)
+        components.html(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
     else:
         # No check-ins - show empty state and all pending members greyed out
         st.markdown(f"""
@@ -2566,7 +3165,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
             st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
-            # Search bar for cell group/zone filtering with auto-scroll (historical empty state)
+            # Build search options for the HTML select (historical empty state)
             all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
 
             if group_by_zone:
@@ -2576,71 +3175,193 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     zone = cell_to_zone_map_search.get(cell_group.lower(), cell_group)
                     all_zones_search.add(zone)
                 zones_list = sorted(all_zones_search, key=str.lower)
-                searchable_groups = [f"Zone: {z}" for z in zones_list] + [f"Cell: {c}" for c in all_cell_groups_search]
+                searchable_groups_hist_empty = [("zone", z) for z in zones_list] + [("cell", c) for c in all_cell_groups_search]
             else:
-                searchable_groups = all_cell_groups_search
+                searchable_groups_hist_empty = [("group", g) for g in all_cell_groups_search]
 
-            search_options = [""] + searchable_groups
-            search_key = f"hist_empty_search_zone_{target_date}" if group_by_zone else f"hist_empty_search_cell_group_{target_date}"
-            selected_group = st.selectbox(
-                f"🔍 Search {'Zone / Cell Group' if group_by_zone else 'Cell Group'}",
-                options=search_options,
-                format_func=lambda x: x if x else "Jump to...",
-                key=search_key,
-                help=f"Select a {'zone or cell group' if group_by_zone else 'cell group'} to auto-scroll to it"
-            )
+            # Build collapsible breakdown HTML for historical empty state
+            hist_empty_breakdown_html = f"""
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-            if selected_group:
-                if selected_group.startswith("Zone: "):
-                    actual_group = selected_group[6:]
-                    target_id = f"hist-empty-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-                elif selected_group.startswith("Cell: "):
-                    actual_group = selected_group[6:]
-                    target_id = f"hist-cell-empty-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
+                * {{
+                    font-family: 'Inter', sans-serif !important;
+                    box-sizing: border-box;
+                }}
+                body {{
+                    font-family: 'Inter', sans-serif !important;
+                    margin: 0;
+                    padding: 0;
+                }}
+                .cell-collapsible {{
+                    cursor: pointer;
+                    user-select: none;
+                    transition: all 0.2s ease;
+                }}
+                .cell-collapsible:hover {{
+                    opacity: 0.8;
+                }}
+                .cell-content {{
+                    overflow: hidden;
+                    transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding 0.3s ease-out;
+                    max-height: 0;
+                    opacity: 0;
+                    padding: 0;
+                }}
+                .cell-content.expanded {{
+                    max-height: 2000px;
+                    opacity: 1;
+                    padding-top: 0.5rem;
+                }}
+                .cell-toggle {{
+                    display: inline-block;
+                    margin-right: 0.5rem;
+                    transition: transform 0.2s ease;
+                    font-size: 0.85rem;
+                }}
+                .cell-toggle.expanded {{
+                    transform: rotate(90deg);
+                }}
+                .expand-collapse-btn {{
+                    background: transparent;
+                    border: 1px solid {colors['primary']};
+                    color: {colors['primary']};
+                    padding: 0.4rem 1rem;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    transition: all 0.2s ease;
+                    min-width: 120px;
+                }}
+                .expand-collapse-btn:hover {{
+                    background: {colors['primary']};
+                    color: {colors['background']};
+                }}
+                .search-select {{
+                    padding: 0.5rem;
+                    border: 1px solid {colors['primary']};
+                    border-radius: 4px;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.9rem;
+                    font-weight: 500;
+                    background: {colors['background']};
+                    color: {colors['text']};
+                    min-width: 200px;
+                    cursor: pointer;
+                }}
+                .search-select:focus {{
+                    outline: none;
+                    border-color: {colors['primary']};
+                    box-shadow: 0 0 5px {colors['primary']}40;
+                }}
+                .controls-row {{
+                    display: flex;
+                    gap: 1rem;
+                    align-items: center;
+                    margin-bottom: 1rem;
+                    flex-wrap: wrap;
+                }}
+                .name-badge-pending {{
+                    display: inline-block;
+                    background: transparent;
+                    color: {colors['text_muted']};
+                    border: 1px solid {colors['text_muted']};
+                    padding: 0.6rem 1.2rem;
+                    margin: 0.25rem;
+                    border-radius: 50px;
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 0.9rem;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    opacity: 0.5;
+                    transition: all 0.2s ease;
+                    cursor: default;
+                }}
+                .name-badge-pending:hover {{
+                    transform: scale(1.05);
+                    opacity: 0.7;
+                }}
+                .zone-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1.3rem;
+                    font-weight: 900;
+                    color: {colors['primary']};
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    margin-bottom: 1rem;
+                    margin-top: 1.5rem;
+                }}
+                .zone-header:first-of-type {{
+                    margin-top: 0;
+                }}
+                .cell-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1rem;
+                    font-weight: 700;
+                    color: {colors['text_muted']};
+                    letter-spacing: 1px;
+                    margin-bottom: 0.3rem;
+                }}
+                .cell-container {{
+                    margin-left: 1.5rem;
+                    margin-bottom: 0.8rem;
+                    padding: 0.5rem;
+                    border-radius: 8px;
+                    transition: all 0.3s ease;
+                }}
+                .group-header {{
+                    font-family: 'Inter', sans-serif !important;
+                    font-size: 1.3rem;
+                    font-weight: 900;
+                    color: {colors['primary']};
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    margin-bottom: 0.3rem;
+                }}
+                .group-container {{
+                    margin-bottom: 1rem;
+                    padding: 0.5rem;
+                    border-radius: 8px;
+                    transition: all 0.3s ease;
+                }}
+                .count-label {{
+                    color: {colors['text_muted']};
+                    font-size: 0.85rem;
+                    font-weight: normal;
+                    text-transform: none;
+                    letter-spacing: normal;
+                }}
+                .highlight {{
+                    box-shadow: 0 0 20px {colors['primary']};
+                    background-color: {colors['light']}20;
+                }}
+            </style>
+            <div class="controls-row">
+                <select id="searchSelectHistEmpty" class="search-select" onchange="jumpToGroup(this.value)">
+                    <option value="">Jump to...</option>
+            """
+
+            # Add search options to dropdown
+            for group_type, group_name in searchable_groups_hist_empty:
+                if group_type == "zone":
+                    target_id = f"hist-empty-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = f"Zone: {group_name}"
+                elif group_type == "cell":
+                    target_id = f"hist-cell-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = f"Cell: {group_name}"
                 else:
-                    actual_group = selected_group
-                    target_id = f"hist-empty-group-{actual_group.replace(' ', '-').replace(chr(39), '').lower()}"
-                scroll_script = f"""
-                <script>
-                    (function() {{
-                        function findAndScroll() {{
-                            var targetId = '{target_id}';
-                            var docs = [document];
-                            try {{ if (window.parent && window.parent.document) docs.push(window.parent.document); }} catch(e) {{}}
-                            try {{ if (window.top && window.top.document) docs.push(window.top.document); }} catch(e) {{}}
-                            for (var i = 0; i < docs.length; i++) {{
-                                var el = docs[i].getElementById(targetId);
-                                if (el) {{
-                                    el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                    el.style.transition = 'all 0.3s ease';
-                                    el.style.boxShadow = '0 0 20px {colors['primary']}';
-                                    el.style.backgroundColor = '{colors['light']}';
-                                    setTimeout(function() {{
-                                        el.style.boxShadow = 'none';
-                                        el.style.backgroundColor = 'transparent';
-                                    }}, 2500);
-                                    return true;
-                                }}
-                            }}
-                            for (var i = 0; i < docs.length; i++) {{
-                                try {{
-                                    var el = docs[i].querySelector('[id="' + targetId + '"]');
-                                    if (el) {{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); return true; }}
-                                }} catch(e) {{}}
-                            }}
-                            return false;
-                        }}
-                        var attempts = 0;
-                        function tryScroll() {{
-                            if (findAndScroll() || attempts >= 5) return;
-                            attempts++;
-                            setTimeout(tryScroll, 400 * attempts);
-                        }}
-                        setTimeout(tryScroll, 100);
-                    }})();
-                </script>
-                """
-                components.html(scroll_script, height=0, scrolling=False)
+                    target_id = f"hist-empty-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
+                    display_name = group_name
+                hist_empty_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
+
+            hist_empty_breakdown_html += f"""
+                </select>
+                <button id="toggleAllBtnHistEmpty" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
+            </div>
+            """
 
             if group_by_zone:
                 # Build zone -> cell -> all members structure
@@ -2659,50 +3380,101 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     total_in_zone = sum(len(members) for members in cells_all.values())
 
                     zone_id = zone.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="hist-empty-group-{zone_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
-                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                            {zone} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_zone})</span>
-                        </h3>
+                    hist_empty_breakdown_html += f"""
+                    <div id="hist-empty-group-{zone_id}" class="zone-header">
+                        {zone} <span class="count-label">(0/{total_in_zone})</span>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
-                        pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
+                        pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
-                        st.markdown(f"""
-                        <div id="hist-cell-empty-{cell_id}" style="margin-left: 1.5rem; margin-bottom: 1.5rem; padding: 0.5rem; border-radius: 8px;">
-                            <h4 style="font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: {colors['text_muted']};
-                                       letter-spacing: 1px; margin-bottom: 0.5rem;">
-                                {cell_group} <span style="color: {colors['text_muted']}; font-size: 0.85rem;">(0/{len(all_names_in_cell)})</span>
-                            </h4>
-                            <div>
+                        hist_empty_breakdown_html += f"""
+                        <div id="hist-cell-empty-{cell_id}" class="cell-container">
+                            <div class="cell-collapsible cell-header" onclick="toggleCell('hist-empty-{cell_id}')">
+                                <span id="toggle-hist-empty-{cell_id}" class="cell-toggle">▶</span>
+                                {cell_group} <span class="count-label">(0/{len(all_names_in_cell)})</span>
+                            </div>
+                            <div id="content-hist-empty-{cell_id}" class="cell-content">
                                 {pending_badges}
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """
             else:
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
                     all_names_in_group = all_members_by_cell_group[group_name]
-                    pending_badges = ''.join([f'<span class="historical-name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
+                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
-                    st.markdown(f"""
-                    <div id="hist-empty-group-{group_id}" style="margin-bottom: 2rem; padding: 0.5rem; border-radius: 8px;">
-                        <h3 style="font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {colors['primary']};
-                                   text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">
-                            {group_name} <span style="color: {colors['text_muted']}; font-size: 0.9rem;">(0/{total_in_group})</span>
-                        </h3>
-                        <div>
+                    hist_empty_breakdown_html += f"""
+                    <div id="hist-empty-group-{group_id}" class="group-container">
+                        <div class="cell-collapsible group-header" onclick="toggleCell('hist-empty-{group_id}')">
+                            <span id="toggle-hist-empty-{group_id}" class="cell-toggle">▶</span>
+                            {group_name} <span class="count-label">(0/{total_in_group})</span>
+                        </div>
+                        <div id="content-hist-empty-{group_id}" class="cell-content">
                             {pending_badges}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
+
+            # Add JavaScript
+            hist_empty_breakdown_html += """
+            <script>
+                var isExpanded = false;
+
+                function toggleAll() {
+                    var btn = document.getElementById('toggleAllBtnHistEmpty');
+                    if (isExpanded) {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                        btn.textContent = 'Expand All';
+                        isExpanded = false;
+                    } else {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                        btn.textContent = 'Collapse All';
+                        isExpanded = true;
+                    }
+                }
+
+                function toggleCell(cellId) {
+                    var content = document.getElementById('content-' + cellId);
+                    var toggle = document.getElementById('toggle-' + cellId);
+                    if (content && toggle) {
+                        content.classList.toggle('expanded');
+                        toggle.classList.toggle('expanded');
+                    }
+                }
+
+                function jumpToGroup(targetId) {
+                    if (!targetId) return;
+                    var el = document.getElementById(targetId);
+                    if (el) {
+                        var cellId = targetId.replace('hist-empty-group-', 'hist-empty-').replace('hist-cell-empty-', 'hist-empty-');
+                        var content = document.getElementById('content-' + cellId);
+                        var toggle = document.getElementById('toggle-' + cellId);
+                        if (content && !content.classList.contains('expanded')) {
+                            content.classList.add('expanded');
+                            if (toggle) toggle.classList.add('expanded');
+                        }
+                        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        el.classList.add('highlight');
+                        setTimeout(function() { el.classList.remove('highlight'); }, 2500);
+                    }
+                    document.getElementById('searchSelectHistEmpty').value = '';
+                }
+            </script>
+            """
+
+            # Calculate height and render
+            num_items_hist_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+            estimated_height_hist_empty = 150 + (num_items_hist_empty * 60)
+            components.html(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
 
 
 # ========== SIDEBAR NAVIGATION ==========
