@@ -2267,6 +2267,133 @@ def render_qr_section():
                 st.rerun()
 
 
+def render_ministry_qr_section(selected_ministry):
+    """Render the I'm New QR code section for ministry check-in with hard refresh"""
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
+    with col_qr2:
+        if st.button("I'm New!", type="secondary", use_container_width=True, key=f"ministry_new_btn_{selected_ministry}"):
+            if st.session_state.get('show_ministry_qr_modal', False):
+                # Modal is already open - perform hard refresh
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                # Clear local Streamlit caches
+                get_today_attendance_data.clear()
+                get_ministry_options_from_sheet.clear()
+                # Clear Redis cache for ministry options (all ministries)
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        for ministry in MINISTRY_LIST:
+                            redis_client.delete(f"attendance:ministry_options:{ministry}")
+                        redis_client.delete("attendance:ministry_options:all")
+                    except Exception:
+                        pass
+                st.session_state.show_ministry_qr_modal = False
+            else:
+                # Open the modal
+                st.session_state.show_ministry_qr_modal = True
+            st.rerun()
+
+    # Show QR code in modal/spotlight mode
+    if st.session_state.get('show_ministry_qr_modal', False):
+        # Generate QR code
+        feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(feedback_url)
+        qr.make(fit=True)
+        qr_img = qr.make_image(fill_color="black", back_color="white")
+
+        # Convert to base64 for embedding in HTML
+        buffer = BytesIO()
+        qr_img.save(buffer, format="PNG")
+        import base64
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+        # Modal overlay with QR code
+        components.html(f"""
+        <style>
+            .modal-overlay {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(0, 0, 0, 0.85);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 9999;
+                backdrop-filter: blur(5px);
+            }}
+            .modal-content {{
+                background: #1a1a1a;
+                padding: 2rem;
+                border-radius: 16px;
+                text-align: center;
+                max-width: 350px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            }}
+            .qr-image {{
+                width: 250px;
+                height: 250px;
+                border-radius: 8px;
+            }}
+            .modal-title {{
+                color: #fff;
+                font-size: 1.3rem;
+                margin-bottom: 1rem;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }}
+            .modal-subtitle {{
+                color: #888;
+                font-size: 0.9rem;
+                margin-top: 1rem;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            }}
+            .link-btn {{
+                color: #4da6ff;
+                text-decoration: none;
+                font-size: 0.95rem;
+            }}
+            .link-btn:hover {{
+                text-decoration: underline;
+            }}
+        </style>
+        <div class="modal-overlay" id="ministryQrModal">
+            <div class="modal-content">
+                <div class="modal-title">Welcome! Scan to fill out the form</div>
+                <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
+                <div class="modal-subtitle">
+                    <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
+                </div>
+            </div>
+        </div>
+        """, height=500)
+
+        # Button: Newcomer Form Filled (centered)
+        col_spacer1, col_filled, col_spacer2 = st.columns([1, 2, 1])
+        with col_filled:
+            if st.button("Newcomer Form Filled", type="secondary", use_container_width=True, key=f"ministry_newcomer_filled_{selected_ministry}"):
+                # Hard refresh - clear all caches and reload from Google Sheets
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                # Clear local Streamlit caches
+                get_today_attendance_data.clear()
+                get_ministry_options_from_sheet.clear()
+                # Clear Redis cache for ministry options (all ministries)
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        for ministry in MINISTRY_LIST:
+                            redis_client.delete(f"attendance:ministry_options:{ministry}")
+                        redis_client.delete("attendance:ministry_options:all")
+                    except Exception:
+                        pass
+                st.session_state.show_ministry_qr_modal = False
+                st.rerun()
+
+
 def render_recent_checkins_table(tab_name):
     """Render a scrollable table showing recent check-ins ordered by latest first"""
     # Get today's attendance data including recent check-ins
@@ -4781,6 +4908,7 @@ elif page == "Ministry Check In":
     # Show check-in form and dashboard for selected ministry
     if not viewing_historical:
         render_ministry_check_in_form(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
+        render_ministry_qr_section(st.session_state.selected_ministry)
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
         render_ministry_dashboard(st.session_state.selected_ministry)
     else:
