@@ -354,13 +354,13 @@ def get_ministry_options_from_sheet(_client, sheet_id, ministry_filter=None):
 
             # Filter by ministry if specified
             if ministry_filter:
-                # Department format is "Ministry: Dept", extract ministry part
+                # Department format is "Ministry: Dept" or just "Ministry"
                 if ":" in department:
                     ministry_part = department.split(":")[0].strip()
-                    if ministry_part.lower() != ministry_filter.lower():
-                        continue
                 else:
-                    continue  # Skip if no ministry prefix and filter is active
+                    ministry_part = department  # No colon means department IS the ministry
+                if ministry_part.lower() != ministry_filter.lower():
+                    continue
 
             option_values.append(option)
 
@@ -420,9 +420,9 @@ def get_ministry_members_by_department(_client, sheet_id, ministry_filter=None):
             if ministry_filter:
                 if ":" in department:
                     ministry_part = department.split(":")[0].strip()
-                    if ministry_part.lower() != ministry_filter.lower():
-                        continue
                 else:
+                    ministry_part = department  # No colon means department IS the ministry
+                if ministry_part.lower() != ministry_filter.lower():
                     continue
 
             if department not in members_by_dept:
