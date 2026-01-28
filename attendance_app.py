@@ -1620,25 +1620,35 @@ def render_ministry_dashboard(selected_ministry):
     """Render the dashboard for ministry attendance, grouped by department."""
     st.markdown("---")
 
-    # Simple refresh button
-    col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
-    with col_refresh2:
+    # Show last refresh time prominently
+    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
+
+    # Refresh button with timestamp next to it
+    col_left, col_btn, col_time, col_right = st.columns([2, 1, 1.5, 2])
+    with col_btn:
         if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_ministry_{selected_ministry}"):
             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
             st.session_state.last_refresh_time = get_now_myt()
             get_today_attendance_data.clear()
             get_ministry_options_from_sheet.clear()
             st.rerun()
-
-    # Show last refresh time
-    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-    st.markdown(f"""
-    <div style="text-align: center; padding: 0.3rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        <span style="color: #888; font-size: 0.8rem;">
-            Last refreshed at <b>{last_refresh_str}</b>
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_time:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; height: 100%; padding-top: 0.3rem;">
+            <span style="
+                background: {page_colors['primary']}20;
+                color: {page_colors['primary']};
+                padding: 0.5rem 1rem;
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                border: 1px solid {page_colors['primary']}40;
+            ">
+                Last refresh: {last_refresh_str}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Get today's attendance data for ministry tab
     with st.spinner("Loading dashboard data..."):
@@ -2447,9 +2457,12 @@ def render_dashboard(tab_name, group_by_zone=False):
     If group_by_zone=True, groups by Zone instead of Cell Group."""
     st.markdown("---")
 
-    # Simple refresh button - reads from Redis (no Sheets API call)
-    col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
-    with col_refresh2:
+    # Show last refresh time prominently
+    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
+
+    # Refresh button with timestamp next to it
+    col_left, col_btn, col_time, col_right = st.columns([2, 1, 1.5, 2])
+    with col_btn:
         if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
             # Increment refresh counter to invalidate local Streamlit cache
             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
@@ -2460,16 +2473,23 @@ def render_dashboard(tab_name, group_by_zone=False):
             get_options_from_sheet.clear()
             get_cell_to_zone_mapping.clear()
             st.rerun()
-
-    # Show last refresh time
-    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-    st.markdown(f"""
-    <div style="text-align: center; padding: 0.3rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        <span style="color: #888; font-size: 0.8rem;">
-            Last refreshed at <b>{last_refresh_str}</b>
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_time:
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; height: 100%; padding-top: 0.3rem;">
+            <span style="
+                background: {page_colors['primary']}20;
+                color: {page_colors['primary']};
+                padding: 0.5rem 1rem;
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                border: 1px solid {page_colors['primary']}40;
+            ">
+                Last refresh: {last_refresh_str}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
