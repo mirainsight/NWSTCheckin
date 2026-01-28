@@ -35,6 +35,9 @@ OPTIONS_TAB_NAME = "Options"  # Tab name where options are stored
 ATTENDANCE_TAB_NAME = "Attendance"  # Tab name where attendance is recorded
 LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"  # Tab name for leaders discipleship check-in
 KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
+MINISTRY_OPTIONS_TAB_NAME = "Options - Ministry"  # Tab name for ministry options
+MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"  # Tab name for ministry check-in
+MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
 
 # Redis cache configuration
 REDIS_CACHE_TTL = 86400  # 24 hours in seconds (cache resets daily via key)
@@ -291,6 +294,144 @@ def get_cell_to_zone_mapping(_client, sheet_id):
         return {}, f"Error reading Key Values: {str(e)}"
     except Exception as e:
         return {}, f"Error reading Key Values: {str(e)}"
+
+@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
+def get_ministry_options_from_sheet(_client, sheet_id, ministry_filter=None):
+    """Read options from the Options - Ministry tab in Google Sheets.
+    Column A = Name, Column B = Department (Ministry: Dept format), Column C = Options
+
+    Args:
+        _client: Google Sheets client
+        sheet_id: Sheet ID
+        ministry_filter: Optional ministry name to filter by (e.g., "Worship", "Hype")
+
+    Returns:
+        tuple: (options dict, error message or None)
+    """
+    redis_key = f"attendance:ministry_options:{ministry_filter or 'all'}"
+
+    # Try Redis cache first
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(redis_key)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return data.get("options"), None
+        except Exception:
+            pass  # Redis failed, fall back to Sheets
+
+    # Read from Google Sheets
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+
+        # Try to get the Ministry Options worksheet
+        try:
+            ministry_sheet = spreadsheet.worksheet(MINISTRY_OPTIONS_TAB_NAME)
+        except gspread.exceptions.WorksheetNotFound:
+            return None, f"❌ Tab '{MINISTRY_OPTIONS_TAB_NAME}' not found. Please create it in your Google Sheet."
+
+        # Get all values from the sheet
+        all_values = ministry_sheet.get_all_values()
+
+        if len(all_values) <= 1:  # Only header row or empty
+            return {}, "⚠️ Ministry options sheet is empty."
+
+        # Get all options from row 2 onwards (skip header row)
+        # Format: Name (A), Department (B), Options (C)
+        # Department format is "Ministry: Dept" e.g., "Worship: LCD"
+        option_values = []
+        for row in all_values[1:]:  # Skip header
+            if len(row) < 3:
+                continue
+
+            name = row[0].strip() if row[0] else ""
+            department = row[1].strip() if row[1] else ""
+            option = row[2].strip() if row[2] else ""
+
+            if not option:
+                continue
+
+            # Filter by ministry if specified
+            if ministry_filter:
+                # Department format is "Ministry: Dept", extract ministry part
+                if ":" in department:
+                    ministry_part = department.split(":")[0].strip()
+                    if ministry_part.lower() != ministry_filter.lower():
+                        continue
+                else:
+                    continue  # Skip if no ministry prefix and filter is active
+
+            option_values.append(option)
+
+        if not option_values:
+            filter_msg = f" for ministry '{ministry_filter}'" if ministry_filter else ""
+            return {}, f"⚠️ No options found{filter_msg}."
+
+        # Return single option type with all values
+        options = {"Name": option_values}
+
+        # Store in Redis cache
+        if redis_client:
+            try:
+                redis_client.set(redis_key, json.dumps({"options": options}), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass  # Redis write failed, continue anyway
+
+        return options, None
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return None, "⚠️ API quota exceeded. Please wait a moment and refresh the page."
+        return None, f"❌ Error reading ministry options: {str(e)}"
+    except Exception as e:
+        return None, f"❌ Error reading ministry options: {str(e)}"
+
+def get_ministry_members_by_department(_client, sheet_id, ministry_filter=None):
+    """Get ministry members grouped by department.
+
+    Args:
+        _client: Google Sheets client
+        sheet_id: Sheet ID
+        ministry_filter: Optional ministry name to filter by
+
+    Returns:
+        dict: Department -> list of member names
+    """
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+        ministry_sheet = spreadsheet.worksheet(MINISTRY_OPTIONS_TAB_NAME)
+        all_values = ministry_sheet.get_all_values()
+
+        if len(all_values) <= 1:
+            return {}
+
+        members_by_dept = {}
+        for row in all_values[1:]:
+            if len(row) < 3:
+                continue
+
+            name = row[0].strip() if row[0] else ""
+            department = row[1].strip() if row[1] else ""
+
+            if not name or not department:
+                continue
+
+            # Filter by ministry if specified
+            if ministry_filter:
+                if ":" in department:
+                    ministry_part = department.split(":")[0].strip()
+                    if ministry_part.lower() != ministry_filter.lower():
+                        continue
+                else:
+                    continue
+
+            if department not in members_by_dept:
+                members_by_dept[department] = []
+            members_by_dept[department].append(name)
+
+        return members_by_dept
+    except Exception:
+        return {}
 
 def generate_colors_for_date(date_str):
     """Generate random colors based on a specific date (consistent for that date)
@@ -1244,6 +1385,763 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         """, unsafe_allow_html=True)
 
     return checked_in_today
+
+
+def render_ministry_check_in_form(selected_ministry, form_key, page_label="Ministry Check In"):
+    """Render the check-in form for ministry attendance.
+
+    Args:
+        selected_ministry: The ministry to show options for (e.g., "Worship", "Hype")
+        form_key: Unique key for the Streamlit form
+        page_label: Label shown on the form badge
+    """
+    # Get ministry options for the selected ministry
+    ministry_options, ministry_error = get_ministry_options_from_sheet(client, SHEET_ID, selected_ministry)
+
+    if ministry_options is None or ministry_error:
+        if ministry_error:
+            st.warning(ministry_error)
+        st.info(f"No members found for {selected_ministry} ministry. Please add members to the 'Options - Ministry' tab.")
+        return set()
+
+    ministry_option_values = list(ministry_options.values())[0] if ministry_options else []
+
+    if not ministry_option_values:
+        st.warning(f"No members found for {selected_ministry} ministry.")
+        return set()
+
+    # Get list of people who have already checked in today for ministry attendance
+    with st.spinner("Checking today's attendance..."):
+        checked_in_today = get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME)
+
+    # Keep all options but track which are already checked in
+    available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
+
+    # Wrap form section with GIF background
+    if background_gif and gif_src:
+        st.markdown(f"""
+        <div style="
+            position: relative;
+            padding: 2rem;
+            margin: 0;
+            border-radius: 8px;
+            border: 2px solid {page_colors['primary']};
+            min-height: 250px;
+            overflow: hidden;
+        ">
+            <img src="{gif_src}"
+                 style="
+                     position: absolute;
+                     top: 0;
+                     left: 0;
+                     width: 100%;
+                     height: 100%;
+                     object-fit: cover;
+                     z-index: 0;
+                     opacity: 0.8;
+                 " />
+            <!-- Page label badge -->
+            <div style="
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+                padding: 0.4rem 1rem;
+                font-family: 'Inter', sans-serif;
+                font-weight: 800;
+                font-size: 0.85rem;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+                z-index: 2;
+            ">{page_label}</div>
+            <div style="position: relative; z-index: 1;">
+        """, unsafe_allow_html=True)
+
+    # Display form in centered column
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Show instruction text
+        if background_gif:
+            components.html("""
+            <div style="
+                background: rgba(0, 0, 0, 0.6);
+                padding: 0.75rem 1rem;
+                border-radius: 6px;
+                margin-bottom: 1rem;
+            ">
+                <p style="
+                    font-size: 1rem;
+                    margin: 0;
+                    color: #ffffff;
+                    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+                    text-align: center;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                ">Select your name from the dropdown below to check in.</p>
+            </div>
+            """, height=60)
+        else:
+            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
+
+        # Show simple refresh message
+        if checked_in_today:
+            st.success("Refreshed!")
+
+        # Display form
+        with st.form(form_key, clear_on_submit=True):
+            # Check if there are any available options
+            if not available_options:
+                st.warning(f"All {selected_ministry} ministry members have already checked in for today!")
+                st.form_submit_button("Check In", type="primary", use_container_width=True, disabled=True)
+            else:
+                # Create formatted options: available ones normal, checked-in ones with tick prefix
+                # Sort by Department first, then by Name within each department
+                def get_sort_key(opt):
+                    parts = opt.split(" - ", 1)
+                    if len(parts) == 2:
+                        name, dept = parts[0].strip(), parts[1].strip()
+                        return (dept.lower(), name.lower())
+                    return (opt.lower(), "")
+
+                sorted_options = sorted(ministry_option_values, key=get_sort_key)
+
+                formatted_options = []
+                option_mapping = {}  # Maps display name back to original name
+
+                for opt in sorted_options:
+                    if opt in checked_in_today:
+                        display_name = f"✓ {opt}"
+                        formatted_options.append(display_name)
+                        option_mapping[display_name] = opt
+                    else:
+                        formatted_options.append(opt)
+                        option_mapping[opt] = opt
+
+                # Sort formatted options again to ensure correct order
+                def get_display_sort_key(display_opt):
+                    opt = display_opt.lstrip("✓ ")
+                    parts = opt.split(" - ", 1)
+                    if len(parts) == 2:
+                        name, dept = parts[0].strip(), parts[1].strip()
+                        return (dept.lower(), name.lower())
+                    return (opt.lower(), "")
+
+                formatted_options = sorted(formatted_options, key=get_display_sort_key)
+
+                # Multi-select for batch check-ins
+                selected_display_options = st.multiselect(
+                    f"Select Name(s) *",
+                    options=formatted_options,
+                    help="Select up to 5 people to check in at once. Names with ✓ are already checked in today.",
+                    default=[],
+                    max_selections=5,
+                    format_func=lambda x: x
+                )
+
+                # Add JavaScript to gray out checked-in options
+                components.html(f"""
+                <script>
+                    function styleCheckedInOptions() {{
+                        const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
+                        options.forEach(opt => {{
+                            const text = opt.textContent || opt.innerText;
+                            if (text && text.trim().startsWith('✓')) {{
+                                opt.style.opacity = '0.5';
+                                opt.style.color = '#888';
+                                opt.style.fontStyle = 'italic';
+                            }}
+                        }});
+                    }}
+                    const observer = new MutationObserver(styleCheckedInOptions);
+                    observer.observe(document.body, {{ childList: true, subtree: true }});
+                    styleCheckedInOptions();
+                </script>
+                """, height=0)
+
+                # Filter out any already checked-in options
+                selected_options = []
+                already_checked_in_selected = []
+                for display_opt in selected_display_options:
+                    original_name = option_mapping.get(display_opt, display_opt)
+                    if original_name in checked_in_today:
+                        already_checked_in_selected.append(original_name)
+                    else:
+                        selected_options.append(original_name)
+
+                # Submit button
+                submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
+
+                if submitted:
+                    # Warn if user selected already checked-in people
+                    if already_checked_in_selected:
+                        st.warning(f"Note: {', '.join(already_checked_in_selected)} already checked in today and were skipped.")
+
+                    # Validation
+                    if not selected_options:
+                        if already_checked_in_selected:
+                            st.error("All selected people have already checked in today.")
+                        else:
+                            st.error("Please select at least one person.")
+                    else:
+                        # Prepare attendance data for batch check-in
+                        attendance_data = {
+                            "selected_options": selected_options,
+                            "option_type": "Name"
+                        }
+
+                        # Save to Ministry Attendance tab
+                        success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+
+                        if success:
+                            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                            st.session_state.last_refresh_time = get_now_myt()
+                            st.success(f"{message}")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(f"{message}")
+
+    # Close background GIF container if it was opened
+    if background_gif:
+        st.markdown("</div></div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: {page_colors['card_bg']}; border: 2px dashed {page_colors['primary']}; border-radius: 8px;">
+            <p style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
+                Add your banner GIF by setting BANNER_GIF_URL in .env or placing banner.gif in the CHECK IN folder
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    return checked_in_today
+
+
+def render_ministry_dashboard(selected_ministry):
+    """Render the dashboard for ministry attendance, grouped by department."""
+    st.markdown("---")
+
+    # Simple refresh button
+    col_refresh1, col_refresh2, col_refresh3 = st.columns([3, 1, 3])
+    with col_refresh2:
+        if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_ministry_{selected_ministry}"):
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            get_today_attendance_data.clear()
+            get_ministry_options_from_sheet.clear()
+            st.rerun()
+
+    # Show last refresh time
+    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
+    st.markdown(f"""
+    <div style="text-align: center; padding: 0.3rem; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <span style="color: #888; font-size: 0.8rem;">
+            Last refreshed at <b>{last_refresh_str}</b>
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Get today's attendance data for ministry tab
+    with st.spinner("Loading dashboard data..."):
+        refresh_key = st.session_state.get('refresh_counter', 0)
+        cell_group_data, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, MINISTRY_ATTENDANCE_TAB_NAME)
+
+    # Filter checked-in list by selected ministry
+    ministry_checked_in = []
+    ministry_dept_data = {}
+    for name_dept in checked_in_list:
+        parts = name_dept.split(" - ", 1)
+        if len(parts) == 2:
+            dept = parts[1].strip()
+            # Check if this department belongs to selected ministry
+            if ":" in dept:
+                ministry_part = dept.split(":")[0].strip()
+                if ministry_part.lower() == selected_ministry.lower():
+                    ministry_checked_in.append(name_dept)
+                    name = parts[0].strip()
+                    if dept not in ministry_dept_data:
+                        ministry_dept_data[dept] = []
+                    ministry_dept_data[dept].append(name)
+
+    total_checked_in = len(ministry_checked_in)
+
+    # Get all ministry members grouped by department
+    all_members_by_dept = get_ministry_members_by_department(client, SHEET_ID, selected_ministry)
+
+    # Create a set of checked-in names for quick lookup
+    checked_in_names_set = set()
+    for name_dept in ministry_checked_in:
+        name, _ = parse_name_cell_group(name_dept)
+        if name:
+            checked_in_names_set.add(name)
+
+    # Convert hex color to RGB for rgba shadows
+    def hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    primary_rgb = hex_to_rgb(daily_colors['primary'])
+
+    # KPI Card - Total Checked In
+    st.markdown(f"""
+    <style>
+        .kpi-card {{
+            background: {page_colors['card_bg']};
+            padding: 2rem 2.5rem;
+            border-radius: 0px;
+            border-left: 6px solid {page_colors['primary']};
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
+        }}
+        .kpi-label {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: {page_colors['text_muted']};
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }}
+        .kpi-number {{
+            font-family: 'Inter', sans-serif;
+            font-size: 5.5rem;
+            font-weight: 900;
+            color: {page_colors['primary']};
+            line-height: 1;
+            margin: 0.5rem 0;
+        }}
+        .kpi-subtitle {{
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            color: {page_colors['text_muted']};
+            margin-top: 0.5rem;
+            font-weight: 500;
+        }}
+    </style>
+    <div class="kpi-card">
+        <div class="kpi-label">{selected_ministry} Ministry - Checked In Today</div>
+        <div class="kpi-number">{total_checked_in}</div>
+        <div class="kpi-subtitle">Ministry members checked in</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if total_checked_in > 0 and ministry_dept_data:
+        # Bar Chart by Department
+        st.markdown(f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.8rem; font-weight: 900; color: {page_colors["primary"]}; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 1.5rem; border-bottom: 3px solid {page_colors["primary"]}; padding-bottom: 0.5rem; display: inline-block;">Attendance by Department</div>', unsafe_allow_html=True)
+
+        sorted_depts = sorted(ministry_dept_data.items(), key=lambda x: len(x[1]), reverse=True)
+
+        chart_data = {
+            'Department': [dept for dept, _ in sorted_depts],
+            'Count': [len(names) for _, names in sorted_depts]
+        }
+        df_chart = pd.DataFrame(chart_data)
+
+        fig = px.bar(
+            df_chart,
+            x='Department',
+            y='Count',
+            color='Count',
+            color_continuous_scale=[page_colors['background'], page_colors['primary']],
+            text='Count',
+            height=400
+        )
+
+        fig.update_layout(
+            plot_bgcolor=page_colors['background'],
+            paper_bgcolor=page_colors['card_bg'],
+            font=dict(family='Inter, sans-serif', size=12, color=page_colors['primary']),
+            xaxis=dict(
+                tickfont=dict(color=page_colors['text_muted']),
+                linecolor=page_colors['primary'],
+                linewidth=2
+            ),
+            yaxis=dict(
+                tickfont=dict(color=page_colors['text_muted']),
+                linecolor=page_colors['primary'],
+                linewidth=2
+            ),
+            coloraxis_showscale=False,
+            showlegend=False,
+            margin=dict(l=50, r=50, t=60, b=50)
+        )
+
+        fig.update_traces(
+            textfont=dict(size=14, color=page_colors['background'], family='Inter'),
+            textposition='inside'
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Names Breakdown by Department with search and collapsible sections
+        st.markdown(f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.8rem; font-weight: 900; color: {page_colors["primary"]}; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 1.5rem; border-bottom: 3px solid {page_colors["primary"]}; padding-bottom: 0.5rem; display: inline-block;">Attendees by Department</div>', unsafe_allow_html=True)
+
+        # Build search options for the HTML select
+        all_depts_search = sorted(all_members_by_dept.keys(), key=str.lower)
+        searchable_depts = [("dept", d) for d in all_depts_search]
+
+        # Build collapsible breakdown HTML
+        ministry_breakdown_html = f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+            * {{
+                font-family: 'Inter', sans-serif !important;
+                box-sizing: border-box;
+            }}
+            .cell-collapsible {{
+                cursor: pointer;
+                user-select: none;
+                transition: all 0.2s ease;
+            }}
+            .cell-collapsible:hover {{
+                opacity: 0.8;
+            }}
+            .cell-content {{
+                overflow: hidden;
+                transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding 0.3s ease-out;
+                max-height: 0;
+                opacity: 0;
+                padding: 0;
+            }}
+            .cell-content.expanded {{
+                max-height: 2000px;
+                opacity: 1;
+                padding-top: 0.5rem;
+            }}
+            .cell-toggle {{
+                display: inline-block;
+                margin-right: 0.5rem;
+                transition: transform 0.2s ease;
+                font-size: 0.85rem;
+            }}
+            .cell-toggle.expanded {{
+                transform: rotate(90deg);
+            }}
+            .expand-collapse-btn {{
+                background: transparent;
+                border: 1px solid {page_colors['primary']};
+                color: {page_colors['primary']};
+                padding: 0.4rem 1rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                transition: all 0.2s ease;
+                min-width: 120px;
+            }}
+            .expand-collapse-btn:hover {{
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+            }}
+            .search-select {{
+                padding: 0.5rem;
+                border: 1px solid {page_colors['primary']};
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 500;
+                background: {page_colors['background']};
+                color: {page_colors['text']};
+                min-width: 200px;
+                cursor: pointer;
+            }}
+            .search-select:focus {{
+                outline: none;
+                border-color: {page_colors['primary']};
+                box-shadow: 0 0 5px {page_colors['primary']}40;
+            }}
+            .controls-row {{
+                display: flex;
+                gap: 1rem;
+                align-items: center;
+                margin-bottom: 1rem;
+                flex-wrap: wrap;
+            }}
+            .name-badge {{
+                display: inline-block;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge:hover {{
+                transform: scale(1.05);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            }}
+            .name-badge-pending {{
+                display: inline-block;
+                background: transparent;
+                color: {page_colors['text_muted']};
+                border: 1px solid {page_colors['text_muted']};
+                padding: 0.6rem 1.2rem;
+                margin: 0.25rem;
+                border-radius: 4px;
+                font-family: 'Inter', sans-serif !important;
+                font-size: 0.9rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                opacity: 0.5;
+                transition: all 0.2s ease;
+                cursor: default;
+            }}
+            .name-badge-pending:hover {{
+                transform: scale(1.05);
+                opacity: 0.7;
+            }}
+            .dept-header {{
+                font-family: 'Inter', sans-serif;
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: {page_colors['primary']};
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 0.3rem;
+            }}
+            .dept-container {{
+                margin-bottom: 1rem;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
+            }}
+            .count-label {{
+                color: {page_colors['text_muted']};
+                font-size: 0.85rem;
+                font-weight: normal;
+                text-transform: none;
+                letter-spacing: normal;
+            }}
+            .highlight {{
+                box-shadow: 0 0 20px {page_colors['primary']};
+                background-color: {page_colors['light']}20;
+            }}
+        </style>
+        <div class="controls-row">
+            <select id="ministrySearchSelect" class="search-select" onchange="jumpToDept(this.value)">
+                <option value="">Jump to...</option>
+        """
+
+        # Add search options to dropdown
+        for _, dept_name in searchable_depts:
+            target_id = f"dept-{dept_name.replace(' ', '-').replace(':', '-').replace(chr(39), '').lower()}"
+            ministry_breakdown_html += f'<option value="{target_id}">{dept_name}</option>'
+
+        ministry_breakdown_html += f"""
+            </select>
+            <button id="ministryToggleAllBtn" class="expand-collapse-btn" onclick="toggleAllMinistry()">Expand All</button>
+        </div>
+        """
+
+        # Display departments with collapsible content
+        for dept in sorted(all_members_by_dept.keys(), key=str.lower):
+            checked_in_names = ministry_dept_data.get(dept, [])
+            all_names_in_dept = all_members_by_dept.get(dept, [])
+            pending_names = [name for name in all_names_in_dept if name not in checked_in_names_set]
+
+            checked_count = len(checked_in_names)
+            total_count = len(all_names_in_dept)
+
+            # Build name badges
+            checked_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
+            pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+
+            dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
+            ministry_breakdown_html += f"""
+            <div id="dept-{dept_id}" class="dept-container">
+                <div class="cell-collapsible dept-header" onclick="toggleDept('{dept_id}')">
+                    <span id="toggle-{dept_id}" class="cell-toggle">▶</span>
+                    {dept} <span class="count-label">({checked_count}/{total_count})</span>
+                </div>
+                <div id="content-{dept_id}" class="cell-content">
+                    {checked_badges}{pending_badges}
+                </div>
+            </div>
+            """
+
+        # Add JavaScript
+        ministry_breakdown_html += """
+        <script>
+            var ministryIsExpanded = false;
+
+            function toggleAllMinistry() {
+                var btn = document.getElementById('ministryToggleAllBtn');
+                if (ministryIsExpanded) {
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                    btn.textContent = 'Expand All';
+                    ministryIsExpanded = false;
+                } else {
+                    document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                    document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                    btn.textContent = 'Collapse All';
+                    ministryIsExpanded = true;
+                }
+            }
+
+            function toggleDept(deptId) {
+                var content = document.getElementById('content-' + deptId);
+                var toggle = document.getElementById('toggle-' + deptId);
+                if (content && toggle) {
+                    content.classList.toggle('expanded');
+                    toggle.classList.toggle('expanded');
+                }
+            }
+
+            function jumpToDept(targetId) {
+                if (!targetId) return;
+                var el = document.getElementById(targetId);
+                if (el) {
+                    var deptId = targetId.replace('dept-', '');
+                    var content = document.getElementById('content-' + deptId);
+                    var toggle = document.getElementById('toggle-' + deptId);
+                    if (content && !content.classList.contains('expanded')) {
+                        content.classList.add('expanded');
+                        if (toggle) toggle.classList.add('expanded');
+                    }
+                    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    el.classList.add('highlight');
+                    setTimeout(function() { el.classList.remove('highlight'); }, 2500);
+                }
+                document.getElementById('ministrySearchSelect').value = '';
+            }
+        </script>
+        """
+
+        # Calculate height and render
+        num_depts = len(all_members_by_dept)
+        estimated_height = 150 + (num_depts * 80)
+        components.html(ministry_breakdown_html, height=estimated_height, scrolling=True)
+    else:
+        # Empty state
+        st.markdown(f"""
+        <div style="text-align: center; padding: 4rem 2rem; background: {page_colors['card_bg']}; border: 2px dashed {page_colors['text_muted']};">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+            <div style="font-family: 'Inter', sans-serif; font-size: 1.5rem; color: {page_colors['text_muted']}; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">
+                No {selected_ministry} check-ins yet today
+            </div>
+            <div style="font-size: 1rem; color: {page_colors['text_muted']}; margin-top: 1rem; font-weight: 500;">
+                Be the first to check in!
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show all members greyed out with collapsible sections
+        if all_members_by_dept:
+            st.markdown(f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.5rem; font-weight: 900; color: {page_colors["primary"]}; margin-top: 2rem; margin-bottom: 1rem;">Attendees by Department</div>', unsafe_allow_html=True)
+
+            # Build search options
+            all_depts_empty = sorted(all_members_by_dept.keys(), key=str.lower)
+
+            # Build collapsible HTML for empty state
+            empty_ministry_html = f"""
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+                * {{ font-family: 'Inter', sans-serif !important; box-sizing: border-box; }}
+                .cell-collapsible {{ cursor: pointer; user-select: none; transition: all 0.2s ease; }}
+                .cell-collapsible:hover {{ opacity: 0.8; }}
+                .cell-content {{ overflow: hidden; transition: max-height 0.3s ease-out, opacity 0.2s ease-out; max-height: 0; opacity: 0; padding: 0; }}
+                .cell-content.expanded {{ max-height: 2000px; opacity: 1; padding-top: 0.5rem; }}
+                .cell-toggle {{ display: inline-block; margin-right: 0.5rem; transition: transform 0.2s ease; font-size: 0.85rem; }}
+                .cell-toggle.expanded {{ transform: rotate(90deg); }}
+                .expand-collapse-btn {{ background: transparent; border: 1px solid {page_colors['primary']}; color: {page_colors['primary']}; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 600; transition: all 0.2s ease; min-width: 120px; }}
+                .expand-collapse-btn:hover {{ background: {page_colors['primary']}; color: {page_colors['background']}; }}
+                .search-select {{ padding: 0.5rem; border: 1px solid {page_colors['primary']}; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 500; background: {page_colors['background']}; color: {page_colors['text']}; min-width: 200px; cursor: pointer; }}
+                .controls-row {{ display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }}
+                .name-badge-pending {{ display: inline-block; background: transparent; color: {page_colors['text_muted']}; border: 1px solid {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.25rem; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.5; }}
+                .dept-header {{ font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.3rem; }}
+                .dept-container {{ margin-bottom: 1rem; padding: 0.5rem; border-radius: 8px; transition: all 0.3s ease; }}
+                .count-label {{ color: {page_colors['text_muted']}; font-size: 0.85rem; font-weight: normal; text-transform: none; letter-spacing: normal; }}
+                .highlight {{ box-shadow: 0 0 20px {page_colors['primary']}; background-color: {page_colors['light']}20; }}
+            </style>
+            <div class="controls-row">
+                <select id="emptyMinistrySearchSelect" class="search-select" onchange="jumpToDeptEmpty(this.value)">
+                    <option value="">Jump to...</option>
+            """
+
+            for dept_name in all_depts_empty:
+                target_id = f"empty-dept-{dept_name.replace(' ', '-').replace(':', '-').replace(chr(39), '').lower()}"
+                empty_ministry_html += f'<option value="{target_id}">{dept_name}</option>'
+
+            empty_ministry_html += f"""
+                </select>
+                <button id="emptyMinistryToggleAllBtn" class="expand-collapse-btn" onclick="toggleAllMinistryEmpty()">Expand All</button>
+            </div>
+            """
+
+            for dept in all_depts_empty:
+                all_names = all_members_by_dept.get(dept, [])
+                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names)])
+                dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
+
+                empty_ministry_html += f"""
+                <div id="empty-dept-{dept_id}" class="dept-container">
+                    <div class="cell-collapsible dept-header" onclick="toggleDeptEmpty('{dept_id}')">
+                        <span id="empty-toggle-{dept_id}" class="cell-toggle">▶</span>
+                        {dept} <span class="count-label">(0/{len(all_names)})</span>
+                    </div>
+                    <div id="empty-content-{dept_id}" class="cell-content">
+                        {pending_badges}
+                    </div>
+                </div>
+                """
+
+            empty_ministry_html += """
+            <script>
+                var emptyMinistryIsExpanded = false;
+                function toggleAllMinistryEmpty() {
+                    var btn = document.getElementById('emptyMinistryToggleAllBtn');
+                    if (emptyMinistryIsExpanded) {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.remove('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.remove('expanded'));
+                        btn.textContent = 'Expand All';
+                        emptyMinistryIsExpanded = false;
+                    } else {
+                        document.querySelectorAll('.cell-content').forEach(el => el.classList.add('expanded'));
+                        document.querySelectorAll('.cell-toggle').forEach(el => el.classList.add('expanded'));
+                        btn.textContent = 'Collapse All';
+                        emptyMinistryIsExpanded = true;
+                    }
+                }
+                function toggleDeptEmpty(deptId) {
+                    var content = document.getElementById('empty-content-' + deptId);
+                    var toggle = document.getElementById('empty-toggle-' + deptId);
+                    if (content && toggle) {
+                        content.classList.toggle('expanded');
+                        toggle.classList.toggle('expanded');
+                    }
+                }
+                function jumpToDeptEmpty(targetId) {
+                    if (!targetId) return;
+                    var el = document.getElementById(targetId);
+                    if (el) {
+                        var deptId = targetId.replace('empty-dept-', '');
+                        var content = document.getElementById('empty-content-' + deptId);
+                        var toggle = document.getElementById('empty-toggle-' + deptId);
+                        if (content && !content.classList.contains('expanded')) {
+                            content.classList.add('expanded');
+                            if (toggle) toggle.classList.add('expanded');
+                        }
+                        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        el.classList.add('highlight');
+                        setTimeout(function() { el.classList.remove('highlight'); }, 2500);
+                    }
+                    document.getElementById('emptyMinistrySearchSelect').value = '';
+                }
+            </script>
+            """
+
+            num_depts_empty = len(all_members_by_dept)
+            estimated_height_empty = 150 + (num_depts_empty * 80)
+            components.html(empty_ministry_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_qr_section():
@@ -3485,13 +4383,18 @@ default_page = query_params.get("page", "nwst")
 # Map query param to page name
 page_map = {
     "nwst": "NWST Check In",
-    "leaders": "Leaders Discipleship Check In"
+    "leaders": "Leaders Discipleship Check In",
+    "ministry": "Ministry Check In"
 }
 reverse_page_map = {v: k for k, v in page_map.items()}
 
 # Get current page from query params (source of truth)
 current_page = page_map.get(default_page, "NWST Check In")
 page = current_page  # Set page variable for use later
+
+# Initialize ministry selection in session state
+if 'selected_ministry' not in st.session_state:
+    st.session_state.selected_ministry = MINISTRY_LIST[0]  # Default to first ministry
 
 with st.sidebar:
     # Email Report Button
@@ -3703,7 +4606,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # Create tabs using columns and buttons
-tab_col1, tab_col2 = st.columns(2)
+tab_col1, tab_col2, tab_col3 = st.columns(3)
 with tab_col1:
     nwst_active = page == "NWST Check In"
     if st.button(
@@ -3726,6 +4629,18 @@ with tab_col2:
         disabled=leaders_active
     ):
         st.query_params["page"] = "leaders"
+        st.rerun()
+
+with tab_col3:
+    ministry_active = page == "Ministry Check In"
+    if st.button(
+        "Ministry Check In",
+        type="primary" if ministry_active else "secondary",
+        use_container_width=True,
+        key="tab_ministry",
+        disabled=ministry_active
+    ):
+        st.query_params["page"] = "ministry"
         st.rerun()
 
 # Determine if viewing historical data
@@ -3814,7 +4729,8 @@ if page == "NWST Check In":
         render_qr_section()
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard(ATTENDANCE_TAB_NAME)
-else:
+
+elif page == "Leaders Discipleship Check In":
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
@@ -3833,6 +4749,42 @@ else:
         render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
+
+elif page == "Ministry Check In":
+    # Ministry page header
+    st.markdown(f"""
+    <div style="text-align: center; margin-bottom: 1.5rem;">
+        <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
+                   color: {display_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   margin: 0; padding: 1rem 0;">
+            Ministry Check In
+        </h1>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Ministry Attendance (by Department)</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Ministry selector dropdown
+    col_select1, col_select2, col_select3 = st.columns([1, 2, 1])
+    with col_select2:
+        selected_ministry = st.selectbox(
+            "Select Ministry",
+            options=MINISTRY_LIST,
+            index=MINISTRY_LIST.index(st.session_state.selected_ministry) if st.session_state.selected_ministry in MINISTRY_LIST else 0,
+            key="ministry_selector",
+            help="Select the ministry to view and check in members"
+        )
+        # Update session state when selection changes
+        if selected_ministry != st.session_state.selected_ministry:
+            st.session_state.selected_ministry = selected_ministry
+            st.rerun()
+
+    # Show check-in form and dashboard for selected ministry
+    if not viewing_historical:
+        render_ministry_check_in_form(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
+        render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
+        render_ministry_dashboard(st.session_state.selected_ministry)
+    else:
+        st.info("Historical view is not yet available for Ministry Check In. Switch to NWST or Leaders Check In to view historical data.")
 
 # Footer
 st.markdown("---")
