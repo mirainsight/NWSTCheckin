@@ -1665,12 +1665,14 @@ def render_ministry_dashboard(selected_ministry):
             # Check if this department belongs to selected ministry
             if ":" in dept:
                 ministry_part = dept.split(":")[0].strip()
-                if ministry_part.lower() == selected_ministry.lower():
-                    ministry_checked_in.append(name_dept)
-                    name = parts[0].strip()
-                    if dept not in ministry_dept_data:
-                        ministry_dept_data[dept] = []
-                    ministry_dept_data[dept].append(name)
+            else:
+                ministry_part = dept  # No colon means department IS the ministry
+            if ministry_part.lower() == selected_ministry.lower():
+                ministry_checked_in.append(name_dept)
+                name = parts[0].strip()
+                if dept not in ministry_dept_data:
+                    ministry_dept_data[dept] = []
+                ministry_dept_data[dept].append(name)
 
     total_checked_in = len(ministry_checked_in)
 
