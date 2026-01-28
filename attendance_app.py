@@ -1852,7 +1852,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 color: {page_colors['background']};
                 padding: 0.6rem 1.2rem;
                 margin: 0.25rem;
-                border-radius: 50px;
+                border-radius: 4px;
                 font-family: 'Inter', sans-serif !important;
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -1872,7 +1872,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 border: 1px solid {page_colors['text_muted']};
                 padding: 0.6rem 1.2rem;
                 margin: 0.25rem;
-                border-radius: 50px;
+                border-radius: 4px;
                 font-family: 'Inter', sans-serif !important;
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -2253,7 +2253,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                     border: 1px solid {page_colors['text_muted']};
                     padding: 0.6rem 1.2rem;
                     margin: 0.25rem;
-                    border-radius: 50px;
+                    border-radius: 4px;
                     font-family: 'Inter', sans-serif !important;
                     font-size: 0.9rem;
                     font-weight: 700;
@@ -2902,7 +2902,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 color: {colors['background']};
                 padding: 0.6rem 1.2rem;
                 margin: 0.25rem;
-                border-radius: 50px;
+                border-radius: 4px;
                 font-family: 'Inter', sans-serif !important;
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -2922,7 +2922,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 border: 1px solid {colors['text_muted']};
                 padding: 0.6rem 1.2rem;
                 margin: 0.25rem;
-                border-radius: 50px;
+                border-radius: 4px;
                 font-family: 'Inter', sans-serif !important;
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -3270,7 +3270,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     border: 1px solid {colors['text_muted']};
                     padding: 0.6rem 1.2rem;
                     margin: 0.25rem;
-                    border-radius: 50px;
+                    border-radius: 4px;
                     font-family: 'Inter', sans-serif !important;
                     font-size: 0.9rem;
                     font-weight: 700;
