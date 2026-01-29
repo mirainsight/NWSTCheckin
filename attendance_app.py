@@ -1703,6 +1703,12 @@ def render_ministry_dashboard(selected_ministry):
             border-left: 6px solid {page_colors['primary']};
             margin-bottom: 2rem;
             box-shadow: 0 8px 32px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.15);
+            transition: all 0.3s ease;
+        }}
+        .kpi-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.25);
+            border-left-width: 8px;
         }}
         .kpi-label {{
             font-family: 'Inter', sans-serif;
@@ -1720,6 +1726,7 @@ def render_ministry_dashboard(selected_ministry):
             color: {page_colors['primary']};
             line-height: 1;
             margin: 0.5rem 0;
+            text-shadow: 0 0 20px rgba({primary_rgb[0]}, {primary_rgb[1]}, {primary_rgb[2]}, 0.3);
         }}
         .kpi-subtitle {{
             font-family: 'Inter', sans-serif;
@@ -1871,44 +1878,37 @@ def render_ministry_dashboard(selected_ministry):
                 flex-wrap: wrap;
             }}
             .name-badge {{
-                display: inline-block;
-                background: {page_colors['primary']};
-                color: {page_colors['background']};
+                background: {page_colors['background']};
+                border: 1px solid {page_colors['primary']};
+                color: {page_colors['primary']};
                 padding: 0.6rem 1.2rem;
-                margin: 0.25rem;
-                border-radius: 4px;
+                margin: 0.4rem 0.4rem 0.4rem 0;
+                border-radius: 0px;
+                display: inline-block;
                 font-family: 'Inter', sans-serif !important;
+                font-weight: 600;
                 font-size: 0.9rem;
-                font-weight: 700;
-                text-transform: uppercase;
                 letter-spacing: 0.5px;
                 transition: all 0.2s ease;
-                cursor: default;
             }}
             .name-badge:hover {{
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
                 transform: scale(1.05);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             }}
             .name-badge-pending {{
-                display: inline-block;
-                background: transparent;
-                color: {page_colors['text_muted']};
+                background: {page_colors['background']};
                 border: 1px solid {page_colors['text_muted']};
+                color: {page_colors['text_muted']};
                 padding: 0.6rem 1.2rem;
-                margin: 0.25rem;
-                border-radius: 4px;
+                margin: 0.4rem 0.4rem 0.4rem 0;
+                border-radius: 0px;
+                display: inline-block;
                 font-family: 'Inter', sans-serif !important;
+                font-weight: 600;
                 font-size: 0.9rem;
-                font-weight: 700;
-                text-transform: uppercase;
                 letter-spacing: 0.5px;
                 opacity: 0.5;
-                transition: all 0.2s ease;
-                cursor: default;
-            }}
-            .name-badge-pending:hover {{
-                transform: scale(1.05);
-                opacity: 0.7;
             }}
             .dept-header {{
                 font-family: 'Inter', sans-serif;
@@ -2068,7 +2068,7 @@ def render_ministry_dashboard(selected_ministry):
                 .expand-collapse-btn:hover {{ background: {page_colors['primary']}; color: {page_colors['background']}; }}
                 .search-select {{ padding: 0.5rem; border: 1px solid {page_colors['primary']}; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 500; background: {page_colors['background']}; color: {page_colors['text']}; min-width: 200px; cursor: pointer; }}
                 .controls-row {{ display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }}
-                .name-badge-pending {{ display: inline-block; background: transparent; color: {page_colors['text_muted']}; border: 1px solid {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.25rem; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.5; }}
+                .name-badge-pending {{ background: {page_colors['background']}; border: 1px solid {page_colors['text_muted']}; color: {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.4rem 0.4rem 0.4rem 0; border-radius: 0px; display: inline-block; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.9rem; letter-spacing: 0.5px; opacity: 0.5; }}
                 .dept-header {{ font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.3rem; }}
                 .dept-container {{ margin-bottom: 1rem; padding: 0.5rem; border-radius: 8px; transition: all 0.3s ease; }}
                 .count-label {{ color: {page_colors['text_muted']}; font-size: 0.85rem; font-weight: normal; text-transform: none; letter-spacing: normal; }}
