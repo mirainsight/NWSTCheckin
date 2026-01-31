@@ -5136,6 +5136,53 @@ elif page == "Ministry Discipleship":
     else:
         st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
 
+# Scroll to top button
+st.markdown(f"""
+<style>
+    .scroll-to-top {{
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        width: 50px;
+        height: 50px;
+        background: {page_colors['primary']};
+        color: {page_colors['background']};
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 1.5rem;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        transition: all 0.3s ease;
+    }}
+    .scroll-to-top:hover {{
+        transform: scale(1.1);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    }}
+</style>
+<button class="scroll-to-top" id="scrollToTopBtn" onclick="window.parent.document.querySelector('section.main').scrollTo({{top: 0, behavior: 'smooth'}});">
+    ↑
+</button>
+<script>
+    // Get the button and the scrollable container
+    const scrollBtn = document.getElementById('scrollToTopBtn');
+    const mainSection = window.parent.document.querySelector('section.main');
+
+    if (mainSection) {{
+        mainSection.addEventListener('scroll', function() {{
+            if (mainSection.scrollTop > 300) {{
+                scrollBtn.style.display = 'flex';
+            }} else {{
+                scrollBtn.style.display = 'none';
+            }}
+        }});
+    }}
+</script>
+""", unsafe_allow_html=True)
+
 # Footer
 st.markdown("---")
 st.markdown(
