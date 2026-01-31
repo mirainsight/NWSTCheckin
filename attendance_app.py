@@ -1446,11 +1446,18 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             if selected_display and selected_display != placeholder:
                 original_name = option_mapping.get(selected_display, selected_display)
 
-                # Check if already checked in
-                if original_name in checked_in_today:
+                # Prevent duplicate check-ins (selectbox remembers selection after rerun)
+                last_processed = st.session_state.get('last_processed_checkin')
+                if last_processed == original_name:
+                    # Already processed this selection, skip
+                    pass
+                elif original_name in checked_in_today:
+                    # Check if already checked in
                     st.warning(f"{original_name} has already checked in today.")
-                    st.rerun()
                 else:
+                    # Mark as being processed
+                    st.session_state['last_processed_checkin'] = original_name
+
                     # Prepare attendance data
                     attendance_data = {
                         "selected_options": [original_name],
@@ -1480,6 +1487,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         }
                         st.rerun()
                     else:
+                        # Clear the processed flag on error
+                        st.session_state['last_processed_checkin'] = None
                         st.error(f"{message}")
 
             # Show undo button BELOW the selectbox (with spacing)
@@ -1494,6 +1503,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         if success:
                             st.session_state['last_checkin'] = None
                             st.session_state['show_checkin_success'] = None
+                            st.session_state['last_processed_checkin'] = None  # Allow re-checking in
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                             st.session_state['show_undo_success'] = undo_message
                             st.rerun()
@@ -1731,11 +1741,18 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             if selected_display and selected_display != placeholder:
                 original_name = option_mapping.get(selected_display, selected_display)
 
-                # Check if already checked in
-                if original_name in checked_in_today:
+                # Prevent duplicate check-ins (selectbox remembers selection after rerun)
+                last_processed = st.session_state.get('last_processed_ministry_checkin')
+                if last_processed == original_name:
+                    # Already processed this selection, skip
+                    pass
+                elif original_name in checked_in_today:
+                    # Check if already checked in
                     st.warning(f"{original_name} has already checked in today.")
-                    st.rerun()
                 else:
+                    # Mark as being processed
+                    st.session_state['last_processed_ministry_checkin'] = original_name
+
                     # Prepare attendance data
                     attendance_data = {
                         "selected_options": [original_name],
@@ -1765,6 +1782,8 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         }
                         st.rerun()
                     else:
+                        # Clear the processed flag on error
+                        st.session_state['last_processed_ministry_checkin'] = None
                         st.error(f"{message}")
 
             # Show undo button BELOW the selectbox (with spacing)
@@ -1779,6 +1798,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         if success:
                             st.session_state['last_checkin'] = None
                             st.session_state['show_checkin_success'] = None
+                            st.session_state['last_processed_ministry_checkin'] = None  # Allow re-checking in
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                             st.session_state['show_undo_success'] = undo_message
                             st.rerun()
