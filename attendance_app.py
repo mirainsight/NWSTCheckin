@@ -1355,7 +1355,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     origin: { x: 0.5, y: 0.5 },
                     colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
                 });
-                setTimeout(function() { canvas.remove(); }, 3000);
+                setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
             </script>
             """, height=0)
 
@@ -1659,7 +1659,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     origin: { x: 0.5, y: 0.5 },
                     colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
                 });
-                setTimeout(function() { canvas.remove(); }, 3000);
+                setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
             </script>
             """, height=0)
 
