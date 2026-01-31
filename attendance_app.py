@@ -5145,8 +5145,9 @@ st.markdown(f"""
     /* Scroll to top button */
     #scroll-to-top {{
         position: fixed;
-        bottom: 30px;
+        top: 50%;
         right: 30px;
+        transform: translateY(-50%);
         width: 50px;
         height: 50px;
         background: {page_colors['primary']};
@@ -5164,7 +5165,7 @@ st.markdown(f"""
         text-decoration: none;
     }}
     #scroll-to-top:hover {{
-        transform: scale(1.1);
+        transform: translateY(-50%) scale(1.1);
         box-shadow: 0 6px 20px rgba(0,0,0,0.4);
     }}
 </style>
