@@ -865,6 +865,83 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
     except Exception as e:
         return False, f"Failed to save attendance: {str(e)}"
 
+
+def undo_last_checkin(client, name, tab_name):
+    """Undo the last check-in by removing the most recent entry for the given name.
+    Returns (success, message) tuple."""
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+        attendance_sheet = spreadsheet.worksheet(tab_name)
+
+        # Get all values to find the row to delete
+        all_values = attendance_sheet.get_all_values()
+
+        # Find the most recent row with this name (search from bottom)
+        row_to_delete = None
+        for i in range(len(all_values) - 1, 0, -1):  # Skip header row
+            if len(all_values[i]) >= 2 and all_values[i][1] == name:
+                row_to_delete = i + 1  # gspread uses 1-based indexing
+                break
+
+        if row_to_delete is None:
+            return False, f"Could not find check-in record for {name}"
+
+        # Delete the row
+        attendance_sheet.delete_rows(row_to_delete)
+
+        # Update Redis cache to remove the person
+        today_myt = get_today_myt_date()
+        redis_client = get_redis_client()
+        if redis_client:
+            try:
+                redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+                cached = redis_client.get(redis_key)
+
+                if cached:
+                    data = json.loads(cached) if isinstance(cached, str) else cached
+                    cell_group_data = data.get("cell_group_data", {})
+                    checked_in_list = data.get("checked_in_list", [])
+                    recent_checkins = data.get("recent_checkins", [])
+
+                    # Remove from checked_in_list
+                    if name in checked_in_list:
+                        checked_in_list.remove(name)
+
+                    # Remove from cell_group_data
+                    parsed_name, cell_group = parse_name_cell_group(name)
+                    if cell_group in cell_group_data and parsed_name in cell_group_data[cell_group]:
+                        cell_group_data[cell_group].remove(parsed_name)
+                        if not cell_group_data[cell_group]:
+                            del cell_group_data[cell_group]
+
+                    # Remove from recent_checkins (first occurrence)
+                    for i, (ts, n) in enumerate(recent_checkins):
+                        if n == name:
+                            recent_checkins.pop(i)
+                            break
+
+                    # Save updated cache
+                    cache_data = {
+                        "cell_group_data": cell_group_data,
+                        "checked_in_list": checked_in_list,
+                        "recent_checkins": recent_checkins
+                    }
+                    redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass  # Redis update failed, but Sheets deletion succeeded
+
+        # Extract just the name part for the message
+        display_name = name.split(" - ")[0] if " - " in name else name
+        return True, f"Undone! {display_name} has been removed from today's check-in."
+
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return False, "⚠️ API quota exceeded. Please wait a moment and try again."
+        return False, f"Failed to undo: {str(e)}"
+    except Exception as e:
+        return False, f"Failed to undo: {str(e)}"
+
+
 # ---------- Streamlit App ----------
 st.set_page_config(
     page_title="Church Check-In",
@@ -1235,141 +1312,201 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
                     text-align: center;
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">Select your name from the dropdown below to check in.</p>
+                ">Select a name from the dropdown below to check in.</p>
             </div>
             """, height=60)
         else:
-            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
+            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
         # Show simple refresh message
         if checked_in_today:
             st.success("Refreshed!")
 
-        # Display form
-        with st.form(form_key, clear_on_submit=True):
-            # Check if there are any available options
-            if not available_options:
-                st.warning("All attendees have already checked in for today!")
-                st.form_submit_button("Check In", type="primary", use_container_width=True, disabled=True)
-            else:
-                # Create formatted options: available ones normal, checked-in ones with tick prefix
-                # Format: "✓ Name - Cell" for checked in, "Name - Cell" for available
-                # Sort by Cell Group first, then by Name within each group
-                def get_sort_key(opt):
-                    parts = opt.split(" - ", 1)
-                    if len(parts) == 2:
-                        name, cell = parts[0].strip(), parts[1].strip()
-                        return (cell.lower(), name.lower())
-                    return (opt.lower(), "")
+        # Check if there are any available options
+        if not available_options:
+            st.warning("All attendees have already checked in for today!")
+        else:
+            # Key for the selectbox widget
+            selectbox_key = f"{form_key}_selectbox"
 
-                sorted_options = sorted(all_option_values, key=get_sort_key)
+            # Create formatted options: available ones normal, checked-in ones with tick prefix
+            # Format: "✓ Name - Cell" for checked in, "Name - Cell" for available
+            # Sort by Cell Group first, then by Name within each group
+            def get_sort_key(opt):
+                parts = opt.split(" - ", 1)
+                if len(parts) == 2:
+                    name, cell = parts[0].strip(), parts[1].strip()
+                    return (cell.lower(), name.lower())
+                return (opt.lower(), "")
 
-                formatted_options = []
-                option_mapping = {}  # Maps display name back to original name
+            sorted_options = sorted(all_option_values, key=get_sort_key)
 
-                for opt in sorted_options:
-                    if opt in checked_in_today:
-                        display_name = f"✓ {opt}"
-                        formatted_options.append(display_name)
-                        option_mapping[display_name] = opt
-                    else:
-                        formatted_options.append(opt)
-                        option_mapping[opt] = opt
+            formatted_options = []
+            option_mapping = {}  # Maps display name back to original name
 
-                # Sort formatted options again to ensure correct order
-                # (ignoring ✓ prefix for sorting)
-                def get_display_sort_key(display_opt):
-                    opt = display_opt.lstrip("✓ ")
-                    parts = opt.split(" - ", 1)
-                    if len(parts) == 2:
-                        name, cell = parts[0].strip(), parts[1].strip()
-                        return (cell.lower(), name.lower())
-                    return (opt.lower(), "")
+            for opt in sorted_options:
+                if opt in checked_in_today:
+                    display_name = f"✓ {opt}"
+                    formatted_options.append(display_name)
+                    option_mapping[display_name] = opt
+                else:
+                    formatted_options.append(opt)
+                    option_mapping[opt] = opt
 
-                formatted_options = sorted(formatted_options, key=get_display_sort_key)
+            # Sort formatted options again to ensure correct order
+            # (ignoring ✓ prefix for sorting)
+            def get_display_sort_key(display_opt):
+                opt = display_opt.lstrip("✓ ")
+                parts = opt.split(" - ", 1)
+                if len(parts) == 2:
+                    name, cell = parts[0].strip(), parts[1].strip()
+                    return (cell.lower(), name.lower())
+                return (opt.lower(), "")
 
-                # Single-select for check-ins
-                selected_display_options = st.multiselect(
-                    f"Select {option_type} *",
-                    options=formatted_options,
-                    help="Select a person to check in. Names with ✓ are already checked in today.",
-                    default=[],
-                    max_selections=1,
-                    format_func=lambda x: x  # Use as-is since we already formatted
-                )
+            formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
-                # Add JavaScript to gray out checked-in options in the dropdown
-                components.html(f"""
-                <script>
-                    // Function to style checked-in options (those starting with ✓)
-                    function styleCheckedInOptions() {{
-                        // Find all option items in the multiselect dropdown
-                        const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
-                        options.forEach(opt => {{
-                            const text = opt.textContent || opt.innerText;
-                            if (text && text.trim().startsWith('✓')) {{
-                                opt.style.opacity = '0.5';
-                                opt.style.color = '#888';
-                                opt.style.fontStyle = 'italic';
-                            }}
-                        }});
-                    }}
+            # Add placeholder at the beginning
+            placeholder = "-- Select a name --"
+            options_with_placeholder = [placeholder] + formatted_options
 
-                    // Run on page load and observe for dropdown changes
-                    const observer = new MutationObserver(styleCheckedInOptions);
-                    observer.observe(document.body, {{ childList: true, subtree: true }});
-                    styleCheckedInOptions();
-                </script>
-                """, height=0)
+            # Auto-submit selectbox
+            selected_display = st.selectbox(
+                f"Select {option_type}",
+                options=options_with_placeholder,
+                index=0,
+                key=selectbox_key,
+                help="Select a name to instantly check in. Names with ✓ are already checked in today."
+            )
 
-                # Filter out any already checked-in options that user might have selected
-                # (convert back to original names and filter)
-                selected_options = []
-                already_checked_in_selected = []
-                for display_opt in selected_display_options:
-                    original_name = option_mapping.get(display_opt, display_opt)
-                    if original_name in checked_in_today:
-                        already_checked_in_selected.append(original_name)
-                    else:
-                        selected_options.append(original_name)
+            # Add JavaScript to gray out checked-in options in the dropdown
+            components.html(f"""
+            <script>
+                // Function to style checked-in options (those starting with ✓)
+                function styleCheckedInOptions() {{
+                    // Find all option items in the selectbox dropdown
+                    const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
+                    options.forEach(opt => {{
+                        const text = opt.textContent || opt.innerText;
+                        if (text && text.trim().startsWith('✓')) {{
+                            opt.style.opacity = '0.5';
+                            opt.style.color = '#888';
+                            opt.style.fontStyle = 'italic';
+                        }}
+                    }});
+                }}
 
-                # Submit button
-                submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
+                // Run on page load and observe for dropdown changes
+                const observer = new MutationObserver(styleCheckedInOptions);
+                observer.observe(document.body, {{ childList: true, subtree: true }});
+                styleCheckedInOptions();
+            </script>
+            """, height=0)
 
-                if submitted:
-                    # Warn if user selected already checked-in people
-                    if already_checked_in_selected:
-                        st.warning(f"Note: {', '.join(already_checked_in_selected)} already checked in today and were skipped.")
+            # Auto check-in when a valid selection is made
+            if selected_display and selected_display != placeholder:
+                original_name = option_mapping.get(selected_display, selected_display)
 
-                    # Validation
-                    if not selected_options:
-                        if already_checked_in_selected:
-                            st.error("All selected people have already checked in today.")
-                        else:
-                            st.error("Please select at least one person.")
-                    else:
-                        # Prepare attendance data for batch check-in
-                        attendance_data = {
-                            "selected_options": selected_options,
-                            "option_type": option_type
+                # Check if already checked in
+                if original_name in checked_in_today:
+                    st.warning(f"{original_name} has already checked in today.")
+                    st.rerun()
+                else:
+                    # Prepare attendance data
+                    attendance_data = {
+                        "selected_options": [original_name],
+                        "option_type": option_type
+                    }
+
+                    # Save to Google Sheets
+                    success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+
+                    if success:
+                        # Store last check-in for potential undo
+                        st.session_state['last_checkin'] = {
+                            'name': original_name,
+                            'tab_name': tab_name,
+                            'timestamp': get_now_myt(),
+                            'form_type': 'attendance'
                         }
 
-                        # Save to Google Sheets (single API call for all) - use tab_name
-                        success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+                        # Increment refresh counter to invalidate local Streamlit cache
+                        st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                        st.session_state.last_refresh_time = get_now_myt()
 
+                        # Show success on next run
+                        st.session_state['show_checkin_success'] = {
+                            'name': original_name,
+                            'message': message
+                        }
+                        st.rerun()
+                    else:
+                        st.error(f"{message}")
+
+            # Show success message with undo button if just checked in
+            if 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']:
+                success_info = st.session_state['show_checkin_success']
+
+                # Check for undo button click FIRST before showing celebration
+                undo_clicked = False
+                if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
+                    last_checkin = st.session_state['last_checkin']
+                    display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
+
+                    if st.button(f"Undo check-in for {display_name}", key=f"{form_key}_undo", type="secondary"):
+                        undo_clicked = True
+                        success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
                         if success:
-                            # Increment refresh counter to invalidate local Streamlit cache
+                            st.session_state['last_checkin'] = None
+                            st.session_state['show_checkin_success'] = None
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.session_state.last_refresh_time = get_now_myt()
-                            # Note: Redis cache is updated in save_attendance_to_sheet()
-                            # No need to clear caches - Redis has the updated data
-
-                            st.success(f"{message}")
-                            st.balloons()
-                            # Refresh the page to update the dropdown
+                            st.toast(undo_message, icon="↩️")
                             st.rerun()
                         else:
-                            st.error(f"{message}")
+                            st.error(undo_message)
+                else:
+                    # No undo available, clear the success message
+                    st.session_state['show_checkin_success'] = None
+
+                # Only show celebration if undo wasn't clicked
+                if not undo_clicked:
+                    st.toast(f"{success_info['message']}", icon="✅")
+
+                    # Confetti celebration effect - inject into parent window
+                    components.html("""
+                    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+                    <script>
+                        // Create canvas in parent window for confetti
+                        var canvas = parent.document.createElement('canvas');
+                        canvas.id = 'confetti-canvas';
+                        canvas.style.position = 'fixed';
+                        canvas.style.top = '0';
+                        canvas.style.left = '0';
+                        canvas.style.width = '100%';
+                        canvas.style.height = '100%';
+                        canvas.style.pointerEvents = 'none';
+                        canvas.style.zIndex = '9999';
+                        parent.document.body.appendChild(canvas);
+
+                        var myConfetti = confetti.create(canvas, { resize: true });
+
+                        // Fire confetti from both sides
+                        myConfetti({
+                            particleCount: 100,
+                            spread: 70,
+                            origin: { x: 0.1, y: 0.6 }
+                        });
+                        myConfetti({
+                            particleCount: 100,
+                            spread: 70,
+                            origin: { x: 0.9, y: 0.6 }
+                        });
+
+                        // Remove canvas after animation
+                        setTimeout(function() {
+                            canvas.remove();
+                        }, 3000);
+                    </script>
+                    """, height=0)
 
     # Close background GIF container if it was opened
     if background_gif:
@@ -1477,129 +1614,195 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
                     text-align: center;
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">Select your name from the dropdown below to check in.</p>
+                ">Select a name from the dropdown below to check in.</p>
             </div>
             """, height=60)
         else:
-            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select your name from the dropdown below to check in.</p>', unsafe_allow_html=True)
+            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
         # Show simple refresh message
         if checked_in_today:
             st.success("Refreshed!")
 
-        # Display form
-        with st.form(form_key, clear_on_submit=True):
-            # Check if there are any available options
-            if not available_options:
-                st.warning(f"All {selected_ministry} ministry members have already checked in for today!")
-                st.form_submit_button("Check In", type="primary", use_container_width=True, disabled=True)
-            else:
-                # Create formatted options: available ones normal, checked-in ones with tick prefix
-                # Sort by Department first, then by Name within each department
-                def get_sort_key(opt):
-                    parts = opt.split(" - ", 1)
-                    if len(parts) == 2:
-                        name, dept = parts[0].strip(), parts[1].strip()
-                        return (dept.lower(), name.lower())
-                    return (opt.lower(), "")
+        # Check if there are any available options
+        if not available_options:
+            st.warning(f"All {selected_ministry} ministry members have already checked in for today!")
+        else:
+            # Key for the selectbox widget
+            selectbox_key = f"{form_key}_selectbox"
 
-                sorted_options = sorted(ministry_option_values, key=get_sort_key)
+            # Create formatted options: available ones normal, checked-in ones with tick prefix
+            # Sort by Department first, then by Name within each department
+            def get_sort_key(opt):
+                parts = opt.split(" - ", 1)
+                if len(parts) == 2:
+                    name, dept = parts[0].strip(), parts[1].strip()
+                    return (dept.lower(), name.lower())
+                return (opt.lower(), "")
 
-                formatted_options = []
-                option_mapping = {}  # Maps display name back to original name
+            sorted_options = sorted(ministry_option_values, key=get_sort_key)
 
-                for opt in sorted_options:
-                    if opt in checked_in_today:
-                        display_name = f"✓ {opt}"
-                        formatted_options.append(display_name)
-                        option_mapping[display_name] = opt
-                    else:
-                        formatted_options.append(opt)
-                        option_mapping[opt] = opt
+            formatted_options = []
+            option_mapping = {}  # Maps display name back to original name
 
-                # Sort formatted options again to ensure correct order
-                def get_display_sort_key(display_opt):
-                    opt = display_opt.lstrip("✓ ")
-                    parts = opt.split(" - ", 1)
-                    if len(parts) == 2:
-                        name, dept = parts[0].strip(), parts[1].strip()
-                        return (dept.lower(), name.lower())
-                    return (opt.lower(), "")
+            for opt in sorted_options:
+                if opt in checked_in_today:
+                    display_name = f"✓ {opt}"
+                    formatted_options.append(display_name)
+                    option_mapping[display_name] = opt
+                else:
+                    formatted_options.append(opt)
+                    option_mapping[opt] = opt
 
-                formatted_options = sorted(formatted_options, key=get_display_sort_key)
+            # Sort formatted options again to ensure correct order
+            def get_display_sort_key(display_opt):
+                opt = display_opt.lstrip("✓ ")
+                parts = opt.split(" - ", 1)
+                if len(parts) == 2:
+                    name, dept = parts[0].strip(), parts[1].strip()
+                    return (dept.lower(), name.lower())
+                return (opt.lower(), "")
 
-                # Single-select for check-ins
-                selected_display_options = st.multiselect(
-                    f"Select Name *",
-                    options=formatted_options,
-                    help="Select a person to check in. Names with ✓ are already checked in today.",
-                    default=[],
-                    max_selections=1,
-                    format_func=lambda x: x
-                )
+            formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
-                # Add JavaScript to gray out checked-in options
-                components.html(f"""
-                <script>
-                    function styleCheckedInOptions() {{
-                        const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
-                        options.forEach(opt => {{
-                            const text = opt.textContent || opt.innerText;
-                            if (text && text.trim().startsWith('✓')) {{
-                                opt.style.opacity = '0.5';
-                                opt.style.color = '#888';
-                                opt.style.fontStyle = 'italic';
-                            }}
-                        }});
-                    }}
-                    const observer = new MutationObserver(styleCheckedInOptions);
-                    observer.observe(document.body, {{ childList: true, subtree: true }});
-                    styleCheckedInOptions();
-                </script>
-                """, height=0)
+            # Add placeholder at the beginning
+            placeholder = "-- Select a name --"
+            options_with_placeholder = [placeholder] + formatted_options
 
-                # Filter out any already checked-in options
-                selected_options = []
-                already_checked_in_selected = []
-                for display_opt in selected_display_options:
-                    original_name = option_mapping.get(display_opt, display_opt)
-                    if original_name in checked_in_today:
-                        already_checked_in_selected.append(original_name)
-                    else:
-                        selected_options.append(original_name)
+            # Auto-submit selectbox
+            selected_display = st.selectbox(
+                "Select Name",
+                options=options_with_placeholder,
+                index=0,
+                key=selectbox_key,
+                help="Select a name to instantly check in. Names with ✓ are already checked in today."
+            )
 
-                # Submit button
-                submitted = st.form_submit_button("Check In", type="primary", use_container_width=True)
+            # Add JavaScript to gray out checked-in options
+            components.html(f"""
+            <script>
+                function styleCheckedInOptions() {{
+                    const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
+                    options.forEach(opt => {{
+                        const text = opt.textContent || opt.innerText;
+                        if (text && text.trim().startsWith('✓')) {{
+                            opt.style.opacity = '0.5';
+                            opt.style.color = '#888';
+                            opt.style.fontStyle = 'italic';
+                        }}
+                    }});
+                }}
+                const observer = new MutationObserver(styleCheckedInOptions);
+                observer.observe(document.body, {{ childList: true, subtree: true }});
+                styleCheckedInOptions();
+            </script>
+            """, height=0)
 
-                if submitted:
-                    # Warn if user selected already checked-in people
-                    if already_checked_in_selected:
-                        st.warning(f"Note: {', '.join(already_checked_in_selected)} already checked in today and were skipped.")
+            # Auto check-in when a valid selection is made
+            if selected_display and selected_display != placeholder:
+                original_name = option_mapping.get(selected_display, selected_display)
 
-                    # Validation
-                    if not selected_options:
-                        if already_checked_in_selected:
-                            st.error("All selected people have already checked in today.")
-                        else:
-                            st.error("Please select at least one person.")
-                    else:
-                        # Prepare attendance data for batch check-in
-                        attendance_data = {
-                            "selected_options": selected_options,
-                            "option_type": "Name"
+                # Check if already checked in
+                if original_name in checked_in_today:
+                    st.warning(f"{original_name} has already checked in today.")
+                    st.rerun()
+                else:
+                    # Prepare attendance data
+                    attendance_data = {
+                        "selected_options": [original_name],
+                        "option_type": "Name"
+                    }
+
+                    # Save to Ministry Attendance tab
+                    success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+
+                    if success:
+                        # Store last check-in for potential undo
+                        st.session_state['last_checkin'] = {
+                            'name': original_name,
+                            'tab_name': MINISTRY_ATTENDANCE_TAB_NAME,
+                            'timestamp': get_now_myt(),
+                            'form_type': 'ministry',
+                            'ministry': selected_ministry
                         }
 
-                        # Save to Ministry Attendance tab
-                        success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+                        st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                        st.session_state.last_refresh_time = get_now_myt()
 
+                        # Show success on next run
+                        st.session_state['show_checkin_success'] = {
+                            'name': original_name,
+                            'message': message
+                        }
+                        st.rerun()
+                    else:
+                        st.error(f"{message}")
+
+            # Show success message with undo button if just checked in
+            if 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']:
+                success_info = st.session_state['show_checkin_success']
+
+                # Check for undo button click FIRST before showing celebration
+                undo_clicked = False
+                if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
+                    last_checkin = st.session_state['last_checkin']
+                    display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
+
+                    if st.button(f"Undo check-in for {display_name}", key=f"{form_key}_undo", type="secondary"):
+                        undo_clicked = True
+                        success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
                         if success:
+                            st.session_state['last_checkin'] = None
+                            st.session_state['show_checkin_success'] = None
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.session_state.last_refresh_time = get_now_myt()
-                            st.success(f"{message}")
-                            st.balloons()
+                            st.toast(undo_message, icon="↩️")
                             st.rerun()
                         else:
-                            st.error(f"{message}")
+                            st.error(undo_message)
+                else:
+                    # No undo available, clear the success message
+                    st.session_state['show_checkin_success'] = None
+
+                # Only show celebration if undo wasn't clicked
+                if not undo_clicked:
+                    st.toast(f"{success_info['message']}", icon="✅")
+
+                    # Confetti celebration effect - inject into parent window
+                    components.html("""
+                    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+                    <script>
+                        // Create canvas in parent window for confetti
+                        var canvas = parent.document.createElement('canvas');
+                        canvas.id = 'confetti-canvas';
+                        canvas.style.position = 'fixed';
+                        canvas.style.top = '0';
+                        canvas.style.left = '0';
+                        canvas.style.width = '100%';
+                        canvas.style.height = '100%';
+                        canvas.style.pointerEvents = 'none';
+                        canvas.style.zIndex = '9999';
+                        parent.document.body.appendChild(canvas);
+
+                        var myConfetti = confetti.create(canvas, { resize: true });
+
+                        // Fire confetti from both sides
+                        myConfetti({
+                            particleCount: 100,
+                            spread: 70,
+                            origin: { x: 0.1, y: 0.6 }
+                        });
+                        myConfetti({
+                            particleCount: 100,
+                            spread: 70,
+                            origin: { x: 0.9, y: 0.6 }
+                        });
+
+                        // Remove canvas after animation
+                        setTimeout(function() {
+                            canvas.remove();
+                        }, 3000);
+                    </script>
+                    """, height=0)
 
     # Close background GIF container if it was opened
     if background_gif:
@@ -2169,11 +2372,15 @@ def render_qr_section():
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
-                # Clear Redis cache for options
+                # Clear Redis cache for options AND attendance data
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
                         redis_client.delete(REDIS_OPTIONS_KEY)
+                        # Also clear attendance data cache
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
                     except Exception:
                         pass
                 st.session_state.show_qr_modal = False
@@ -2268,11 +2475,15 @@ def render_qr_section():
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
-                # Clear Redis cache for options
+                # Clear Redis cache for options AND attendance data
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
                         redis_client.delete(REDIS_OPTIONS_KEY)
+                        # Also clear attendance data cache
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
                     except Exception:
                         pass
                 st.session_state.show_qr_modal = False
@@ -2292,13 +2503,16 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options (all ministries)
+                # Clear Redis cache for ministry options AND attendance data
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
                         for ministry in MINISTRY_LIST:
                             redis_client.delete(f"attendance:ministry_options:{ministry}")
                         redis_client.delete("attendance:ministry_options:all")
+                        # Also clear ministry attendance data cache
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
                     except Exception:
                         pass
                 st.session_state.show_ministry_qr_modal = False
@@ -2393,13 +2607,16 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options (all ministries)
+                # Clear Redis cache for ministry options AND attendance data
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
                         for ministry in MINISTRY_LIST:
                             redis_client.delete(f"attendance:ministry_options:{ministry}")
                         redis_client.delete("attendance:ministry_options:all")
+                        # Also clear ministry attendance data cache
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
                     except Exception:
                         pass
                 st.session_state.show_ministry_qr_modal = False
