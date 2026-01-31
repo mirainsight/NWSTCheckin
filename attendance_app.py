@@ -5142,10 +5142,14 @@ elif page == "Ministry Discipleship":
 # Scroll to top button - pure CSS approach
 st.markdown(f"""
 <style>
+    /* Enable smooth scrolling for the whole page */
+    html {{
+        scroll-behavior: smooth;
+    }}
     /* Scroll to top button */
     #scroll-to-top {{
         position: fixed;
-        top: 50%;
+        top: 80%;
         right: 30px;
         transform: translateY(-50%);
         width: 50px;
