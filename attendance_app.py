@@ -1329,6 +1329,10 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             components.html("""
             <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
             <script>
+                // Remove any existing confetti canvas first
+                var existingCanvas = parent.document.getElementById('confetti-canvas');
+                if (existingCanvas) { existingCanvas.remove(); }
+
                 var canvas = parent.document.createElement('canvas');
                 canvas.id = 'confetti-canvas';
                 canvas.style.position = 'fixed';
@@ -1349,6 +1353,9 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 setTimeout(function() { canvas.remove(); }, 3000);
             </script>
             """, height=0)
+
+            # Clear success state after displaying (so it doesn't show on next interaction)
+            st.session_state['show_checkin_success'] = None
 
         # Check if there are any available options
         if not available_options:
@@ -1611,6 +1618,10 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             components.html("""
             <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
             <script>
+                // Remove any existing confetti canvas first
+                var existingCanvas = parent.document.getElementById('confetti-canvas');
+                if (existingCanvas) { existingCanvas.remove(); }
+
                 var canvas = parent.document.createElement('canvas');
                 canvas.id = 'confetti-canvas';
                 canvas.style.position = 'fixed';
