@@ -1469,9 +1469,11 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
                 # Only show celebration if undo wasn't clicked
                 if not undo_clicked:
-                    st.toast(f"{success_info['message']}", icon="✅")
+                    # Show prominent success message (visible on mobile)
+                    name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
+                    st.success(f"✅ {name_only} checked in!")
 
-                    # Confetti celebration effect - inject into parent window
+                    # Confetti celebration effect - centered for mobile
                     components.html("""
                     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
                     <script>
@@ -1489,16 +1491,12 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
                         var myConfetti = confetti.create(canvas, { resize: true });
 
-                        // Fire confetti from both sides
+                        // Fire confetti from center (better for mobile)
                         myConfetti({
-                            particleCount: 100,
-                            spread: 70,
-                            origin: { x: 0.1, y: 0.6 }
-                        });
-                        myConfetti({
-                            particleCount: 100,
-                            spread: 70,
-                            origin: { x: 0.9, y: 0.6 }
+                            particleCount: 150,
+                            spread: 100,
+                            origin: { x: 0.5, y: 0.5 },
+                            colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
                         });
 
                         // Remove canvas after animation
@@ -1765,9 +1763,11 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
                 # Only show celebration if undo wasn't clicked
                 if not undo_clicked:
-                    st.toast(f"{success_info['message']}", icon="✅")
+                    # Show prominent success message (visible on mobile)
+                    name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
+                    st.success(f"✅ {name_only} checked in!")
 
-                    # Confetti celebration effect - inject into parent window
+                    # Confetti celebration effect - centered for mobile
                     components.html("""
                     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
                     <script>
@@ -1785,16 +1785,12 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
                         var myConfetti = confetti.create(canvas, { resize: true });
 
-                        // Fire confetti from both sides
+                        // Fire confetti from center (better for mobile)
                         myConfetti({
-                            particleCount: 100,
-                            spread: 70,
-                            origin: { x: 0.1, y: 0.6 }
-                        });
-                        myConfetti({
-                            particleCount: 100,
-                            spread: 70,
-                            origin: { x: 0.9, y: 0.6 }
+                            particleCount: 150,
+                            spread: 100,
+                            origin: { x: 0.5, y: 0.5 },
+                            colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
                         });
 
                         // Remove canvas after animation
