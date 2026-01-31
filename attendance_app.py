@@ -4750,8 +4750,8 @@ default_page = query_params.get("page", "nwst")
 # Map query param to page name
 page_map = {
     "nwst": "NWST Check In",
-    "leaders": "Leaders Discipleship Check In",
-    "ministry": "Ministry Check In"
+    "leaders": "Leaders Discipleship",
+    "ministry": "Ministry Discipleship"
 }
 reverse_page_map = {v: k for k, v in page_map.items()}
 
@@ -4987,9 +4987,9 @@ with tab_col1:
         st.rerun()
 
 with tab_col2:
-    leaders_active = page == "Leaders Discipleship Check In"
+    leaders_active = page == "Leaders Discipleship"
     if st.button(
-        "Leaders Check In",
+        "Leaders Discipleship",
         type="primary" if leaders_active else "secondary",
         use_container_width=True,
         key="tab_leaders",
@@ -4999,9 +4999,9 @@ with tab_col2:
         st.rerun()
 
 with tab_col3:
-    ministry_active = page == "Ministry Check In"
+    ministry_active = page == "Ministry Discipleship"
     if st.button(
-        "Ministry Check In",
+        "Ministry Discipleship",
         type="primary" if ministry_active else "secondary",
         use_container_width=True,
         key="tab_ministry",
@@ -5097,7 +5097,7 @@ if page == "NWST Check In":
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard(ATTENDANCE_TAB_NAME)
 
-elif page == "Leaders Discipleship Check In":
+elif page == "Leaders Discipleship":
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
@@ -5105,7 +5105,7 @@ elif page == "Leaders Discipleship Check In":
                    margin: 0; padding: 1rem 0;">
             Leaders Discipleship
         </h1>
-        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Leaders Check-In (Grouped by Zone)</p>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Leaders Discipleship (Grouped by Zone)</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -5113,20 +5113,20 @@ elif page == "Leaders Discipleship Check In":
     if viewing_historical:
         render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
     else:
-        render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Check In")
+        render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
-elif page == "Ministry Check In":
+elif page == "Ministry Discipleship":
     # Ministry page header
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 1.5rem;">
         <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
                    color: {display_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
                    margin: 0; padding: 1rem 0;">
-            Ministry Check In
+            Ministry Discipleship
         </h1>
-        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Ministry Attendance (by Department)</p>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Ministry Discipleship (by Department)</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -5152,7 +5152,7 @@ elif page == "Ministry Check In":
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
         render_ministry_dashboard(st.session_state.selected_ministry)
     else:
-        st.info("Historical view is not yet available for Ministry Check In. Switch to NWST or Leaders Check In to view historical data.")
+        st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
 
 # Footer
 st.markdown("---")
