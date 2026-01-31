@@ -950,6 +950,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Top anchor for scroll-to-top button
+st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+
 # Initialize session state for cache invalidation
 if 'refresh_counter' not in st.session_state:
     st.session_state.refresh_counter = 0
@@ -5136,10 +5139,11 @@ elif page == "Ministry Discipleship":
     else:
         st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
 
-# Scroll to top button
+# Scroll to top button - pure CSS approach
 st.markdown(f"""
 <style>
-    .scroll-to-top {{
+    /* Scroll to top button */
+    #scroll-to-top {{
         position: fixed;
         bottom: 30px;
         right: 30px;
@@ -5151,36 +5155,20 @@ st.markdown(f"""
         border-radius: 50%;
         cursor: pointer;
         font-size: 1.5rem;
-        display: none;
+        display: flex;
         align-items: center;
         justify-content: center;
         z-index: 9999;
         box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         transition: all 0.3s ease;
+        text-decoration: none;
     }}
-    .scroll-to-top:hover {{
+    #scroll-to-top:hover {{
         transform: scale(1.1);
         box-shadow: 0 6px 20px rgba(0,0,0,0.4);
     }}
 </style>
-<button class="scroll-to-top" id="scrollToTopBtn" onclick="window.parent.document.querySelector('section.main').scrollTo({{top: 0, behavior: 'smooth'}});">
-    ↑
-</button>
-<script>
-    // Get the button and the scrollable container
-    const scrollBtn = document.getElementById('scrollToTopBtn');
-    const mainSection = window.parent.document.querySelector('section.main');
-
-    if (mainSection) {{
-        mainSection.addEventListener('scroll', function() {{
-            if (mainSection.scrollTop > 300) {{
-                scrollBtn.style.display = 'flex';
-            }} else {{
-                scrollBtn.style.display = 'none';
-            }}
-        }});
-    }}
-</script>
+<a href="#top-anchor" id="scroll-to-top">↑</a>
 """, unsafe_allow_html=True)
 
 # Footer
