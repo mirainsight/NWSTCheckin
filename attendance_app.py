@@ -5139,13 +5139,13 @@ elif page == "Ministry Discipleship":
     else:
         st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
 
-# Scroll to top button with smooth scrolling
+# Scroll to top button
 st.markdown(f"""
 <style>
     /* Scroll to top button */
     #scroll-to-top {{
         position: fixed;
-        bottom: 100px;
+        top: 90%;
         right: 30px;
         width: 50px;
         height: 50px;
@@ -5168,7 +5168,7 @@ st.markdown(f"""
         box-shadow: 0 6px 20px rgba(0,0,0,0.4);
     }}
 </style>
-<a href="#" id="scroll-to-top" onclick="window.parent.document.querySelector('section.main').scrollTo({{top: 0, behavior: 'smooth'}}); return false;">↑</a>
+<a href="#top-anchor" id="scroll-to-top">↑</a>
 """, unsafe_allow_html=True)
 
 # Footer
