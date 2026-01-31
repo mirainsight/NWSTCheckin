@@ -1318,9 +1318,37 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
-        # Show simple refresh message
-        if checked_in_today:
-            st.success("Refreshed!")
+        # Show success banner ABOVE the selectbox (but undo button will be below)
+        show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
+        if show_success:
+            success_info = st.session_state['show_checkin_success']
+            name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
+            st.success(f"✅ {name_only} checked in!")
+
+            # Fire confetti
+            components.html("""
+            <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+            <script>
+                var canvas = parent.document.createElement('canvas');
+                canvas.id = 'confetti-canvas';
+                canvas.style.position = 'fixed';
+                canvas.style.top = '0';
+                canvas.style.left = '0';
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.pointerEvents = 'none';
+                canvas.style.zIndex = '9999';
+                parent.document.body.appendChild(canvas);
+                var myConfetti = confetti.create(canvas, { resize: true });
+                myConfetti({
+                    particleCount: 150,
+                    spread: 100,
+                    origin: { x: 0.5, y: 0.5 },
+                    colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
+                });
+                setTimeout(function() { canvas.remove(); }, 3000);
+            </script>
+            """, height=0)
 
         # Check if there are any available options
         if not available_options:
@@ -1442,18 +1470,14 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     else:
                         st.error(f"{message}")
 
-            # Show success message with undo button if just checked in
-            if 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']:
-                success_info = st.session_state['show_checkin_success']
-
-                # Check for undo button click FIRST before showing celebration
-                undo_clicked = False
-                if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
-                    last_checkin = st.session_state['last_checkin']
-                    display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
-
-                    if st.button(f"Undo check-in for {display_name}", key=f"{form_key}_undo", type="secondary"):
-                        undo_clicked = True
+            # Show undo button BELOW the selectbox (with spacing)
+            if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
+                last_checkin = st.session_state['last_checkin']
+                # Only show undo for this form type
+                if last_checkin.get('form_type') == 'attendance':
+                    st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                    checkin_display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
+                    if st.button(f"Undo check-in for {checkin_display_name}", key=f"{form_key}_undo", type="secondary"):
                         success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
                         if success:
                             st.session_state['last_checkin'] = None
@@ -1463,48 +1487,6 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                             st.rerun()
                         else:
                             st.error(undo_message)
-                else:
-                    # No undo available, clear the success message
-                    st.session_state['show_checkin_success'] = None
-
-                # Only show celebration if undo wasn't clicked
-                if not undo_clicked:
-                    # Show prominent success message (visible on mobile)
-                    name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
-                    st.success(f"✅ {name_only} checked in!")
-
-                    # Confetti celebration effect - centered for mobile
-                    components.html("""
-                    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-                    <script>
-                        // Create canvas in parent window for confetti
-                        var canvas = parent.document.createElement('canvas');
-                        canvas.id = 'confetti-canvas';
-                        canvas.style.position = 'fixed';
-                        canvas.style.top = '0';
-                        canvas.style.left = '0';
-                        canvas.style.width = '100%';
-                        canvas.style.height = '100%';
-                        canvas.style.pointerEvents = 'none';
-                        canvas.style.zIndex = '9999';
-                        parent.document.body.appendChild(canvas);
-
-                        var myConfetti = confetti.create(canvas, { resize: true });
-
-                        // Fire confetti from center (better for mobile)
-                        myConfetti({
-                            particleCount: 150,
-                            spread: 100,
-                            origin: { x: 0.5, y: 0.5 },
-                            colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
-                        });
-
-                        // Remove canvas after animation
-                        setTimeout(function() {
-                            canvas.remove();
-                        }, 3000);
-                    </script>
-                    """, height=0)
 
     # Close background GIF container if it was opened
     if background_gif:
@@ -1618,9 +1600,37 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
-        # Show simple refresh message
-        if checked_in_today:
-            st.success("Refreshed!")
+        # Show success banner ABOVE the selectbox (but undo button will be below)
+        show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
+        if show_success:
+            success_info = st.session_state['show_checkin_success']
+            name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
+            st.success(f"✅ {name_only} checked in!")
+
+            # Fire confetti
+            components.html("""
+            <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+            <script>
+                var canvas = parent.document.createElement('canvas');
+                canvas.id = 'confetti-canvas';
+                canvas.style.position = 'fixed';
+                canvas.style.top = '0';
+                canvas.style.left = '0';
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.pointerEvents = 'none';
+                canvas.style.zIndex = '9999';
+                parent.document.body.appendChild(canvas);
+                var myConfetti = confetti.create(canvas, { resize: true });
+                myConfetti({
+                    particleCount: 150,
+                    spread: 100,
+                    origin: { x: 0.5, y: 0.5 },
+                    colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
+                });
+                setTimeout(function() { canvas.remove(); }, 3000);
+            </script>
+            """, height=0)
 
         # Check if there are any available options
         if not available_options:
@@ -1736,18 +1746,14 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     else:
                         st.error(f"{message}")
 
-            # Show success message with undo button if just checked in
-            if 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']:
-                success_info = st.session_state['show_checkin_success']
-
-                # Check for undo button click FIRST before showing celebration
-                undo_clicked = False
-                if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
-                    last_checkin = st.session_state['last_checkin']
-                    display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
-
-                    if st.button(f"Undo check-in for {display_name}", key=f"{form_key}_undo", type="secondary"):
-                        undo_clicked = True
+            # Show undo button BELOW the selectbox (with spacing)
+            if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
+                last_checkin = st.session_state['last_checkin']
+                # Only show undo for ministry form type
+                if last_checkin.get('form_type') == 'ministry':
+                    st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                    checkin_display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
+                    if st.button(f"Undo check-in for {checkin_display_name}", key=f"{form_key}_undo", type="secondary"):
                         success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
                         if success:
                             st.session_state['last_checkin'] = None
@@ -1757,48 +1763,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                             st.rerun()
                         else:
                             st.error(undo_message)
-                else:
-                    # No undo available, clear the success message
-                    st.session_state['show_checkin_success'] = None
-
-                # Only show celebration if undo wasn't clicked
-                if not undo_clicked:
-                    # Show prominent success message (visible on mobile)
-                    name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
-                    st.success(f"✅ {name_only} checked in!")
-
-                    # Confetti celebration effect - centered for mobile
-                    components.html("""
-                    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-                    <script>
-                        // Create canvas in parent window for confetti
-                        var canvas = parent.document.createElement('canvas');
-                        canvas.id = 'confetti-canvas';
-                        canvas.style.position = 'fixed';
-                        canvas.style.top = '0';
-                        canvas.style.left = '0';
-                        canvas.style.width = '100%';
-                        canvas.style.height = '100%';
-                        canvas.style.pointerEvents = 'none';
-                        canvas.style.zIndex = '9999';
-                        parent.document.body.appendChild(canvas);
-
-                        var myConfetti = confetti.create(canvas, { resize: true });
-
-                        // Fire confetti from center (better for mobile)
-                        myConfetti({
-                            particleCount: 150,
-                            spread: 100,
-                            origin: { x: 0.5, y: 0.5 },
-                            colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
-                        });
-
-                        // Remove canvas after animation
-                        setTimeout(function() {
-                            canvas.remove();
-                        }, 3000);
-                    </script>
-                    """, height=0)
 
     # Close background GIF container if it was opened
     if background_gif:
