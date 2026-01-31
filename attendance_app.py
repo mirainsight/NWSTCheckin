@@ -5145,8 +5145,9 @@ st.markdown(f"""
     /* Scroll to top button */
     #scroll-to-top {{
         position: fixed;
-        top: 90%;
-        right: 30px;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
         width: 50px;
         height: 50px;
         background: {page_colors['primary']};
