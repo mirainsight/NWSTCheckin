@@ -1288,13 +1288,13 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
                 formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
-                # Multi-select for batch check-ins (reduces API calls)
+                # Single-select for check-ins
                 selected_display_options = st.multiselect(
-                    f"Select {option_type}(s) *",
+                    f"Select {option_type} *",
                     options=formatted_options,
-                    help="Select up to 5 people to check in at once. Names with ✓ are already checked in today.",
+                    help="Select a person to check in. Names with ✓ are already checked in today.",
                     default=[],
-                    max_selections=5,
+                    max_selections=1,
                     format_func=lambda x: x  # Use as-is since we already formatted
                 )
 
@@ -1528,13 +1528,13 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
                 formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
-                # Multi-select for batch check-ins
+                # Single-select for check-ins
                 selected_display_options = st.multiselect(
-                    f"Select Name(s) *",
+                    f"Select Name *",
                     options=formatted_options,
-                    help="Select up to 5 people to check in at once. Names with ✓ are already checked in today.",
+                    help="Select a person to check in. Names with ✓ are already checked in today.",
                     default=[],
-                    max_selections=5,
+                    max_selections=1,
                     format_func=lambda x: x
                 )
 
