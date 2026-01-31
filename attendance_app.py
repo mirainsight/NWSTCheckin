@@ -1406,7 +1406,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
             # Add placeholder at the beginning
-            placeholder = "-- Select a name --"
+            placeholder = ""
             options_with_placeholder = [placeholder] + formatted_options
 
             # Auto-submit selectbox
@@ -1705,7 +1705,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             formatted_options = sorted(formatted_options, key=get_display_sort_key)
 
             # Add placeholder at the beginning
-            placeholder = "-- Select a name --"
+            placeholder = ""
             options_with_placeholder = [placeholder] + formatted_options
 
             # Auto-submit selectbox
@@ -1828,17 +1828,10 @@ def render_ministry_dashboard(selected_ministry):
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_btn, col_time, col_right = st.columns([2, 1, 1.5, 2])
-    with col_btn:
-        if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_ministry_{selected_ministry}"):
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            get_today_attendance_data.clear()
-            get_ministry_options_from_sheet.clear()
-            st.rerun()
+    col_left, col_time, col_right = st.columns([2, 2.5, 2])
     with col_time:
         st.markdown(f"""
-        <div style="display: flex; align-items: center; height: 100%; padding-top: 0.3rem;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%; padding-top: 0.3rem;">
             <span style="
                 background: {page_colors['primary']}20;
                 color: {page_colors['primary']};
@@ -2681,21 +2674,10 @@ def render_dashboard(tab_name, group_by_zone=False):
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_btn, col_time, col_right = st.columns([2, 1, 1.5, 2])
-    with col_btn:
-        if st.button("Refresh", type="secondary", use_container_width=True, key=f"refresh_{tab_name}"):
-            # Increment refresh counter to invalidate local Streamlit cache
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            # Clear local Streamlit cache only - Redis stays intact
-            # This just re-reads from Redis, not from Google Sheets
-            get_today_attendance_data.clear()
-            get_options_from_sheet.clear()
-            get_cell_to_zone_mapping.clear()
-            st.rerun()
+    col_left, col_time, col_right = st.columns([2, 2.5, 2])
     with col_time:
         st.markdown(f"""
-        <div style="display: flex; align-items: center; height: 100%; padding-top: 0.3rem;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%; padding-top: 0.3rem;">
             <span style="
                 background: {page_colors['primary']}20;
                 color: {page_colors['primary']};
