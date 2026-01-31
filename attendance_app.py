@@ -1318,6 +1318,11 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
 
+        # Show undo banner if just undone
+        if 'show_undo_success' in st.session_state and st.session_state['show_undo_success']:
+            st.info(f"↩️ {st.session_state['show_undo_success']}")
+            st.session_state['show_undo_success'] = None
+
         # Show success banner ABOVE the selectbox (but undo button will be below)
         show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
         if show_success:
@@ -1490,7 +1495,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                             st.session_state['last_checkin'] = None
                             st.session_state['show_checkin_success'] = None
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.toast(undo_message, icon="↩️")
+                            st.session_state['show_undo_success'] = undo_message
                             st.rerun()
                         else:
                             st.error(undo_message)
@@ -1606,6 +1611,11 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             """, height=60)
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
+
+        # Show undo banner if just undone
+        if 'show_undo_success' in st.session_state and st.session_state['show_undo_success']:
+            st.info(f"↩️ {st.session_state['show_undo_success']}")
+            st.session_state['show_undo_success'] = None
 
         # Show success banner ABOVE the selectbox (but undo button will be below)
         show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
@@ -1770,7 +1780,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                             st.session_state['last_checkin'] = None
                             st.session_state['show_checkin_success'] = None
                             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.toast(undo_message, icon="↩️")
+                            st.session_state['show_undo_success'] = undo_message
                             st.rerun()
                         else:
                             st.error(undo_message)
