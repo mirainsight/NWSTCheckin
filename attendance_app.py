@@ -175,7 +175,7 @@ def get_gsheet_client():
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
 
-@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
+@st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_options_from_sheet(_client, sheet_id):
     """Read options from Column C of the Options tab in Google Sheets.
     Uses Redis cache to minimize API calls."""
@@ -239,7 +239,7 @@ def get_options_from_sheet(_client, sheet_id):
     except Exception as e:
         return None, f"❌ Error reading options from column C: {str(e)}"
 
-@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
+@st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_cell_to_zone_mapping(_client, sheet_id):
     """Read cell-to-zone mapping from Key Values tab in Google Sheets.
     Column A = Cell Names, Column C = Zones. Uses Redis cache."""
@@ -295,7 +295,7 @@ def get_cell_to_zone_mapping(_client, sheet_id):
     except Exception as e:
         return {}, f"Error reading Key Values: {str(e)}"
 
-@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
+@st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_ministry_options_from_sheet(_client, sheet_id, ministry_filter=None):
     """Read options from the Options - Ministry tab in Google Sheets.
     Column A = Name, Column B = Department (Ministry: Dept format), Column C = Options
