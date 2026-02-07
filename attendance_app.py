@@ -531,7 +531,7 @@ def parse_name_cell_group(name_cell_group_str):
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
 
-@st.cache_data(ttl=300)  # Local cache for 5 minutes as fallback
+@st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDANCE_TAB_NAME):
     """Get today's attendance data with names and cell groups grouped.
     Uses Redis cache to minimize API calls - cache key includes date so it resets daily."""
