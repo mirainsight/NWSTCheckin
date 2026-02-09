@@ -1827,14 +1827,14 @@ def render_ministry_dashboard(selected_ministry):
     """Render the dashboard for ministry attendance, grouped by department."""
     st.markdown("---")
 
-    # Show last refresh time prominently
+    # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_time, col_right = st.columns([2, 2.5, 2])
+    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
     with col_time:
         st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: center; height: 100%; padding-top: 0.3rem;">
+        <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
             <span style="
                 background: {page_colors['primary']}20;
                 color: {page_colors['primary']};
@@ -1849,6 +1849,15 @@ def render_ministry_dashboard(selected_ministry):
             </span>
         </div>
         """, unsafe_allow_html=True)
+    with col_refresh:
+        if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{selected_ministry}", use_container_width=True):
+            # Increment refresh counter to bust Streamlit cache
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            # Clear Streamlit caches to force Upstash read
+            get_today_attendance_data.clear()
+            get_ministry_options_from_sheet.clear()
+            st.rerun()
 
     # Get today's attendance data for ministry tab
     with st.spinner("Loading dashboard data..."):
@@ -2673,14 +2682,14 @@ def render_dashboard(tab_name, group_by_zone=False):
     If group_by_zone=True, groups by Zone instead of Cell Group."""
     st.markdown("---")
 
-    # Show last refresh time prominently
+    # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_time, col_right = st.columns([2, 2.5, 2])
+    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
     with col_time:
         st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: center; height: 100%; padding-top: 0.3rem;">
+        <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
             <span style="
                 background: {page_colors['primary']}20;
                 color: {page_colors['primary']};
@@ -2695,6 +2704,17 @@ def render_dashboard(tab_name, group_by_zone=False):
             </span>
         </div>
         """, unsafe_allow_html=True)
+    with col_refresh:
+        if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", use_container_width=True):
+            # Increment refresh counter to bust Streamlit cache
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            # Clear Streamlit caches to force Upstash read
+            get_today_attendance_data.clear()
+            get_options_from_sheet.clear()
+            if group_by_zone:
+                get_cell_to_zone_mapping.clear()
+            st.rerun()
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
