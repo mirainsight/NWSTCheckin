@@ -5107,7 +5107,104 @@ def render_analytics_page(colors):
     df['Total Attended'] = df[date_cols].sum(axis=1)
     df['Attendance Rate'] = (df['Total Attended'] / len(date_cols) * 100).round(1) if date_cols else 0
 
-    all_attendees = df.sort_values('Total Attended', ascending=False)[['Name', 'Cell Group', 'Zone', 'Total Attended', 'Attendance Rate']]
+    # Get unique cell groups for filter
+    cell_groups = sorted(df['Cell Group'].unique())
+
+    # Cell group filter - multiselect dropdown
+    st.markdown(f"""
+    <style>
+        /* Style the multiselect to match the theme */
+        [data-testid="stMultiSelect"] {{
+            font-family: 'Inter', sans-serif !important;
+        }}
+        [data-testid="stMultiSelect"] > div {{
+            border: 2px solid {colors['primary']} !important;
+            border-radius: 0px !important;
+            background: {colors['background']} !important;
+        }}
+        [data-testid="stMultiSelect"] span {{
+            font-family: 'Inter', sans-serif !important;
+            color: {colors['text']} !important;
+        }}
+        [data-testid="stMultiSelect"] svg {{
+            fill: {colors['primary']} !important;
+        }}
+        /* Style selected tags */
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] {{
+            background: {colors['primary']} !important;
+            border-radius: 0px !important;
+        }}
+        [data-testid="stMultiSelect"] [data-baseweb="tag"] span {{
+            color: {colors['background']} !important;
+            font-weight: 600 !important;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Initialize clear counter for forcing re-render
+    if 'clear_filter_counter' not in st.session_state:
+        st.session_state.clear_filter_counter = 0
+
+    # Get all unique names for the name search
+    all_names = sorted(df['Name'].unique().tolist())
+
+    # Create filter row with multiselect and clear button
+    filter_col1, filter_col2 = st.columns([3, 1])
+
+    with filter_col1:
+        selected_cell_groups = st.multiselect(
+            "Filter by Cell Group...",
+            options=cell_groups,
+            default=[],
+            key=f"analytics_cell_multiselect_{st.session_state.clear_filter_counter}",
+            placeholder="Select cell groups...",
+            label_visibility="collapsed"
+        )
+
+    with filter_col2:
+        if st.button("Clear All", type="secondary", use_container_width=True, key="clear_cell_filter"):
+            st.session_state.clear_filter_counter += 1
+            st.rerun()
+
+    # Add spacing between filters
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+    # Name search multiselect
+    name_filter_col1, name_filter_col2 = st.columns([3, 1])
+
+    with name_filter_col1:
+        selected_names = st.multiselect(
+            "Search by Name...",
+            options=all_names,
+            default=[],
+            key=f"analytics_name_multiselect_{st.session_state.clear_filter_counter}",
+            placeholder="Search and select names...",
+            label_visibility="collapsed"
+        )
+
+    with name_filter_col2:
+        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)  # Spacer to align with dropdown
+
+    # Filter dataframe based on selections
+    filtered_df = df.copy()
+
+    if selected_cell_groups:
+        filtered_df = filtered_df[filtered_df['Cell Group'].isin(selected_cell_groups)]
+
+    if selected_names:
+        filtered_df = filtered_df[filtered_df['Name'].isin(selected_names)]
+
+    # Sort by Attendance Rate descending
+    all_attendees = filtered_df.sort_values('Attendance Rate', ascending=False)[['Name', 'Cell Group', 'Zone', 'Total Attended', 'Attendance Rate']]
+
+    # Show count with filter info
+    filter_parts = []
+    if selected_cell_groups:
+        filter_parts.append(f"{len(selected_cell_groups)} cell group(s)")
+    if selected_names:
+        filter_parts.append(f"{len(selected_names)} name(s)")
+    filter_text = f" from {' and '.join(filter_parts)}" if filter_parts else ""
+    st.markdown(f"<p style='color: {colors['text_muted']}; font-family: Inter, sans-serif; font-size: 0.9rem; margin: 1rem 0 0.5rem 0;'>Showing <b style=\"color: {colors['primary']}\">{len(all_attendees)}</b> attendees{filter_text}</p>", unsafe_allow_html=True)
 
     # Display as styled dataframe
     st.dataframe(
