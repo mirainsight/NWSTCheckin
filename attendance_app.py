@@ -37,6 +37,7 @@ LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"  # Tab name for leaders disci
 KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
 MINISTRY_OPTIONS_TAB_NAME = "Options - Ministry"  # Tab name for ministry options
 MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"  # Tab name for ministry check-in
+ATTENDANCE_ANALYTICS_TAB_NAME = "Attendance Analytics"  # Tab name for historical analytics data
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
 
 # Redis cache configuration
@@ -761,6 +762,122 @@ def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTEND
         return {}, [], []
     except Exception:
         return {}, [], []
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes since analytics data doesn't change frequently
+def get_attendance_analytics_data(_client, sheet_id):
+    """Fetch and parse attendance analytics data from the 'Attendance Analytics' tab.
+
+    The sheet format is:
+    - Row 1: Headers with dates in M/D/YYYY format (e.g., 1/24/2026)
+    - Column A: Empty
+    - Column B: Name - Cell Group (e.g., "Aaron Goh - Narrowstreet Core Team")
+    - Columns C onwards: Attendance values (0 or 1) for each date
+
+    Returns:
+        tuple: (df, saturday_dates, error_message)
+            - df: DataFrame with columns ['Name', 'Cell Group'] + date columns (Saturdays only)
+            - saturday_dates: List of Saturday date strings in display format
+            - error_message: Error message if any, None otherwise
+    """
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+
+        try:
+            analytics_sheet = spreadsheet.worksheet(ATTENDANCE_ANALYTICS_TAB_NAME)
+        except gspread.exceptions.WorksheetNotFound:
+            return None, [], f"Tab '{ATTENDANCE_ANALYTICS_TAB_NAME}' not found in the Google Sheet."
+
+        # Get all values from the sheet
+        all_values = analytics_sheet.get_all_values()
+
+        if len(all_values) < 2:
+            return None, [], "No data found in the Attendance Analytics sheet."
+
+        # Parse header row to get dates
+        header_row = all_values[0]
+        dates = []
+        saturday_col_indices = []
+
+        # Start from column C (index 2) for dates
+        for col_idx, cell in enumerate(header_row[2:], start=2):
+            if cell.strip():
+                try:
+                    # Parse date in M/D/YYYY format
+                    date_obj = datetime.strptime(cell.strip(), "%m/%d/%Y")
+                    # Check if it's a Saturday (weekday() returns 5 for Saturday)
+                    if date_obj.weekday() == 5:
+                        dates.append(date_obj)
+                        saturday_col_indices.append(col_idx)
+                except ValueError:
+                    # Try alternative format D/M/YYYY
+                    try:
+                        date_obj = datetime.strptime(cell.strip(), "%d/%m/%Y")
+                        if date_obj.weekday() == 5:
+                            dates.append(date_obj)
+                            saturday_col_indices.append(col_idx)
+                    except ValueError:
+                        continue
+
+        if not dates:
+            return None, [], "No Saturday dates found in the analytics data."
+
+        # Sort dates and corresponding column indices
+        sorted_pairs = sorted(zip(dates, saturday_col_indices), key=lambda x: x[0])
+        dates = [pair[0] for pair in sorted_pairs]
+        saturday_col_indices = [pair[1] for pair in sorted_pairs]
+
+        # Format dates for display
+        saturday_dates_display = [d.strftime("%d %b %Y") for d in dates]
+        saturday_dates_short = [d.strftime("%b %d") for d in dates]
+
+        # Parse data rows
+        data_rows = []
+        for row in all_values[1:]:
+            if len(row) < 2:
+                continue
+
+            name_cell_group = row[1].strip() if row[1] else ""
+            if not name_cell_group or name_cell_group == "Date":
+                continue
+
+            # Parse name and cell group
+            name, cell_group = parse_name_cell_group(name_cell_group)
+            if not name:
+                continue
+
+            # Get attendance values for Saturday columns
+            attendance = []
+            for col_idx in saturday_col_indices:
+                if col_idx < len(row):
+                    val = row[col_idx].strip()
+                    attendance.append(1 if val == "1" else 0)
+                else:
+                    attendance.append(0)
+
+            data_rows.append({
+                'Name': name,
+                'Cell Group': cell_group,
+                'Name - Cell Group': name_cell_group,
+                **{saturday_dates_short[i]: attendance[i] for i in range(len(attendance))}
+            })
+
+        if not data_rows:
+            return None, [], "No attendance records found."
+
+        # Create DataFrame
+        df = pd.DataFrame(data_rows)
+
+        # Remove duplicate entries (same name-cell group combo) - keep first occurrence
+        df = df.drop_duplicates(subset=['Name - Cell Group'], keep='first')
+
+        return df, saturday_dates_short, None
+
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return None, [], "API quota exceeded. Please wait a moment and try again."
+        return None, [], f"Error fetching analytics data: {str(e)}"
+    except Exception as e:
+        return None, [], f"Error fetching analytics data: {str(e)}"
 
 def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
     """Save attendance data to the specified tab - supports batch check-ins.
@@ -4747,6 +4864,380 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             components.html(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
 
 
+def render_analytics_page(colors):
+    """Render the analytics page showing attendance trends over time (Saturdays only)."""
+    client = get_gsheet_client()
+    if not client:
+        st.error("Unable to connect to Google Sheets. Please check credentials.")
+        return
+
+    # Fetch analytics data
+    df, saturday_dates, error = get_attendance_analytics_data(client, SHEET_ID)
+
+    if error:
+        st.error(error)
+        return
+
+    if df is None or df.empty:
+        st.info("No analytics data available.")
+        return
+
+    # Get cell to zone mapping for zone-level analytics
+    cell_to_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+
+    # Add Zone column to dataframe
+    df['Zone'] = df['Cell Group'].apply(lambda x: cell_to_zone_map.get(x.lower(), x) if x else 'Unknown')
+
+    # Calculate date columns (all columns that are dates)
+    date_cols = [col for col in df.columns if col not in ['Name', 'Cell Group', 'Name - Cell Group', 'Zone']]
+
+    # ===== OVERALL METRICS =====
+    st.markdown(f"""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        /* Global font override for analytics page */
+        .analytics-container * {{
+            font-family: 'Inter', sans-serif !important;
+        }}
+
+        /* Override Streamlit dataframe fonts */
+        [data-testid="stDataFrame"] {{
+            font-family: 'Inter', sans-serif !important;
+        }}
+        [data-testid="stDataFrame"] * {{
+            font-family: 'Inter', sans-serif !important;
+        }}
+        .stDataFrame th {{
+            font-family: 'Inter', sans-serif !important;
+            font-weight: 700 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 1px !important;
+        }}
+        .stDataFrame td {{
+            font-family: 'Inter', sans-serif !important;
+        }}
+
+        .analytics-kpi-container {{
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }}
+        .analytics-kpi-card {{
+            background: {colors['card_bg']};
+            border: 2px solid {colors['primary']};
+            padding: 1.5rem 2rem;
+            text-align: center;
+            min-width: 180px;
+        }}
+        .analytics-kpi-label {{
+            font-family: 'Inter', sans-serif !important;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: {colors['text_muted']};
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 0.5rem;
+        }}
+        .analytics-kpi-number {{
+            font-family: 'Inter', sans-serif !important;
+            font-size: 3rem;
+            font-weight: 900;
+            color: {colors['primary']};
+            line-height: 1;
+        }}
+        .analytics-section-title {{
+            font-family: 'Inter', sans-serif !important;
+            font-size: 1.5rem;
+            font-weight: 900;
+            color: {colors['primary']};
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin: 2rem 0 1rem 0;
+            border-bottom: 3px solid {colors['primary']};
+            padding-bottom: 0.5rem;
+            display: inline-block;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Calculate metrics
+    total_unique_attendees = len(df)
+    total_saturdays = len(date_cols)
+    if total_saturdays > 0:
+        avg_attendance = df[date_cols].sum().mean()
+        latest_attendance = df[date_cols[-1]].sum() if date_cols else 0
+    else:
+        avg_attendance = 0
+        latest_attendance = 0
+
+    # Display KPI cards
+    st.markdown(f"""
+    <div class="analytics-kpi-container">
+        <div class="analytics-kpi-card">
+            <div class="analytics-kpi-label">Total Saturdays</div>
+            <div class="analytics-kpi-number">{total_saturdays}</div>
+        </div>
+        <div class="analytics-kpi-card">
+            <div class="analytics-kpi-label">Unique Attendees</div>
+            <div class="analytics-kpi-number">{total_unique_attendees}</div>
+        </div>
+        <div class="analytics-kpi-card">
+            <div class="analytics-kpi-label">Avg Attendance</div>
+            <div class="analytics-kpi-number">{avg_attendance:.0f}</div>
+        </div>
+        <div class="analytics-kpi-card">
+            <div class="analytics-kpi-label">Latest ({date_cols[-1] if date_cols else 'N/A'})</div>
+            <div class="analytics-kpi-number">{latest_attendance}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ===== ATTENDANCE TREND LINE CHART =====
+    st.markdown(f'<div class="analytics-section-title">Attendance Trend (Saturdays)</div>', unsafe_allow_html=True)
+
+    # Calculate total attendance per Saturday
+    attendance_per_date = df[date_cols].sum()
+    trend_df = pd.DataFrame({
+        'Date': date_cols,
+        'Attendance': attendance_per_date.values
+    })
+
+    fig_trend = px.line(
+        trend_df,
+        x='Date',
+        y='Attendance',
+        markers=True,
+        title='',
+        labels={'Attendance': 'Total Attendance', 'Date': 'Saturday Date'},
+        height=350
+    )
+
+    fig_trend.update_traces(
+        line=dict(color=colors['primary'], width=3),
+        marker=dict(color=colors['primary'], size=10, line=dict(color=colors['background'], width=2)),
+        hovertemplate='<b>%{x}</b><br>Attendance: %{y}<extra></extra>'
+    )
+
+    fig_trend.update_layout(
+        plot_bgcolor=colors['background'],
+        paper_bgcolor=colors['card_bg'],
+        font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
+        xaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2,
+            showgrid=True,
+            gridwidth=1
+        ),
+        yaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2,
+            showgrid=True,
+            gridwidth=1
+        ),
+        hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter')),
+        margin=dict(l=50, r=50, t=30, b=50)
+    )
+
+    st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ===== ATTENDANCE BY ZONE =====
+    st.markdown(f'<div class="analytics-section-title">Average Attendance by Zone</div>', unsafe_allow_html=True)
+
+    # Group by zone and calculate average attendance
+    zone_attendance = df.groupby('Zone')[date_cols].sum().sum(axis=1) / len(date_cols) if date_cols else pd.Series()
+    zone_df = pd.DataFrame({
+        'Zone': zone_attendance.index,
+        'Avg Attendance': zone_attendance.values
+    }).sort_values('Avg Attendance', ascending=False)
+
+    fig_zone = px.bar(
+        zone_df,
+        x='Zone',
+        y='Avg Attendance',
+        color='Avg Attendance',
+        color_continuous_scale=[colors['background'], colors['primary']],
+        text='Avg Attendance',
+        height=350
+    )
+
+    fig_zone.update_traces(
+        texttemplate='%{text:.0f}',
+        textfont=dict(size=12, color=colors['background'], family='Inter', weight='bold'),
+        textposition='inside',
+        marker=dict(line=dict(color=colors['primary'], width=2)),
+        hovertemplate='<b>%{x}</b><br>Avg: %{y:.1f}<extra></extra>'
+    )
+
+    fig_zone.update_layout(
+        plot_bgcolor=colors['background'],
+        paper_bgcolor=colors['card_bg'],
+        font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
+        xaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2,
+            categoryorder='total descending'
+        ),
+        yaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2
+        ),
+        coloraxis_showscale=False,
+        showlegend=False,
+        hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter')),
+        margin=dict(l=50, r=50, t=30, b=50)
+    )
+
+    st.plotly_chart(fig_zone, use_container_width=True)
+
+    # ===== ALL ATTENDEES =====
+    st.markdown(f'<div class="analytics-section-title">All Attendees</div>', unsafe_allow_html=True)
+
+    # Calculate attendance rate for each person
+    df['Total Attended'] = df[date_cols].sum(axis=1)
+    df['Attendance Rate'] = (df['Total Attended'] / len(date_cols) * 100).round(1) if date_cols else 0
+
+    all_attendees = df.sort_values('Total Attended', ascending=False)[['Name', 'Cell Group', 'Zone', 'Total Attended', 'Attendance Rate']]
+
+    # Display as styled dataframe
+    st.dataframe(
+        all_attendees,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'Name': st.column_config.TextColumn('Name', width='medium'),
+            'Cell Group': st.column_config.TextColumn('Cell Group', width='medium'),
+            'Zone': st.column_config.TextColumn('Zone', width='small'),
+            'Total Attended': st.column_config.NumberColumn('Attended', format='%d', width='small'),
+            'Attendance Rate': st.column_config.NumberColumn('Rate %', format='%.1f%%', width='small')
+        },
+        height=600
+    )
+
+    # ===== CELL GROUP BREAKDOWN =====
+    st.markdown(f'<div class="analytics-section-title">Attendance by Cell Group</div>', unsafe_allow_html=True)
+
+    # Group by cell group
+    cell_group_attendance = df.groupby('Cell Group')[date_cols].sum().sum(axis=1) / len(date_cols) if date_cols else pd.Series()
+    cell_group_df = pd.DataFrame({
+        'Cell Group': cell_group_attendance.index,
+        'Avg Attendance': cell_group_attendance.values
+    }).sort_values('Avg Attendance', ascending=False).head(20)
+
+    fig_cell = px.bar(
+        cell_group_df,
+        x='Cell Group',
+        y='Avg Attendance',
+        color='Avg Attendance',
+        color_continuous_scale=[colors['background'], colors['primary']],
+        text='Avg Attendance',
+        height=400
+    )
+
+    fig_cell.update_traces(
+        texttemplate='%{text:.1f}',
+        textfont=dict(size=11, color=colors['background'], family='Inter', weight='bold'),
+        textposition='inside',
+        marker=dict(line=dict(color=colors['primary'], width=2)),
+        hovertemplate='<b>%{x}</b><br>Avg: %{y:.1f}<extra></extra>'
+    )
+
+    fig_cell.update_layout(
+        plot_bgcolor=colors['background'],
+        paper_bgcolor=colors['card_bg'],
+        font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
+        xaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter', size=9),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2,
+            categoryorder='total descending',
+            tickangle=-45
+        ),
+        yaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2
+        ),
+        coloraxis_showscale=False,
+        showlegend=False,
+        hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter')),
+        margin=dict(l=50, r=50, t=30, b=100)
+    )
+
+    st.plotly_chart(fig_cell, use_container_width=True)
+
+    # ===== ZONE ATTENDANCE TREND =====
+    st.markdown(f'<div class="analytics-section-title">Zone Attendance Trend</div>', unsafe_allow_html=True)
+
+    # Get unique zones
+    zones = df['Zone'].unique()
+    zone_trend_data = []
+    for date_col in date_cols:
+        for zone in zones:
+            zone_attendance_on_date = df[df['Zone'] == zone][date_col].sum()
+            zone_trend_data.append({
+                'Date': date_col,
+                'Zone': zone,
+                'Attendance': zone_attendance_on_date
+            })
+
+    zone_trend_df = pd.DataFrame(zone_trend_data)
+
+    fig_zone_trend = px.line(
+        zone_trend_df,
+        x='Date',
+        y='Attendance',
+        color='Zone',
+        markers=True,
+        height=400
+    )
+
+    fig_zone_trend.update_traces(
+        marker=dict(size=8),
+        hovertemplate='<b>%{fullData.name}</b><br>%{x}: %{y}<extra></extra>'
+    )
+
+    fig_zone_trend.update_layout(
+        plot_bgcolor=colors['background'],
+        paper_bgcolor=colors['card_bg'],
+        font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
+        xaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2
+        ),
+        yaxis=dict(
+            tickfont=dict(color=colors['text_muted'], family='Inter'),
+            gridcolor=colors['text_muted'],
+            linecolor=colors['primary'],
+            linewidth=2
+        ),
+        legend=dict(
+            font=dict(color=colors['text_muted'], family='Inter'),
+            bgcolor=colors['card_bg'],
+            bordercolor=colors['primary'],
+            borderwidth=1
+        ),
+        hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter')),
+        margin=dict(l=50, r=50, t=30, b=50)
+    )
+
+    st.plotly_chart(fig_zone_trend, use_container_width=True)
+
+
 # ========== SIDEBAR NAVIGATION ==========
 # Use query params for persistent page selection across refreshes
 query_params = st.query_params
@@ -4756,7 +5247,8 @@ default_page = query_params.get("page", "nwst")
 page_map = {
     "nwst": "NWST Check In",
     "leaders": "Leaders Discipleship",
-    "ministry": "Ministry Discipleship"
+    "ministry": "Ministry Discipleship",
+    "analytics": "Analytics"
 }
 reverse_page_map = {v: k for k, v in page_map.items()}
 
@@ -4937,6 +5429,26 @@ with st.sidebar:
             st.session_state.historical_date = None
             st.session_state.viewing_historical = False
             st.rerun()
+
+    st.markdown("---")
+
+    # ========== ANALYTICS SECTION ==========
+    st.markdown(f"""
+    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
+        ANALYTICS
+    </h3>
+    """, unsafe_allow_html=True)
+
+    analytics_active = page == "Analytics"
+    if st.button(
+        "📊 View Analytics",
+        type="primary" if analytics_active else "secondary",
+        use_container_width=True,
+        key="sidebar_analytics",
+        disabled=analytics_active
+    ):
+        st.query_params["page"] = "analytics"
+        st.rerun()
 
 # ========== RENDER SELECTED PAGE ==========
 # Add toggle tabs in main content area for switching between check-in types
@@ -5158,6 +5670,20 @@ elif page == "Ministry Discipleship":
         render_ministry_dashboard(st.session_state.selected_ministry)
     else:
         st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
+
+elif page == "Analytics":
+    st.markdown(f"""
+    <div style="text-align: center; margin-bottom: 1.5rem;">
+        <h1 style="font-family: 'Inter', sans-serif; font-weight: 900; font-size: 2.5rem;
+                   color: {display_colors['primary']}; text-transform: uppercase; letter-spacing: 3px;
+                   margin: 0; padding: 1rem 0;">
+            Attendance Analytics
+        </h1>
+        <p style="color: {display_colors['text_muted']}; font-size: 0.9rem; margin: 0;">Saturday Service Attendance Trends</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    render_analytics_page(display_colors)
 
 # Scroll to top button
 st.markdown(f"""
