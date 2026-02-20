@@ -477,9 +477,14 @@ def generate_colors_for_date(date_str):
     }
 
 def generate_daily_colors():
-    """Generate random colors based on today's date (consistent throughout the day)"""
-    today = get_today_myt_date()
-    return generate_colors_for_date(today)
+    """Generate random colors based on the most recent Saturday (MYT).
+    Colors change every Saturday and stay the same throughout the week."""
+    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
+    # Calculate days since last Saturday (Saturday = weekday 5)
+    days_since_saturday = (today.weekday() - 5) % 7
+    # Get the most recent Saturday
+    last_saturday = today - timedelta(days=days_since_saturday)
+    return generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
 
 def generate_daily_colors_legacy():
     """Legacy version - kept for reference"""
@@ -5471,58 +5476,33 @@ with st.sidebar:
     </h3>
     """, unsafe_allow_html=True)
 
-    # Password protection for historical view
-    HISTORICAL_PASSWORD = "miraiscool"
-
     # Initialize session state for historical view
-    if 'historical_authenticated' not in st.session_state:
-        st.session_state.historical_authenticated = False
     if 'historical_date' not in st.session_state:
         st.session_state.historical_date = None
     if 'viewing_historical' not in st.session_state:
         st.session_state.viewing_historical = False
 
-    # Show password input if not authenticated
-    if not st.session_state.historical_authenticated:
-        password_input = st.text_input("Enter password", type="password", key="historical_password")
-        if st.button("Unlock Historical View", type="secondary", use_container_width=True, key="unlock_historical"):
-            if password_input == HISTORICAL_PASSWORD:
-                st.session_state.historical_authenticated = True
-                st.rerun()
-            else:
-                st.error("Incorrect password")
-    else:
-        # Show date picker if authenticated
-        st.success("Authenticated!")
+    # Date picker for historical view
+    today_myt_date = datetime.strptime(get_today_myt_date(), "%Y-%m-%d").date()
+    selected_date = st.date_input(
+        "Select date to view",
+        value=today_myt_date,
+        max_value=today_myt_date,
+        key="historical_date_picker"
+    )
 
-        # Date picker for historical view
-        today_myt_date = datetime.strptime(get_today_myt_date(), "%Y-%m-%d").date()
-        selected_date = st.date_input(
-            "Select date to view",
-            value=today_myt_date,
-            max_value=today_myt_date,
-            key="historical_date_picker"
-        )
+    # Convert to string format
+    selected_date_str = selected_date.strftime("%Y-%m-%d")
 
-        # Convert to string format
-        selected_date_str = selected_date.strftime("%Y-%m-%d")
+    col_view, col_reset = st.columns(2)
+    with col_view:
+        if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
+            st.session_state.historical_date = selected_date_str
+            st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
+            st.rerun()
 
-        col_view, col_reset = st.columns(2)
-        with col_view:
-            if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
-                st.session_state.historical_date = selected_date_str
-                st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
-                st.rerun()
-
-        with col_reset:
-            if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
-                st.session_state.historical_date = None
-                st.session_state.viewing_historical = False
-                st.rerun()
-
-        # Lock button to re-lock historical view
-        if st.button("Lock Historical View", type="secondary", use_container_width=True, key="lock_historical"):
-            st.session_state.historical_authenticated = False
+    with col_reset:
+        if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
             st.session_state.historical_date = None
             st.session_state.viewing_historical = False
             st.rerun()
