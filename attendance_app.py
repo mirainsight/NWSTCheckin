@@ -554,10 +554,10 @@ def format_name_badge(name, role, badge_class="name-badge"):
 
 
 def _role_sort_key(role):
-    """Extract sort key from role (e.g. '1. Co Leader' -> (1, '1. Co Leader:'))."""
+    """Extract sort key and display label from role (e.g. '1. Co Leader' -> (1, 'Co Leader:'))."""
     m = re.match(r'^(\d+)\.\s*(.+)$', role.strip())
     if m:
-        return (int(m.group(1)), f"{m.group(1)}. {m.group(2).strip()}:")
+        return (int(m.group(1)), f"{m.group(2).strip()}:")
     return (999, f"{role.strip()}:")  # No number prefix: sort last
 
 
