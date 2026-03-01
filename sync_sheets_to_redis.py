@@ -108,8 +108,16 @@ def parse_name_cell_group(name_cell_group_str):
         return parts[0].strip(), "Unknown"
 
 
+def _is_email_format(value):
+    """Return True if value looks like an email address (treat role as blank)."""
+    if not value or not isinstance(value, str):
+        return False
+    v = value.strip()
+    return "@" in v and "." in v
+
+
 def sync_options(gsheet_client, redis_client):
-    """Sync Options tab (Column C) to Redis"""
+    """Sync Options tab (Column C + Column D role) to Redis"""
     print("Syncing Options...")
 
     spreadsheet = gsheet_client.open_by_key(SHEET_ID)
@@ -121,23 +129,35 @@ def sync_options(gsheet_client, redis_client):
         return
 
     column_c_values = options_sheet.col_values(3)
+    column_d_values = options_sheet.col_values(4)
 
     if not column_c_values:
         print("  Warning: Column C is empty")
         return
 
     header = column_c_values[0].strip() if column_c_values[0] else "Name"
-    option_values = [v.strip() for v in column_c_values[1:] if v.strip()]
+    option_values = []
+    name_to_role = {}
+    for i, v in enumerate(column_c_values[1:]):
+        v = v.strip()
+        if v:
+            option_values.append(v)
+            name, _ = parse_name_cell_group(v)
+            if name:
+                role_raw = column_d_values[i + 1].strip() if i + 1 < len(column_d_values) else ""
+                role = "" if _is_email_format(role_raw) else (role_raw or "")
+                if role:
+                    name_to_role[name] = role
 
     options = {header: option_values}
 
     redis_client.set(
         REDIS_OPTIONS_KEY,
-        json.dumps({"options": options}),
+        json.dumps({"options": options, "name_to_role": name_to_role}),
         ex=REDIS_CACHE_TTL
     )
 
-    print(f"  Synced {len(option_values)} options")
+    print(f"  Synced {len(option_values)} options, {len(name_to_role)} roles")
 
 
 def sync_zone_mapping(gsheet_client, redis_client):
