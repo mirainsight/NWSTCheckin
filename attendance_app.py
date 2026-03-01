@@ -542,8 +542,13 @@ def generate_daily_colors_legacy():
     }
 
 def format_name_badge(name, role, badge_class="name-badge"):
-    """Format a name badge with optional role (italicized below name)."""
-    role_html = f'<span class="name-badge-role">{role}</span>' if role else ''
+    """Format a name badge with optional role (below name, formatted as 'N. Label:')."""
+    if not role:
+        role_html = ''
+    else:
+        # Format as "N. Label:" (e.g. "1. Co Leader" -> "1. Co Leader:")
+        role_display = f"{role.rstrip(':')}:" if role.strip() else ""
+        role_html = f'<span class="name-badge-role">{role_display}</span>' if role_display else ''
     return f'<span class="{badge_class}"><span class="name-badge-name">{name}</span>{role_html}</span>'
 
 
@@ -2290,7 +2295,7 @@ def render_ministry_dashboard(selected_ministry):
                 opacity: 0.5;
             }}
             .name-badge-name {{ display: block; }}
-            .name-badge-role {{ display: block; font-style: italic; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
+            .name-badge-role {{ display: block; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
             .dept-header {{
                 font-family: 'Inter', sans-serif;
                 font-size: 1.3rem;
@@ -2451,7 +2456,7 @@ def render_ministry_dashboard(selected_ministry):
                 .controls-row {{ display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }}
                 .name-badge-pending {{ background: {page_colors['background']}; border: 1px solid {page_colors['text_muted']}; color: {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.4rem 0.4rem 0.4rem 0; border-radius: 0px; display: inline-block; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.9rem; letter-spacing: 0.5px; opacity: 0.5; }}
                 .name-badge-name {{ display: block; }}
-                .name-badge-role {{ display: block; font-style: italic; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
+                .name-badge-role {{ display: block; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
                 .dept-header {{ font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.3rem; }}
                 .dept-container {{ margin-bottom: 1rem; padding: 0.5rem; border-radius: 8px; transition: all 0.3s ease; }}
                 .count-label {{ color: {page_colors['text_muted']}; font-size: 0.85rem; font-weight: normal; text-transform: none; letter-spacing: normal; }}
@@ -3368,7 +3373,6 @@ def render_dashboard(tab_name, group_by_zone=False):
             }}
             .name-badge-role {{
                 display: block;
-                font-style: italic;
                 font-size: 0.8em;
                 font-weight: 400;
                 text-transform: none;
@@ -4431,7 +4435,6 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             }}
             .name-badge-role {{
                 display: block;
-                font-style: italic;
                 font-size: 0.8em;
                 font-weight: 400;
                 text-transform: none;
