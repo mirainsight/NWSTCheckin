@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import streamlit as st
 import streamlit.components.v1 as components
@@ -550,6 +551,53 @@ def format_name_badge(name, role, badge_class="name-badge"):
         role_display = f"{role.rstrip(':')}:" if role.strip() else ""
         role_html = f'<span class="name-badge-role">{role_display}</span>' if role_display else ''
     return f'<span class="{badge_class}"><span class="name-badge-name">{name}</span>{role_html}</span>'
+
+
+def _role_sort_key(role):
+    """Extract sort key from role (e.g. '1. Co Leader' -> (1, '1. Co Leader:'))."""
+    m = re.match(r'^(\d+)\.\s*(.+)$', role.strip())
+    if m:
+        return (int(m.group(1)), f"{m.group(1)}. {m.group(2).strip()}:")
+    return (999, f"{role.strip()}:")  # No number prefix: sort last
+
+
+def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_class_checked, badge_class_pending):
+    """Build HTML with role rows: 'Role Label: tile | tile' and 'Remaining cell members: tile | tile'.
+    Tiles show name only (no role inside)."""
+    # Group names by role
+    role_to_names = {}
+    no_role_names = []
+    for name in all_names:
+        role = name_to_role.get(name, '')
+        if role and role.strip():
+            if role not in role_to_names:
+                role_to_names[role] = []
+            role_to_names[role].append(name)
+        else:
+            no_role_names.append(name)
+
+    parts = []
+    # Sort roles by number prefix (1, 2, 3...)
+    for role in sorted(role_to_names.keys(), key=_role_sort_key):
+        sort_key, role_label = _role_sort_key(role)
+        names_in_role = role_to_names[role]
+        checked = sorted([n for n in names_in_role if n in checked_in_set])
+        pending = sorted([n for n in names_in_role if n not in checked_in_set])
+        badges = ''.join([format_name_badge(n, '', badge_class_checked) for n in checked])
+        badges += ''.join([format_name_badge(n, '', badge_class_pending) for n in pending])
+        if badges:
+            parts.append(f'<div class="role-row"><span class="role-label">{role_label}</span> {badges}</div>')
+
+    # Remaining cell members (no role)
+    if no_role_names:
+        checked = sorted([n for n in no_role_names if n in checked_in_set])
+        pending = sorted([n for n in no_role_names if n not in checked_in_set])
+        badges = ''.join([format_name_badge(n, '', badge_class_checked) for n in checked])
+        badges += ''.join([format_name_badge(n, '', badge_class_pending) for n in pending])
+        if badges:
+            parts.append(f'<div class="role-row"><span class="role-label">Remaining cell members:</span> {badges}</div>')
+
+    return ''.join(parts)
 
 
 def parse_name_cell_group(name_cell_group_str):
@@ -2296,6 +2344,8 @@ def render_ministry_dashboard(selected_ministry):
             }}
             .name-badge-name {{ display: block; }}
             .name-badge-role {{ display: block; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
+            .role-row {{ margin-bottom: 0.8rem; }}
+            .role-label {{ font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 600; color: {page_colors['text_muted']}; margin-right: 0.5rem; display: inline; }}
             .dept-header {{
                 font-family: 'Inter', sans-serif;
                 font-size: 1.3rem;
@@ -2343,14 +2393,12 @@ def render_ministry_dashboard(selected_ministry):
         for dept in sorted(all_members_by_dept.keys(), key=str.lower):
             checked_in_names = ministry_dept_data.get(dept, [])
             all_names_in_dept = all_members_by_dept.get(dept, [])
-            pending_names = [name for name in all_names_in_dept if name not in checked_in_names_set]
-
             checked_count = len(checked_in_names)
             total_count = len(all_names_in_dept)
-
-            # Build name badges
-            checked_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
-            pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
+            role_grouped_badges = build_role_grouped_badges(
+                all_names_in_dept, checked_in_names_set, name_to_role,
+                "name-badge", "name-badge-pending"
+            )
 
             dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
             ministry_breakdown_html += f"""
@@ -2360,7 +2408,7 @@ def render_ministry_dashboard(selected_ministry):
                     {dept} <span class="count-label">({checked_count}/{total_count})</span>
                 </div>
                 <div id="content-{dept_id}" class="cell-content">
-                    {checked_badges}{pending_badges}
+                    {role_grouped_badges}
                 </div>
             </div>
             """
@@ -2457,6 +2505,8 @@ def render_ministry_dashboard(selected_ministry):
                 .name-badge-pending {{ background: {page_colors['background']}; border: 1px solid {page_colors['text_muted']}; color: {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.4rem 0.4rem 0.4rem 0; border-radius: 0px; display: inline-block; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.9rem; letter-spacing: 0.5px; opacity: 0.5; }}
                 .name-badge-name {{ display: block; }}
                 .name-badge-role {{ display: block; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
+                .role-row {{ margin-bottom: 0.8rem; }}
+                .role-label {{ font-family: 'Inter', sans-serif; font-size: 0.85rem; font-weight: 600; color: {page_colors['text_muted']}; margin-right: 0.5rem; display: inline; }}
                 .dept-header {{ font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.3rem; }}
                 .dept-container {{ margin-bottom: 1rem; padding: 0.5rem; border-radius: 8px; transition: all 0.3s ease; }}
                 .count-label {{ color: {page_colors['text_muted']}; font-size: 0.85rem; font-weight: normal; text-transform: none; letter-spacing: normal; }}
@@ -2479,7 +2529,10 @@ def render_ministry_dashboard(selected_ministry):
 
             for dept in all_depts_empty:
                 all_names = all_members_by_dept.get(dept, [])
-                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names)])
+                role_grouped_badges = build_role_grouped_badges(
+                    all_names, set(), name_to_role,
+                    "name-badge-pending", "name-badge-pending"
+                )
                 dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
 
                 empty_ministry_html += f"""
@@ -2489,7 +2542,7 @@ def render_ministry_dashboard(selected_ministry):
                         {dept} <span class="count-label">(0/{len(all_names)})</span>
                     </div>
                     <div id="empty-content-{dept_id}" class="cell-content">
-                        {pending_badges}
+                        {role_grouped_badges}
                     </div>
                 </div>
                 """
@@ -3379,6 +3432,17 @@ def render_dashboard(tab_name, group_by_zone=False):
                 letter-spacing: normal;
                 opacity: 0.95;
             }}
+            .role-row {{
+                margin-bottom: 0.8rem;
+            }}
+            .role-label {{
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                color: {page_colors['text_muted']};
+                margin-right: 0.5rem;
+                display: inline;
+            }}
             .zone-header {{
                 font-family: 'Inter', sans-serif;
                 font-size: 1.3rem;
@@ -3506,15 +3570,12 @@ def render_dashboard(tab_name, group_by_zone=False):
                     checked_in_names = cells_checked_in.get(cell_group, [])
                     all_names_in_cell = cells_all.get(cell_group, [])
 
-                    # Get pending names (not checked in)
-                    pending_names = [name for name in all_names_in_cell if name not in checked_in_names_set]
-
-                    # Build name badges: checked-in first (sorted), then pending (sorted)
-                    checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
-                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
-
                     checked_count = len(checked_in_names)
                     total_count = len(all_names_in_cell)
+                    role_grouped_badges = build_role_grouped_badges(
+                        all_names_in_cell, checked_in_names_set, name_to_role,
+                        "name-badge", "name-badge-pending"
+                    )
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                     breakdown_html += f"""
@@ -3524,7 +3585,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                             {cell_group} <span class="count-label">({checked_count}/{total_count})</span>
                         </div>
                         <div id="content-{cell_id}" class="cell-content">
-                            {checked_in_badges}{pending_badges}
+                            {role_grouped_badges}
                         </div>
                     </div>
                     """
@@ -3538,15 +3599,12 @@ def render_dashboard(tab_name, group_by_zone=False):
                 checked_in_names = display_data.get(group_name, [])
                 all_names_in_group = all_members_by_cell_group.get(group_name, [])
 
-                # Get pending names (not checked in)
-                pending_names = [name for name in all_names_in_group if name not in checked_in_names_set]
-
-                # Build name badges: checked-in first (sorted), then pending (sorted)
-                checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
-                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
-
                 total_in_group = len(all_names_in_group)
                 checked_count = len(checked_in_names)
+                role_grouped_badges = build_role_grouped_badges(
+                    all_names_in_group, checked_in_names_set, name_to_role,
+                    "name-badge", "name-badge-pending"
+                )
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
                 breakdown_html += f"""
@@ -3556,7 +3614,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                         {group_name} <span class="count-label">({checked_count}/{total_in_group})</span>
                     </div>
                     <div id="content-{group_id}" class="cell-content">
-                        {checked_in_badges}{pending_badges}
+                        {role_grouped_badges}
                     </div>
                 </div>
                 """
@@ -3760,6 +3818,16 @@ def render_dashboard(tab_name, group_by_zone=False):
                     transform: scale(1.05);
                     opacity: 0.7;
                 }}
+                .name-badge-name {{ display: block; }}
+                .role-row {{ margin-bottom: 0.8rem; }}
+                .role-label {{
+                    font-family: 'Inter', sans-serif;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    color: {page_colors['text_muted']};
+                    margin-right: 0.5rem;
+                    display: inline;
+                }}
                 .zone-header {{
                     font-family: 'Inter', sans-serif !important;
                     font-size: 1.3rem;
@@ -3864,7 +3932,10 @@ def render_dashboard(tab_name, group_by_zone=False):
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
-                        pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_cell)])
+                        role_grouped_badges = build_role_grouped_badges(
+                            all_names_in_cell, set(), name_to_role,
+                            "name-badge-pending", "name-badge-pending"
+                        )
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         empty_breakdown_html += f"""
@@ -3874,7 +3945,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                                 {cell_group} <span class="count-label">(0/{len(all_names_in_cell)})</span>
                             </div>
                             <div id="content-empty-{cell_id}" class="cell-content">
-                                {pending_badges}
+                                {role_grouped_badges}
                             </div>
                         </div>
                         """
@@ -3882,7 +3953,10 @@ def render_dashboard(tab_name, group_by_zone=False):
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
                     all_names_in_group = all_members_by_cell_group[group_name]
-                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_group)])
+                    role_grouped_badges = build_role_grouped_badges(
+                        all_names_in_group, set(), name_to_role,
+                        "name-badge-pending", "name-badge-pending"
+                    )
                     total_in_group = len(all_names_in_group)
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
@@ -3893,7 +3967,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                             {group_name} <span class="count-label">(0/{total_in_group})</span>
                         </div>
                         <div id="content-empty-{group_id}" class="cell-content">
-                            {pending_badges}
+                            {role_grouped_badges}
                         </div>
                     </div>
                     """
@@ -4441,6 +4515,17 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 letter-spacing: normal;
                 opacity: 0.95;
             }}
+            .role-row {{
+                margin-bottom: 0.8rem;
+            }}
+            .role-label {{
+                font-family: 'Inter', sans-serif;
+                font-size: 0.85rem;
+                font-weight: 600;
+                color: {page_colors['text_muted']};
+                margin-right: 0.5rem;
+                display: inline;
+            }}
             .zone-header {{
                 font-family: 'Inter', sans-serif !important;
                 font-size: 1.3rem;
@@ -4550,13 +4635,12 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
                 for cell_group in sorted(cells_all.keys(), key=str.lower):
                     all_names_in_cell = cells_all[cell_group]
-                    checked_names = [name for name in all_names_in_cell if name in checked_in_names_set]
-                    pending_names = [name for name in all_names_in_cell if name not in checked_in_names_set]
-                    checked_count = len(checked_names)
+                    checked_count = len([n for n in all_names_in_cell if n in checked_in_names_set])
                     total_in_cell = len(all_names_in_cell)
-
-                    checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_names)])
-                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
+                    role_grouped_badges = build_role_grouped_badges(
+                        all_names_in_cell, checked_in_names_set, name_to_role,
+                        "name-badge", "name-badge-pending"
+                    )
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                     hist_breakdown_html += f"""
@@ -4566,7 +4650,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                             {cell_group} <span class="count-label">({checked_count}/{total_in_cell})</span>
                         </div>
                         <div id="content-hist-{cell_id}" class="cell-content">
-                            {checked_in_badges}{pending_badges}
+                            {role_grouped_badges}
                         </div>
                     </div>
                     """
@@ -4576,13 +4660,12 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
             for group_name in sorted(all_cell_groups, key=str.lower):
                 all_names_in_group = all_members_by_cell_group.get(group_name, [])
-                checked_names = [name for name in all_names_in_group if name in checked_in_names_set]
-                pending_names = [name for name in all_names_in_group if name not in checked_in_names_set]
-                checked_count = len(checked_names)
+                checked_count = len([n for n in all_names_in_group if n in checked_in_names_set])
                 total_in_group = len(all_names_in_group)
-
-                checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_names)])
-                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
+                role_grouped_badges = build_role_grouped_badges(
+                    all_names_in_group, checked_in_names_set, name_to_role,
+                    "name-badge", "name-badge-pending"
+                )
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
                 hist_breakdown_html += f"""
@@ -4592,7 +4675,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                         {group_name} <span class="count-label">({checked_count}/{total_in_group})</span>
                     </div>
                     <div id="content-hist-{group_id}" class="cell-content">
-                        {checked_in_badges}{pending_badges}
+                        {role_grouped_badges}
                     </div>
                 </div>
                 """
@@ -4789,6 +4872,16 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     transform: scale(1.05);
                     opacity: 0.7;
                 }}
+                .name-badge-name {{ display: block; }}
+                .role-row {{ margin-bottom: 0.8rem; }}
+                .role-label {{
+                    font-family: 'Inter', sans-serif;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    color: {colors['text_muted']};
+                    margin-right: 0.5rem;
+                    display: inline;
+                }}
                 .zone-header {{
                     font-family: 'Inter', sans-serif !important;
                     font-size: 1.3rem;
@@ -4893,7 +4986,10 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
-                        pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_cell)])
+                        role_grouped_badges = build_role_grouped_badges(
+                            all_names_in_cell, set(), name_to_role,
+                            "name-badge-pending", "name-badge-pending"
+                        )
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         hist_empty_breakdown_html += f"""
@@ -4903,7 +4999,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                                 {cell_group} <span class="count-label">(0/{len(all_names_in_cell)})</span>
                             </div>
                             <div id="content-hist-empty-{cell_id}" class="cell-content">
-                                {pending_badges}
+                                {role_grouped_badges}
                             </div>
                         </div>
                         """
@@ -4911,8 +5007,11 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
                     all_names_in_group = all_members_by_cell_group[group_name]
-                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
+                    role_grouped_badges = build_role_grouped_badges(
+                        all_names_in_group, set(), name_to_role,
+                        "name-badge-pending", "name-badge-pending"
+                    )
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
                     hist_empty_breakdown_html += f"""
@@ -4922,7 +5021,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                             {group_name} <span class="count-label">(0/{total_in_group})</span>
                         </div>
                         <div id="content-hist-empty-{group_id}" class="cell-content">
-                            {pending_badges}
+                            {role_grouped_badges}
                         </div>
                     </div>
                     """
