@@ -2549,6 +2549,8 @@ def render_qr_section():
                 # Modal is already open - perform hard refresh (same as Newcomer Form Filled)
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
+                st.session_state.show_newcomers_count = True
+                get_newcomers_count.clear()
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
@@ -2652,6 +2654,8 @@ def render_qr_section():
                 # Hard refresh - clear all caches and reload from Google Sheets
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
+                st.session_state.show_newcomers_count = True
+                get_newcomers_count.clear()
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
@@ -2680,6 +2684,8 @@ def render_ministry_qr_section(selected_ministry):
                 # Modal is already open - perform hard refresh
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
+                st.session_state.show_newcomers_count = True
+                get_newcomers_count.clear()
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
@@ -2784,6 +2790,8 @@ def render_ministry_qr_section(selected_ministry):
                 # Hard refresh - clear all caches and reload from Google Sheets
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
+                st.session_state.show_newcomers_count = True
+                get_newcomers_count.clear()
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
@@ -2886,7 +2894,6 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Clear Streamlit caches to force Upstash read
             get_today_attendance_data.clear()
             get_options_from_sheet.clear()
-            get_newcomers_count.clear()
             if group_by_zone:
                 get_cell_to_zone_mapping.clear()
             st.rerun()
@@ -2897,7 +2904,11 @@ def render_dashboard(tab_name, group_by_zone=False):
         cell_group_data, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
     total_checked_in = len(checked_in_list)
-    total_newcomers = get_newcomers_count(client, SHEET_ID, refresh_key)
+    # Only fetch newcomers when user triggered I'm New twice or Newcomer Form Filled
+    if st.session_state.get('show_newcomers_count', False):
+        total_newcomers = get_newcomers_count(client, SHEET_ID, refresh_key)
+    else:
+        total_newcomers = None  # Don't fetch; show placeholder
 
     # Get all team members from Options tab and group by cell group
     all_members_by_cell_group = {}
@@ -3070,13 +3081,22 @@ def render_dashboard(tab_name, group_by_zone=False):
         </div>
         """, unsafe_allow_html=True)
     with kpi_col2:
-        st.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-label">Total Newcomers</div>
-            <div class="kpi-number">{total_newcomers}</div>
-            <div class="kpi-subtitle">New (Area of residence) with Status not yet set</div>
-        </div>
-        """, unsafe_allow_html=True)
+        if total_newcomers is not None:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Total Newcomers</div>
+                <div class="kpi-number">{total_newcomers}</div>
+                <div class="kpi-subtitle">New (Area of residence) with Status not yet set</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Total Newcomers</div>
+                <div class="kpi-number">—</div>
+                <div class="kpi-subtitle">Click I'm New twice or Newcomer Form Filled to update</div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # Zone tiles (only for zone grouping)
     if group_by_zone and total_checked_in > 0 and cell_group_data:
