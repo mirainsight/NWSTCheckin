@@ -1634,7 +1634,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
             # Auto-submit selectbox
             selected_display = st.selectbox(
-                f"Select {option_type}",
+                f"Select {option_type} ❓❗ Newcomer name not appearing? Click I'm New twice or Newcomer Form Filled",
                 options=options_with_placeholder,
                 index=0,
                 key=selectbox_key,
@@ -1933,7 +1933,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
             # Auto-submit selectbox
             selected_display = st.selectbox(
-                "Select Name",
+                "Select Name ❓❗ Newcomer name not appearing? Click I'm New twice or Newcomer Form Filled",
                 options=options_with_placeholder,
                 index=0,
                 key=selectbox_key,
