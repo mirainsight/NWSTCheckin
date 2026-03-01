@@ -38,6 +38,7 @@ KEY_VALUES_TAB_NAME = "Key Values"  # Tab name for cell-to-zone mapping
 MINISTRY_OPTIONS_TAB_NAME = "Options - Ministry"  # Tab name for ministry options
 MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"  # Tab name for ministry check-in
 ATTENDANCE_ANALYTICS_TAB_NAME = "Attendance Analytics"  # Tab name for historical analytics data
+FORM_RESPONSES_TAB_NAME = "Form Responses 1"  # Tab name for newcomer form responses (P=Area of residence, Q=Status)
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
 
 # Redis cache configuration
@@ -176,10 +177,19 @@ def get_gsheet_client():
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
 
+def _is_email_format(value):
+    """Return True if value looks like an email address (treat role as blank)."""
+    if not value or not isinstance(value, str):
+        return False
+    v = value.strip()
+    return "@" in v and "." in v
+
+
 @st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_options_from_sheet(_client, sheet_id):
-    """Read options from Column C of the Options tab in Google Sheets.
-    Uses Redis cache to minimize API calls."""
+    """Read options from Column C and role from Column D of the Options tab in Google Sheets.
+    Uses Redis cache to minimize API calls.
+    Returns (options, name_to_role, error_msg). name_to_role maps member name -> role (email format treated as blank)."""
 
     # Try Redis cache first
     redis_client = get_redis_client()
@@ -188,7 +198,7 @@ def get_options_from_sheet(_client, sheet_id):
             cached = redis_client.get(REDIS_OPTIONS_KEY)
             if cached:
                 data = json.loads(cached) if isinstance(cached, str) else cached
-                return data.get("options"), None
+                return data.get("options"), data.get("name_to_role", {}), None
         except Exception:
             pass  # Redis failed, fall back to Sheets
 
@@ -200,27 +210,34 @@ def get_options_from_sheet(_client, sheet_id):
         try:
             options_sheet = spreadsheet.worksheet(OPTIONS_TAB_NAME)
         except gspread.exceptions.WorksheetNotFound:
-            return None, f"❌ Tab '{OPTIONS_TAB_NAME}' not found. Please create it in your Google Sheet."
+            return None, {}, f"❌ Tab '{OPTIONS_TAB_NAME}' not found. Please create it in your Google Sheet."
 
-        # Read only column C (index 2: A=0, B=1, C=2)
-        # Get all values from column C
-        column_c_values = options_sheet.col_values(3)  # Column C is index 3 (1-indexed)
+        # Read column C (names) and column D (roles)
+        column_c_values = options_sheet.col_values(3)  # Column C (1-indexed)
+        column_d_values = options_sheet.col_values(4)  # Column D (1-indexed) - role
 
         if not column_c_values:
-            return {}, "⚠️ Column C in Options sheet is empty. Please add options to column C."
+            return {}, {}, "⚠️ Column C in Options sheet is empty. Please add options to column C."
 
         # Get the header from first row (C1)
         header = column_c_values[0].strip() if column_c_values[0] else "Name"
 
-        # Get all options from row 2 onwards (skip header row)
+        # Build options and name_to_role from row 2 onwards
         option_values = []
-        for value in column_c_values[1:]:  # Skip first row (header)
+        name_to_role = {}
+        for i, value in enumerate(column_c_values[1:]):  # Skip first row (header)
             value = value.strip()
             if value:  # Only add non-empty values
                 option_values.append(value)
+                name, _ = parse_name_cell_group(value)
+                if name:
+                    role_raw = column_d_values[i + 1].strip() if i + 1 < len(column_d_values) else ""
+                    role = "" if _is_email_format(role_raw) else (role_raw or "")
+                    if role:
+                        name_to_role[name] = role
 
         if not option_values:
-            return {}, "⚠️ No options found in column C (starting from row 2)."
+            return {}, {}, "⚠️ No options found in column C (starting from row 2)."
 
         # Return single option type with all column C values
         options = {header: option_values}
@@ -228,17 +245,17 @@ def get_options_from_sheet(_client, sheet_id):
         # Store in Redis cache
         if redis_client:
             try:
-                redis_client.set(REDIS_OPTIONS_KEY, json.dumps({"options": options}), ex=REDIS_CACHE_TTL)
+                redis_client.set(REDIS_OPTIONS_KEY, json.dumps({"options": options, "name_to_role": name_to_role}), ex=REDIS_CACHE_TTL)
             except Exception:
                 pass  # Redis write failed, continue anyway
 
-        return options, None
+        return options, name_to_role, None
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
-            return None, "⚠️ API quota exceeded. Please wait a moment and refresh the page."
-        return None, f"❌ Error reading options from column C: {str(e)}"
+            return None, {}, "⚠️ API quota exceeded. Please wait a moment and refresh the page."
+        return None, {}, f"❌ Error reading options from column C: {str(e)}"
     except Exception as e:
-        return None, f"❌ Error reading options from column C: {str(e)}"
+        return None, {}, f"❌ Error reading options from column C: {str(e)}"
 
 @st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_cell_to_zone_mapping(_client, sheet_id):
@@ -524,6 +541,12 @@ def generate_daily_colors_legacy():
         'accent': primary_color
     }
 
+def format_name_badge(name, role, badge_class="name-badge"):
+    """Format a name badge with optional role (italicized below name)."""
+    role_html = f'<span class="name-badge-role">{role}</span>' if role else ''
+    return f'<span class="{badge_class}"><span class="name-badge-name">{name}</span>{role_html}</span>'
+
+
 def parse_name_cell_group(name_cell_group_str):
     """Parse 'Name - Cell Group' format and return (name, cell_group)"""
     if not name_cell_group_str:
@@ -657,6 +680,28 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
     except Exception as e:
         # If there's an error reading attendance, return empty set (show all options)
         return set()
+
+
+@st.cache_data(ttl=60)
+def get_newcomers_count(_client, sheet_id, refresh_key=0):
+    """Count newcomers from Form Responses 1: rows where Column P (Area of residence) = 'New'
+    and Column Q (Status) is false/empty."""
+    try:
+        spreadsheet = _client.open_by_key(sheet_id)
+        form_sheet = spreadsheet.worksheet(FORM_RESPONSES_TAB_NAME)
+        all_rows = form_sheet.get_all_values()
+        if len(all_rows) <= 1:
+            return 0
+        count = 0
+        for row in all_rows[1:]:
+            # Column P = index 15, Column Q = index 16 (0-based)
+            p_val = row[15].strip() if len(row) > 15 and row[15] else ""
+            q_val = row[16].strip() if len(row) > 16 and row[16] else ""
+            if p_val.lower() == "new" and (not q_val or q_val.lower() == "false"):
+                count += 1
+        return count
+    except Exception:
+        return 0
 
 def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTENDANCE_TAB_NAME):
     """Get attendance data for a specific date (YYYY-MM-DD format).
@@ -1336,7 +1381,7 @@ if not SHEET_ID:
 
 # Get options from Google Sheets
 with st.spinner("Loading options..."):
-    options, error_msg = get_options_from_sheet(client, SHEET_ID)
+    options, _, error_msg = get_options_from_sheet(client, SHEET_ID)
 
 if options is None:
     if error_msg:
@@ -2010,6 +2055,9 @@ def render_ministry_dashboard(selected_ministry):
     # Get all ministry members grouped by department
     all_members_by_dept = get_ministry_members_by_department(client, SHEET_ID, selected_ministry)
 
+    # Get name-to-role mapping from main OPTIONS tab (for role display in badges)
+    _, name_to_role, _ = get_options_from_sheet(client, SHEET_ID)
+
     # Create a set of checked-in names for quick lookup
     checked_in_names_set = set()
     for name_dept in ministry_checked_in:
@@ -2241,6 +2289,8 @@ def render_ministry_dashboard(selected_ministry):
                 letter-spacing: 0.5px;
                 opacity: 0.5;
             }}
+            .name-badge-name {{ display: block; }}
+            .name-badge-role {{ display: block; font-style: italic; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
             .dept-header {{
                 font-family: 'Inter', sans-serif;
                 font-size: 1.3rem;
@@ -2294,8 +2344,8 @@ def render_ministry_dashboard(selected_ministry):
             total_count = len(all_names_in_dept)
 
             # Build name badges
-            checked_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
-            pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+            checked_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
+            pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
 
             dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
             ministry_breakdown_html += f"""
@@ -2400,6 +2450,8 @@ def render_ministry_dashboard(selected_ministry):
                 .search-select {{ padding: 0.5rem; border: 1px solid {page_colors['primary']}; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 500; background: {page_colors['background']}; color: {page_colors['text']}; min-width: 200px; cursor: pointer; }}
                 .controls-row {{ display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }}
                 .name-badge-pending {{ background: {page_colors['background']}; border: 1px solid {page_colors['text_muted']}; color: {page_colors['text_muted']}; padding: 0.6rem 1.2rem; margin: 0.4rem 0.4rem 0.4rem 0; border-radius: 0px; display: inline-block; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.9rem; letter-spacing: 0.5px; opacity: 0.5; }}
+                .name-badge-name {{ display: block; }}
+                .name-badge-role {{ display: block; font-style: italic; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
                 .dept-header {{ font-family: 'Inter', sans-serif; font-size: 1.3rem; font-weight: 900; color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.3rem; }}
                 .dept-container {{ margin-bottom: 1rem; padding: 0.5rem; border-radius: 8px; transition: all 0.3s ease; }}
                 .count-label {{ color: {page_colors['text_muted']}; font-size: 0.85rem; font-weight: normal; text-transform: none; letter-spacing: normal; }}
@@ -2422,7 +2474,7 @@ def render_ministry_dashboard(selected_ministry):
 
             for dept in all_depts_empty:
                 all_names = all_members_by_dept.get(dept, [])
-                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names)])
+                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names)])
                 dept_id = dept.replace(" ", "-").replace(":", "-").replace("'", "").lower()
 
                 empty_ministry_html += f"""
@@ -2834,6 +2886,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Clear Streamlit caches to force Upstash read
             get_today_attendance_data.clear()
             get_options_from_sheet.clear()
+            get_newcomers_count.clear()
             if group_by_zone:
                 get_cell_to_zone_mapping.clear()
             st.rerun()
@@ -2844,10 +2897,12 @@ def render_dashboard(tab_name, group_by_zone=False):
         cell_group_data, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
     total_checked_in = len(checked_in_list)
+    total_newcomers = get_newcomers_count(client, SHEET_ID, refresh_key)
 
     # Get all team members from Options tab and group by cell group
     all_members_by_cell_group = {}
-    options_data, _ = get_options_from_sheet(client, SHEET_ID)
+    name_to_role = {}
+    options_data, name_to_role, _ = get_options_from_sheet(client, SHEET_ID)
     if options_data:
         for header, values in options_data.items():
             for value in values:
@@ -3004,14 +3059,24 @@ def render_dashboard(tab_name, group_by_zone=False):
     </style>
     """, unsafe_allow_html=True)
 
-    # KPI Card - Total Checked In
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-label">Total Checked In Today</div>
-        <div class="kpi-number">{total_checked_in}</div>
-        <div class="kpi-subtitle">People checked in as of now</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # KPI Cards - Total Checked In and Total Newcomers (side by side)
+    kpi_col1, kpi_col2 = st.columns(2)
+    with kpi_col1:
+        st.markdown(f"""
+        <div class="kpi-card">
+            <div class="kpi-label">Total Checked In Today</div>
+            <div class="kpi-number">{total_checked_in}</div>
+            <div class="kpi-subtitle">People checked in as of now</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with kpi_col2:
+        st.markdown(f"""
+        <div class="kpi-card">
+            <div class="kpi-label">Total Newcomers</div>
+            <div class="kpi-number">{total_newcomers}</div>
+            <div class="kpi-subtitle">New (Area of residence) with Status not yet set</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Zone tiles (only for zone grouping)
     if group_by_zone and total_checked_in > 0 and cell_group_data:
@@ -3278,6 +3343,18 @@ def render_dashboard(tab_name, group_by_zone=False):
                 transform: scale(1.05);
                 opacity: 0.7;
             }}
+            .name-badge-name {{
+                display: block;
+            }}
+            .name-badge-role {{
+                display: block;
+                font-style: italic;
+                font-size: 0.8em;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: normal;
+                opacity: 0.95;
+            }}
             .zone-header {{
                 font-family: 'Inter', sans-serif;
                 font-size: 1.3rem;
@@ -3409,8 +3486,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                     pending_names = [name for name in all_names_in_cell if name not in checked_in_names_set]
 
                     # Build name badges: checked-in first (sorted), then pending (sorted)
-                    checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
-                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                    checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
+                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
 
                     checked_count = len(checked_in_names)
                     total_count = len(all_names_in_cell)
@@ -3441,8 +3518,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                 pending_names = [name for name in all_names_in_group if name not in checked_in_names_set]
 
                 # Build name badges: checked-in first (sorted), then pending (sorted)
-                checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_in_names)])
-                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_in_names)])
+                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
 
                 total_in_group = len(all_names_in_group)
                 checked_count = len(checked_in_names)
@@ -3763,7 +3840,7 @@ def render_dashboard(tab_name, group_by_zone=False):
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
-                        pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
+                        pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_cell)])
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         empty_breakdown_html += f"""
@@ -3781,7 +3858,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
                     all_names_in_group = all_members_by_cell_group[group_name]
-                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
+                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
@@ -3892,7 +3969,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
     # Get all team members from Options tab and group by cell group
     all_members_by_cell_group = {}
-    options_data, _ = get_options_from_sheet(client, SHEET_ID)
+    name_to_role = {}
+    options_data, name_to_role, _ = get_options_from_sheet(client, SHEET_ID)
     if options_data:
         for header, values in options_data.items():
             for value in values:
@@ -4328,6 +4406,18 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 transform: scale(1.05);
                 opacity: 0.7;
             }}
+            .name-badge-name {{
+                display: block;
+            }}
+            .name-badge-role {{
+                display: block;
+                font-style: italic;
+                font-size: 0.8em;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: normal;
+                opacity: 0.95;
+            }}
             .zone-header {{
                 font-family: 'Inter', sans-serif !important;
                 font-size: 1.3rem;
@@ -4442,8 +4532,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     checked_count = len(checked_names)
                     total_in_cell = len(all_names_in_cell)
 
-                    checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_names)])
-                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                    checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_names)])
+                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                     hist_breakdown_html += f"""
@@ -4468,8 +4558,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 checked_count = len(checked_names)
                 total_in_group = len(all_names_in_group)
 
-                checked_in_badges = ''.join([f'<span class="name-badge">{name}</span>' for name in sorted(checked_names)])
-                pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(pending_names)])
+                checked_in_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge") for name in sorted(checked_names)])
+                pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(pending_names)])
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
                 hist_breakdown_html += f"""
@@ -4780,7 +4870,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
                     for cell_group in sorted(cells_all.keys(), key=str.lower):
                         all_names_in_cell = cells_all[cell_group]
-                        pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_cell)])
+                        pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_cell)])
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
                         hist_empty_breakdown_html += f"""
@@ -4798,7 +4888,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 # Regular cell group display - all greyed out
                 for group_name in sorted(all_members_by_cell_group.keys(), key=str.lower):
                     all_names_in_group = all_members_by_cell_group[group_name]
-                    pending_badges = ''.join([f'<span class="name-badge-pending">{name}</span>' for name in sorted(all_names_in_group)])
+                    pending_badges = ''.join([format_name_badge(name, name_to_role.get(name, ''), "name-badge-pending") for name in sorted(all_names_in_group)])
                     total_in_group = len(all_names_in_group)
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
