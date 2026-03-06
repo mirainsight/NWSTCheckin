@@ -737,24 +737,30 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
 
 @st.cache_data(ttl=60)
 def get_newcomers_count(_client, sheet_id, refresh_key=0):
-    """Count newcomers from Form Responses 1: rows where Column P (Area of residence) = 'New'
-    and Column Q (Status) is false/empty."""
+    """Count newcomers from Form Responses 1: rows where Column P (Status) = 'New'
+    and Column Q (Processed) is false/empty.
+    Returns: tuple (count, list_of_newcomers)
+        where list_of_newcomers is a list of dicts with 'name' and 'cell' keys
+    """
     try:
         spreadsheet = _client.open_by_key(sheet_id)
         form_sheet = spreadsheet.worksheet(FORM_RESPONSES_TAB_NAME)
         all_rows = form_sheet.get_all_values()
         if len(all_rows) <= 1:
-            return 0
-        count = 0
+            return 0, []
+        newcomers = []
         for row in all_rows[1:]:
-            # Column P = index 15, Column Q = index 16 (0-based)
+            # Column P = index 15 (Status), Column Q = index 16 (Processed)
+            # Column B = index 1 (Name), Column C = index 2 (Assigned Cell)
+            name = row[1].strip() if len(row) > 1 and row[1] else ""
+            cell = row[2].strip() if len(row) > 2 and row[2] else ""
             p_val = row[15].strip() if len(row) > 15 and row[15] else ""
             q_val = row[16].strip() if len(row) > 16 and row[16] else ""
             if p_val.lower() == "new" and (not q_val or q_val.lower() == "false"):
-                count += 1
-        return count
+                newcomers.append({"name": name, "cell": cell})
+        return len(newcomers), newcomers
     except Exception:
-        return 0
+        return 0, []
 
 def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTENDANCE_TAB_NAME):
     """Get attendance data for a specific date (YYYY-MM-DD format).
@@ -3023,9 +3029,10 @@ def render_dashboard(tab_name, group_by_zone=False):
     total_checked_in = len(checked_in_list)
     # Only fetch newcomers when user triggered I'm New twice or Newcomer Form Filled
     if st.session_state.get('show_newcomers_count', False):
-        total_newcomers = get_newcomers_count(client, SHEET_ID, refresh_key)
+        total_newcomers, newcomers_list = get_newcomers_count(client, SHEET_ID, refresh_key)
     else:
         total_newcomers = None  # Don't fetch; show placeholder
+        newcomers_list = []
 
     # Get all team members from Options tab and group by cell group
     all_members_by_cell_group = {}
@@ -3203,9 +3210,17 @@ def render_dashboard(tab_name, group_by_zone=False):
             <div class="kpi-card">
                 <div class="kpi-label">Total Newcomers</div>
                 <div class="kpi-number">{total_newcomers}</div>
-                <div class="kpi-subtitle">New (Area of residence) with Status not yet set</div>
+                <div class="kpi-subtitle">Status = New and Processed = false/empty</div>
             </div>
             """, unsafe_allow_html=True)
+
+            # Display newcomers list if any
+            if newcomers_list:
+                st.markdown("### Newcomer Details")
+                for newcomer in newcomers_list:
+                    name = newcomer['name'] if newcomer['name'] else "(No name)"
+                    cell = newcomer['cell'] if newcomer['cell'] else "(Not assigned)"
+                    st.markdown(f"- **{name}** → {cell}")
         else:
             st.markdown(f"""
             <div class="kpi-card">
