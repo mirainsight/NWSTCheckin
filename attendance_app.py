@@ -3258,7 +3258,6 @@ def render_dashboard(tab_name, group_by_zone=False):
             <div class="kpi-card">
                 <div class="kpi-label">Total Newcomers</div>
                 <div class="kpi-number">{total_newcomers}</div>
-                <div class="kpi-subtitle">Status = New and Processed = false/empty</div>
             </div>
             """, unsafe_allow_html=True)
 
