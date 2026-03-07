@@ -49,6 +49,7 @@ REDIS_OPTIONS_KEY = "attendance:options"
 REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date and tab name
 REDIS_HISTORICAL_KEY_PREFIX = "attendance:historical:"  # For historical date queries
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
+REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with date
 
 def get_today_myt_date():
     """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
@@ -741,12 +742,37 @@ def get_newcomers_count(_client, sheet_id, refresh_key=0):
     and Column Q (Processed) is false/empty.
     Returns: tuple (count, list_of_newcomers)
         where list_of_newcomers is a list of dicts with 'name' and 'cell' keys
+
+    Uses Upstash Redis caching - only pulls from gsheet when:
+    - I'm New button clicked twice, or
+    - Newcomer Form Filled button pressed (which clears the cache)
     """
+    today_myt = get_today_myt_date()
+    redis_key = f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}"
+
+    # Try Redis cache first
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(redis_key)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                return data.get("count", 0), data.get("newcomers_list", [])
+        except Exception:
+            pass  # Redis failed, fall back to Sheets
+
+    # Read from Google Sheets
     try:
         spreadsheet = _client.open_by_key(sheet_id)
         form_sheet = spreadsheet.worksheet(FORM_RESPONSES_TAB_NAME)
         all_rows = form_sheet.get_all_values()
         if len(all_rows) <= 1:
+            # Store empty result in Redis
+            if redis_client:
+                try:
+                    redis_client.set(redis_key, json.dumps({"count": 0, "newcomers_list": []}), ex=REDIS_CACHE_TTL)
+                except Exception:
+                    pass
             return 0, []
         newcomers = []
         for row in all_rows[1:]:
@@ -758,7 +784,21 @@ def get_newcomers_count(_client, sheet_id, refresh_key=0):
             q_val = row[16].strip() if len(row) > 16 and row[16] else ""
             if p_val.lower() == "new" and (not q_val or q_val.lower() == "false"):
                 newcomers.append({"name": name, "cell": cell})
-        return len(newcomers), newcomers
+
+        count = len(newcomers)
+
+        # Store in Redis cache
+        if redis_client:
+            try:
+                cache_data = {
+                    "count": count,
+                    "newcomers_list": newcomers
+                }
+                redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+            except Exception:
+                pass
+
+        return count, newcomers
     except Exception:
         return 0, []
 
@@ -2677,7 +2717,7 @@ def render_qr_section():
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
-                # Clear Redis cache for options AND attendance data
+                # Clear Redis cache for options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
@@ -2686,6 +2726,8 @@ def render_qr_section():
                         today_myt = get_today_myt_date()
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
+                        # Clear newcomers cache to force fresh pull from gsheet
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
                     except Exception:
                         pass
                 st.session_state.show_qr_modal = False
@@ -2782,7 +2824,7 @@ def render_qr_section():
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
-                # Clear Redis cache for options AND attendance data
+                # Clear Redis cache for options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
@@ -2791,6 +2833,8 @@ def render_qr_section():
                         today_myt = get_today_myt_date()
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
+                        # Clear newcomers cache to force fresh pull from gsheet
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
                     except Exception:
                         pass
                 st.session_state.show_qr_modal = False
@@ -2812,7 +2856,7 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options AND attendance data
+                # Clear Redis cache for ministry options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
@@ -2822,6 +2866,8 @@ def render_ministry_qr_section(selected_ministry):
                         # Also clear ministry attendance data cache
                         today_myt = get_today_myt_date()
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
+                        # Clear newcomers cache to force fresh pull from gsheet
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
                     except Exception:
                         pass
                 st.session_state.show_ministry_qr_modal = False
@@ -2918,7 +2964,7 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear local Streamlit caches
                 get_today_attendance_data.clear()
                 get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options AND attendance data
+                # Clear Redis cache for ministry options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
                     try:
@@ -2928,6 +2974,8 @@ def render_ministry_qr_section(selected_ministry):
                         # Also clear ministry attendance data cache
                         today_myt = get_today_myt_date()
                         redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
+                        # Clear newcomers cache to force fresh pull from gsheet
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
                     except Exception:
                         pass
                 st.session_state.show_ministry_qr_modal = False
