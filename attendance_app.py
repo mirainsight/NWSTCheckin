@@ -919,8 +919,9 @@ def get_attendance_analytics_data(_client, sheet_id):
     The sheet format is:
     - Row 1: Headers with dates in M/D/YYYY format (e.g., 1/24/2026)
     - Column A: Empty
-    - Column B: Name - Cell Group (e.g., "Aaron Goh - Narrowstreet Core Team")
-    - Columns C onwards: Attendance values (0 or 1) for each date
+    - Column B: Name
+    - Column C: Cell Group
+    - Columns D onwards: Attendance values (0 or 1) for each date
 
     Returns:
         tuple: (df, saturday_dates, error_message)
@@ -947,8 +948,8 @@ def get_attendance_analytics_data(_client, sheet_id):
         dates = []
         saturday_col_indices = []
 
-        # Start from column C (index 2) for dates
-        for col_idx, cell in enumerate(header_row[2:], start=2):
+        # Start from column D (index 3) for dates (A=0, B=Name, C=Cell Group, D onwards=dates)
+        for col_idx, cell in enumerate(header_row[3:], start=3):
             if cell.strip():
                 try:
                     # Parse date in M/D/YYYY format
@@ -982,16 +983,14 @@ def get_attendance_analytics_data(_client, sheet_id):
         # Parse data rows
         data_rows = []
         for row in all_values[1:]:
-            if len(row) < 2:
+            if len(row) < 3:
                 continue
 
-            name_cell_group = row[1].strip() if row[1] else ""
-            if not name_cell_group or name_cell_group == "Date":
-                continue
+            # Column B = Name (index 1), Column C = Cell Group (index 2)
+            name = row[1].strip() if len(row) > 1 and row[1] else ""
+            cell_group = row[2].strip() if len(row) > 2 and row[2] else ""
 
-            # Parse name and cell group
-            name, cell_group = parse_name_cell_group(name_cell_group)
-            if not name:
+            if not name or name.lower() == "name":
                 continue
 
             # Get attendance values for Saturday columns
@@ -1006,7 +1005,7 @@ def get_attendance_analytics_data(_client, sheet_id):
             data_rows.append({
                 'Name': name,
                 'Cell Group': cell_group,
-                'Name - Cell Group': name_cell_group,
+                'Name - Cell Group': f"{name} - {cell_group}" if cell_group else name,
                 **{saturday_dates_short[i]: attendance[i] for i in range(len(attendance))}
             })
 
