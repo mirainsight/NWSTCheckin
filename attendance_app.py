@@ -3075,12 +3075,8 @@ def render_dashboard(tab_name, group_by_zone=False):
         cell_group_data, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
     total_checked_in = len(checked_in_list)
-    # Only fetch newcomers when user triggered I'm New twice or Newcomer Form Filled
-    if st.session_state.get('show_newcomers_count', False):
-        total_newcomers, newcomers_list = get_newcomers_count(client, SHEET_ID, refresh_key)
-    else:
-        total_newcomers = None  # Don't fetch; show placeholder
-        newcomers_list = []
+    # Fetch newcomers count (uses Redis cache on initial load, fresh pull when buttons clear cache)
+    total_newcomers, newcomers_list = get_newcomers_count(client, SHEET_ID, refresh_key)
 
     # Get all team members from Options tab and group by cell group
     all_members_by_cell_group = {}
@@ -3253,29 +3249,20 @@ def render_dashboard(tab_name, group_by_zone=False):
         </div>
         """, unsafe_allow_html=True)
     with kpi_col2:
-        if total_newcomers is not None:
-            st.markdown(f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Total Newcomers</div>
-                <div class="kpi-number">{total_newcomers}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="kpi-card">
+            <div class="kpi-label">Total Newcomers</div>
+            <div class="kpi-number">{total_newcomers}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-            # Display newcomers list if any
-            if newcomers_list:
-                st.markdown("### Newcomer Details")
-                for newcomer in newcomers_list:
-                    name = newcomer['name'] if newcomer['name'] else "(No name)"
-                    cell = newcomer['cell'] if newcomer['cell'] else "(Not assigned)"
-                    st.markdown(f"- **{name}** → {cell}")
-        else:
-            st.markdown(f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Total Newcomers</div>
-                <div class="kpi-number">—</div>
-                <div class="kpi-subtitle">Click I'm New twice or Newcomer Form Filled to update</div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Display newcomers list if any
+        if newcomers_list:
+            st.markdown("### Newcomer Details")
+            for newcomer in newcomers_list:
+                name = newcomer['name'] if newcomer['name'] else "(No name)"
+                cell = newcomer['cell'] if newcomer['cell'] else "(Not assigned)"
+                st.markdown(f"- **{name}** → {cell}")
 
     # Zone tiles (only for zone grouping)
     if group_by_zone and total_checked_in > 0 and cell_group_data:
