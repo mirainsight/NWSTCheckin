@@ -156,6 +156,22 @@ def perform_hard_sheet_resync(mode="congregation"):
             pass
 
 
+def render_update_names_sheet_popover(sync_mode, confirm_button_key):
+    """Popover next to I'm New / toolbar: full Google Sheet resync.
+
+    sync_mode: \"congregation\" | \"ministry\"
+    confirm_button_key: unique st.button key (Streamlit requirement).
+    """
+    with st.popover("Update names", use_container_width=True):
+        st.caption(
+            "If newcomer's name is missing, or want to update names use this."
+            "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
+        )
+        if st.button("Sync with Google Sheets", type="primary", key=confirm_button_key):
+            perform_hard_sheet_resync(sync_mode)
+            st.rerun()
+
+
 def get_gsheet_client():
     """Connect to Google Sheets - works with both local files and Streamlit secrets"""
     try:
@@ -2219,17 +2235,8 @@ def render_ministry_dashboard(selected_ministry):
     # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
-    # Update names (left, same width feel as I'm New column) — then last refresh + Refresh
-    col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
-    with col_update_names:
-        with st.popover("Update names", use_container_width=True):
-            st.caption(
-                "If newcomer's name is missing, or want to update names use this."
-                "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
-            )
-            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_ministry_{selected_ministry}"):
-                perform_hard_sheet_resync("ministry")
-                st.rerun()
+    # Last refresh + Refresh (Update names lives beside I'm New on the ministry check-in page)
+    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
@@ -2778,8 +2785,10 @@ def render_ministry_dashboard(selected_ministry):
 def render_qr_section():
     """Render the I'm New QR code section with newcomer form workflow"""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
-    with col_qr2:
+    col_qr_new_left, col_qr_new, col_qr_new_right = st.columns([1, 1, 4])
+    with col_qr_new_left:
+        render_update_names_sheet_popover("congregation", "hard_sync_qr_congregation")
+    with col_qr_new:
         if st.button("I'm New!", type="secondary", use_container_width=True, key="new_btn"):
             if st.session_state.get('show_qr_modal', False):
                 # Modal is already open - perform hard refresh (same as Newcomer Form Filled)
@@ -2917,8 +2926,10 @@ def render_qr_section():
 def render_ministry_qr_section(selected_ministry):
     """Render the I'm New QR code section for ministry check-in with hard refresh"""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr1, col_qr2, col_qr3 = st.columns([3, 1, 3])
-    with col_qr2:
+    col_qr_new_left, col_qr_new, col_qr_new_right = st.columns([1, 1, 4])
+    with col_qr_new_left:
+        render_update_names_sheet_popover("ministry", f"hard_sync_qr_ministry_{selected_ministry}")
+    with col_qr_new:
         if st.button("I'm New!", type="secondary", use_container_width=True, key=f"ministry_new_btn_{selected_ministry}"):
             if st.session_state.get('show_ministry_qr_modal', False):
                 # Modal is already open - perform hard refresh
@@ -3111,17 +3122,16 @@ def render_dashboard(tab_name, group_by_zone=False):
     # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
-    # Update names (left, same outline/heavy style family as I'm New — filled via CSS) — then last refresh + Refresh
-    col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
-    with col_update_names:
-        with st.popover("Update names", use_container_width=True):
-            st.caption(
-                "If newcomer's name is missing, or want to update names use this."
-                "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
+    # Update names beside I'm New on NWST only; Leaders has no QR row — keep control in toolbar here
+    if group_by_zone:
+        col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
+        with col_update_names:
+            render_update_names_sheet_popover(
+                "congregation",
+                f"hard_sync_leaders_toolbar_{tab_name}",
             )
-            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_congregation_{tab_name}_{'zone' if group_by_zone else 'cg'}"):
-                perform_hard_sheet_resync("congregation")
-                st.rerun()
+    else:
+        col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
