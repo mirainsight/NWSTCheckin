@@ -2224,7 +2224,7 @@ def render_ministry_dashboard(selected_ministry):
     with col_update_names:
         with st.popover("Update names", use_container_width=True):
             st.caption(
-                "If names or departments were fixed in Google Sheets but this page still looks wrong, use this."
+                "If newcomer's name is missing, or want to update names use this."
                 "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
             )
             if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_ministry_{selected_ministry}"):
@@ -3116,7 +3116,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     with col_update_names:
         with st.popover("Update names", use_container_width=True):
             st.caption(
-                "If names or groups were fixed in Google Sheets but this page still looks wrong, use this."
+                "If newcomer's name is missing, or want to update names use this."
                 "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
             )
             if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_congregation_{tab_name}_{'zone' if group_by_zone else 'cg'}"):
