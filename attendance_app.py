@@ -1362,6 +1362,25 @@ st.markdown(f"""
         transform: scale(1.02) !important;
     }}
 
+    /* Update names popover trigger only (secondary); inner primary confirm keeps normal primary styles */
+    [data-testid="stPopover"] button[kind="secondary"] {{
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
+        border: 2px solid {page_colors['primary']} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+    }}
+    [data-testid="stPopover"] button[kind="secondary"]:hover {{
+        background-color: {page_colors['light']} !important;
+        border-color: {page_colors['light']} !important;
+        color: {page_colors['background']} !important;
+    }}
+    [data-testid="stPopover"] button[kind="secondary"]:focus-visible {{
+        box-shadow: 0 0 0 2px {page_colors['background']}, 0 0 0 4px {page_colors['primary']} !important;
+    }}
+
     /* Primary buttons (Check In, Close) */
     .stButton > button[kind="primary"] {{
         background-color: {page_colors['primary']} !important;
@@ -2200,8 +2219,17 @@ def render_ministry_dashboard(selected_ministry):
     # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
-    # Refresh button with timestamp next to it
-    col_left, col_time, col_refresh, col_update_names, col_right = st.columns([1.4, 1.9, 0.95, 1.15, 1.2])
+    # Update names (left, same width feel as I'm New column) — then last refresh + Refresh
+    col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
+    with col_update_names:
+        with st.popover("Update names", use_container_width=True):
+            st.caption(
+                "If names or departments were fixed in Google Sheets but this page still looks wrong, use this."
+                "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
+            )
+            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_ministry_{selected_ministry}"):
+                perform_hard_sheet_resync("ministry")
+                st.rerun()
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
@@ -2228,16 +2256,6 @@ def render_ministry_dashboard(selected_ministry):
             get_today_attendance_data.clear()
             get_ministry_options_from_sheet.clear()
             st.rerun()
-    with col_update_names:
-        with st.popover("Update names", use_container_width=True):
-            st.caption(
-                "Use after you change names or departments in Google Sheets. "
-                "Clears cached roster and reloads from the sheet. Slower and uses more API quota than **Refresh** — "
-                "wait for it to finish; avoid tapping repeatedly."
-            )
-            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_ministry_{selected_ministry}"):
-                perform_hard_sheet_resync("ministry")
-                st.rerun()
 
     # Get today's attendance data for ministry tab
     with st.spinner("Loading dashboard data..."):
@@ -3093,8 +3111,17 @@ def render_dashboard(tab_name, group_by_zone=False):
     # Show last refresh time prominently with refresh button
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
-    # Refresh button with timestamp next to it
-    col_left, col_time, col_refresh, col_update_names, col_right = st.columns([1.4, 1.9, 0.95, 1.15, 1.2])
+    # Update names (left, same outline/heavy style family as I'm New — filled via CSS) — then last refresh + Refresh
+    col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
+    with col_update_names:
+        with st.popover("Update names", use_container_width=True):
+            st.caption(
+                "If names or groups were fixed in Google Sheets but this page still looks wrong, use this."
+                "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
+            )
+            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_congregation_{tab_name}_{'zone' if group_by_zone else 'cg'}"):
+                perform_hard_sheet_resync("congregation")
+                st.rerun()
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
@@ -3123,16 +3150,6 @@ def render_dashboard(tab_name, group_by_zone=False):
             if group_by_zone:
                 get_cell_to_zone_mapping.clear()
             st.rerun()
-    with col_update_names:
-        with st.popover("Update names", use_container_width=True):
-            st.caption(
-                "Use after you change names or cell groups in Google Sheets. "
-                "Clears cached roster and reloads from the sheet. Slower and uses more API quota than **Refresh** — "
-                "wait for it to finish; avoid tapping repeatedly."
-            )
-            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_congregation_{tab_name}_{'zone' if group_by_zone else 'cg'}"):
-                perform_hard_sheet_resync("congregation")
-                st.rerun()
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
