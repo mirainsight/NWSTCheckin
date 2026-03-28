@@ -1782,7 +1782,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Click <strong>I'm New</strong> twice or <strong>Newcomer Form Filled</strong></span>
+                    <span>Newcomer name not appearing? Click <strong>Update names</strong></span>
                 </div>
             </div>
             """
@@ -2110,7 +2110,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Click <strong>I'm New</strong> twice or <strong>Newcomer Form Filled</strong></span>
+                    <span>Newcomer name not appearing? Click <strong>Update names</strong></span>
                 </div>
             </div>
             """
