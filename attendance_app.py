@@ -110,6 +110,52 @@ def clear_redis_cache_for_today(tab_name=None):
     except Exception:
         pass
 
+
+def perform_hard_sheet_resync(mode="congregation"):
+    """Clear Redis + Streamlit caches so the app re-fetches from Google Sheets.
+
+    Use after edits to roster / Options / ministry tabs. Hits more API calls than Refresh;
+    avoid repeated clicks to reduce quota timeouts.
+
+    mode: \"congregation\" — main & leaders attendance, options, zones, newcomers.
+          \"ministry\" — ministry options & attendance, main options (roles), newcomers.
+    """
+    st.session_state.refresh_counter = st.session_state.get("refresh_counter", 0) + 1
+    st.session_state.last_refresh_time = get_now_myt()
+    get_newcomers_count.clear()
+    get_today_attendance_data.clear()
+    today_myt = get_today_myt_date()
+    redis_client = get_redis_client()
+
+    if mode == "ministry":
+        get_ministry_options_from_sheet.clear()
+        get_options_from_sheet.clear()
+        if redis_client:
+            try:
+                redis_client.delete(REDIS_OPTIONS_KEY)
+                for ministry in MINISTRY_LIST:
+                    redis_client.delete(f"attendance:ministry_options:{ministry}")
+                redis_client.delete("attendance:ministry_options:all")
+                redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
+                redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+            except Exception:
+                pass
+        return
+
+    # congregation (default)
+    get_options_from_sheet.clear()
+    get_cell_to_zone_mapping.clear()
+    if redis_client:
+        try:
+            redis_client.delete(REDIS_OPTIONS_KEY)
+            redis_client.delete(REDIS_ZONE_MAPPING_KEY)
+            redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
+            redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
+            redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+        except Exception:
+            pass
+
+
 def get_gsheet_client():
     """Connect to Google Sheets - works with both local files and Streamlit secrets"""
     try:
@@ -2155,7 +2201,7 @@ def render_ministry_dashboard(selected_ministry):
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
+    col_left, col_time, col_refresh, col_update_names, col_right = st.columns([1.4, 1.9, 0.95, 1.15, 1.2])
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
@@ -2182,6 +2228,16 @@ def render_ministry_dashboard(selected_ministry):
             get_today_attendance_data.clear()
             get_ministry_options_from_sheet.clear()
             st.rerun()
+    with col_update_names:
+        with st.popover("Update names", use_container_width=True):
+            st.caption(
+                "Use after you change names or departments in Google Sheets. "
+                "Clears cached roster and reloads from the sheet. Slower and uses more API quota than **Refresh** — "
+                "wait for it to finish; avoid tapping repeatedly."
+            )
+            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_ministry_{selected_ministry}"):
+                perform_hard_sheet_resync("ministry")
+                st.rerun()
 
     # Get today's attendance data for ministry tab
     with st.spinner("Loading dashboard data..."):
@@ -3038,7 +3094,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     # Refresh button with timestamp next to it
-    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
+    col_left, col_time, col_refresh, col_update_names, col_right = st.columns([1.4, 1.9, 0.95, 1.15, 1.2])
     with col_time:
         st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
@@ -3067,6 +3123,16 @@ def render_dashboard(tab_name, group_by_zone=False):
             if group_by_zone:
                 get_cell_to_zone_mapping.clear()
             st.rerun()
+    with col_update_names:
+        with st.popover("Update names", use_container_width=True):
+            st.caption(
+                "Use after you change names or cell groups in Google Sheets. "
+                "Clears cached roster and reloads from the sheet. Slower and uses more API quota than **Refresh** — "
+                "wait for it to finish; avoid tapping repeatedly."
+            )
+            if st.button("Reload roster from Google Sheet", type="primary", key=f"hard_sync_congregation_{tab_name}_{'zone' if group_by_zone else 'cg'}"):
+                perform_hard_sheet_resync("congregation")
+                st.rerun()
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
