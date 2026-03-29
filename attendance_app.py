@@ -5692,8 +5692,8 @@ def render_analytics_page(colors):
                 fig_zone_cells.update_traces(
                     line=dict(width=3.5),
                     marker=dict(
-                        size=13,
-                        line=dict(width=2.5, color="#FFFFFF"),
+                        size=5,
+                        line=dict(width=1, color="#FFFFFF"),
                         opacity=1,
                     ),
                     hovertemplate=(
