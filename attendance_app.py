@@ -5309,6 +5309,20 @@ def render_analytics_page(colors):
     # Calculate date columns (all columns that are dates)
     date_cols = [col for col in df.columns if col not in ['Name', 'Cell Group', 'Name - Cell Group', 'Zone']]
 
+    def _analytics_zone_for_cell(cg):
+        return cell_to_zone_map.get(cg.lower(), cg) if cg else "Unknown"
+
+    def _analytics_exclude_from_rate_charts(cg):
+        """Omit Archive zone and placeholder '*not sure yet…' cell groups from rate-by-cell charts."""
+        if not str(cg).strip():
+            return True
+        if str(_analytics_zone_for_cell(cg)).strip().lower() == "archive":
+            return True
+        n = str(cg).strip().lower().lstrip("*").strip()
+        if n == "not sure yet" or n.startswith("not sure yet"):
+            return True
+        return False
+
     # ===== OVERALL METRICS =====
     st.markdown(f"""
     <style>
@@ -5526,8 +5540,9 @@ def render_analytics_page(colors):
     st.markdown(
         f"<p style='color: {colors['text_muted']}; font-family: Inter, sans-serif; "
         f"font-size: 0.85rem; margin: 0 0 1rem 0;'>"
-        f"X-axis: each Saturday service. Y-axis: attendance for that week as "
-        f"(check-ins in that cell ÷ members in Options) × 100. One line per cell group.</p>",
+        f"<b style=\"color: {colors['primary']}\">How to read:</b> pick a <b>zone tab</b> — one big chart, no endless scroll. "
+        f"Saturdays run left → right; <b>Y</b> = that week&apos;s check-ins ÷ cell roster (Options), as %. "
+        f"Bright line colors so each cell group is obvious.</p>",
         unsafe_allow_html=True,
     )
 
@@ -5580,7 +5595,13 @@ def render_analytics_page(colors):
     if "clear_filter_counter" not in st.session_state:
         st.session_state.clear_filter_counter = 0
 
-    cell_groups = sorted([c for c in df["Cell Group"].unique() if c])
+    cell_groups = sorted(
+        [
+            c
+            for c in df["Cell Group"].unique()
+            if c and not _analytics_exclude_from_rate_charts(c)
+        ]
+    )
     filter_col1, filter_col2 = st.columns([3, 1])
     with filter_col1:
         selected_cell_groups = st.multiselect(
@@ -5600,10 +5621,6 @@ def render_analytics_page(colors):
     if selected_cell_groups:
         work_df = work_df[work_df["Cell Group"].isin(selected_cell_groups)]
 
-    zone_for_cell = lambda cg: (
-        cell_to_zone_map.get(cg.lower(), cg) if cg else "Unknown"
-    )
-
     roster_cells = set(members_per_cell.keys())
     analytics_cells = set(work_df["Cell Group"].dropna().unique())
     all_cells = roster_cells | analytics_cells
@@ -5612,10 +5629,11 @@ def render_analytics_page(colors):
 
     zone_to_cells = defaultdict(list)
     for cg in all_cells:
-        if not str(cg).strip():
+        if not str(cg).strip() or _analytics_exclude_from_rate_charts(cg):
             continue
-        zone_to_cells[zone_for_cell(cg)].append(cg)
+        zone_to_cells[_analytics_zone_for_cell(cg)].append(cg)
 
+    zone_plots = {}
     for zone in sorted(zone_to_cells.keys(), key=str.lower):
         cells = sorted(zone_to_cells[zone], key=str.lower)
         long_rows = []
@@ -5640,68 +5658,108 @@ def render_analytics_page(colors):
         plot_df = pd.DataFrame(long_rows)
         if plot_df.empty:
             continue
-
         ymax = max(105.0, plot_df["Attendance rate %"].max() * 1.08)
+        zone_plots[zone] = (plot_df, ymax)
 
-        fig_zone_cells = px.line(
-            plot_df,
-            x="Saturday",
-            y="Attendance rate %",
-            color="Cell Group",
-            markers=True,
-            title="",
-            height=420,
-        )
-        fig_zone_cells.update_traces(
-            line=dict(width=2),
-            marker=dict(size=8, line=dict(width=1, color=colors["card_bg"])),
-            hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>%{y:.1f}%<extra></extra>",
-        )
-        fig_zone_cells.update_layout(
-            plot_bgcolor=colors["background"],
-            paper_bgcolor=colors["card_bg"],
-            font=dict(family="Inter, sans-serif", size=12, color=colors["primary"]),
-            xaxis=dict(
-                title="Saturday service",
-                tickfont=dict(color=colors["text_muted"], family="Inter", size=10),
-                gridcolor=colors["text_muted"],
-                linecolor=colors["primary"],
-                linewidth=2,
-                tickangle=-35,
-                categoryorder="array",
-                categoryarray=date_cols,
-            ),
-            yaxis=dict(
-                title="Attendance rate %",
-                tickfont=dict(color=colors["text_muted"], family="Inter"),
-                gridcolor=colors["text_muted"],
-                linecolor=colors["primary"],
-                linewidth=2,
-                range=[0, ymax],
-            ),
-            legend=dict(
-                title="",
-                font=dict(color=colors["text_muted"], family="Inter", size=10),
-                bgcolor="rgba(0,0,0,0)",
-                borderwidth=0,
-            ),
-            hoverlabel=dict(bgcolor=colors["background"], font=dict(color=colors["primary"], family="Inter")),
-            margin=dict(l=50, r=30, t=50, b=120),
-            annotations=[
-                dict(
-                    text=f"<b>{zone}</b>",
-                    xref="paper",
-                    yref="paper",
-                    x=0,
-                    y=1.06,
-                    xanchor="left",
-                    yanchor="bottom",
-                    showarrow=False,
-                    font=dict(size=14, color=colors["primary"], family="Inter"),
+    # Saturated hues — read well on dark backgrounds; distinct for 4–8 cell lines
+    _rate_chart_colors = [
+        "#FF2D95",
+        "#00F0FF",
+        "#FFE14A",
+        "#B388FF",
+        "#00FF94",
+        "#FF6B2C",
+        "#5EB8FF",
+        "#FF4081",
+    ]
+
+    if zone_plots:
+        zone_tab_names = sorted(zone_plots.keys(), key=str.lower)
+        zone_tabs = st.tabs(zone_tab_names)
+        for i, zone in enumerate(zone_tab_names):
+            plot_df, ymax = zone_plots[zone]
+            with zone_tabs[i]:
+                fig_zone_cells = px.line(
+                    plot_df,
+                    x="Saturday",
+                    y="Attendance rate %",
+                    color="Cell Group",
+                    markers=True,
+                    title="",
+                    height=460,
+                    color_discrete_sequence=_rate_chart_colors,
                 )
-            ],
-        )
-        st.plotly_chart(fig_zone_cells, use_container_width=True)
+                fig_zone_cells.update_traces(
+                    line=dict(width=3.5),
+                    marker=dict(
+                        size=13,
+                        line=dict(width=2.5, color="#FFFFFF"),
+                        opacity=1,
+                    ),
+                    hovertemplate=(
+                        "<b>%{fullData.name}</b><br>"
+                        "%{x}<br>"
+                        "<b>%{y:.1f}%</b> of cell showed up<extra></extra>"
+                    ),
+                )
+                fig_zone_cells.add_hline(
+                    y=50,
+                    line_dash="dot",
+                    line_color=colors["text_muted"],
+                    line_width=1,
+                    opacity=0.55,
+                    annotation_text="50%",
+                    annotation_position="right",
+                    annotation_font_color=colors["text_muted"],
+                    annotation_font_size=11,
+                )
+                fig_zone_cells.update_layout(
+                    plot_bgcolor=colors["background"],
+                    paper_bgcolor=colors["card_bg"],
+                    font=dict(family="Inter, sans-serif", size=13, color=colors["primary"]),
+                    xaxis=dict(
+                        title=dict(text="Saturday service", font=dict(size=12)),
+                        tickfont=dict(color=colors["text"], family="Inter", size=11),
+                        gridcolor=colors["text_muted"],
+                        gridwidth=1,
+                        linecolor=colors["primary"],
+                        linewidth=2,
+                        tickangle=-30,
+                        categoryorder="array",
+                        categoryarray=date_cols,
+                    ),
+                    yaxis=dict(
+                        title=dict(text="How much of the cell came?", font=dict(size=12)),
+                        tickfont=dict(color=colors["text"], family="Inter", size=11),
+                        ticksuffix="%",
+                        gridcolor=colors["text_muted"],
+                        gridwidth=1,
+                        linecolor=colors["primary"],
+                        linewidth=2,
+                        range=[0, ymax],
+                    ),
+                    legend=dict(
+                        title=dict(text="Cell groups", font=dict(size=11, color=colors["primary"])),
+                        orientation="h",
+                        yanchor="top",
+                        y=-0.28,
+                        xanchor="center",
+                        x=0.5,
+                        font=dict(size=12, color=colors["text"], family="Inter"),
+                        bgcolor="rgba(0,0,0,0)",
+                        borderwidth=0,
+                    ),
+                    hoverlabel=dict(
+                        bgcolor=colors["card_bg"],
+                        font=dict(size=13, color=colors["primary"], family="Inter"),
+                        bordercolor=colors["primary"],
+                    ),
+                    margin=dict(l=55, r=50, t=28, b=150),
+                )
+                st.plotly_chart(fig_zone_cells, use_container_width=True)
+                st.caption(
+                    "Tip: follow **one color** across the weeks — rightmost dot is the latest Saturday."
+                )
 
     # ===== CELL GROUP BREAKDOWN =====
     st.markdown(f'<div class="analytics-section-title">Attendance by Cell Group</div>', unsafe_allow_html=True)
