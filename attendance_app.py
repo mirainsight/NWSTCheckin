@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from collections import defaultdict
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -5517,20 +5518,37 @@ def render_analytics_page(colors):
 
     st.plotly_chart(fig_zone, use_container_width=True)
 
-    # ===== ALL ATTENDEES =====
-    st.markdown(f'<div class="analytics-section-title">All Attendees</div>', unsafe_allow_html=True)
+    # ===== ATTENDANCE RATE BY CELL (ONE CHART PER ZONE) =====
+    st.markdown(
+        f'<div class="analytics-section-title">Attendance rate by cell</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<p style='color: {colors['text_muted']}; font-family: Inter, sans-serif; "
+        f"font-size: 0.85rem; margin: 0 0 1rem 0;'>"
+        f"X-axis: each Saturday service. Y-axis: attendance for that week as "
+        f"(check-ins in that cell ÷ members in Options) × 100. One line per cell group.</p>",
+        unsafe_allow_html=True,
+    )
 
-    # Calculate attendance rate for each person
-    df['Total Attended'] = df[date_cols].sum(axis=1)
-    df['Attendance Rate'] = (df['Total Attended'] / len(date_cols) * 100).round(1) if date_cols else 0
+    options_data, _, options_err = get_options_from_sheet(client, SHEET_ID)
+    members_per_cell = {}
+    if options_data:
+        for values in options_data.values():
+            for value in values:
+                m_name, m_cell = parse_name_cell_group(value)
+                if m_name and m_cell:
+                    members_per_cell.setdefault(m_cell, set()).add(m_name)
+    members_per_cell = {k: len(v) for k, v in members_per_cell.items()}
+    if not members_per_cell and options_err:
+        st.warning(
+            f"Could not load Options tab for roster sizes ({options_err}). "
+            f"Denominator falls back to unique names seen in analytics per cell."
+        )
 
-    # Get unique cell groups for filter
-    cell_groups = sorted(df['Cell Group'].unique())
-
-    # Cell group filter - multiselect dropdown
-    st.markdown(f"""
+    st.markdown(
+        f"""
     <style>
-        /* Style the multiselect to match the theme */
         [data-testid="stMultiSelect"] {{
             font-family: 'Inter', sans-serif !important;
         }}
@@ -5546,7 +5564,6 @@ def render_analytics_page(colors):
         [data-testid="stMultiSelect"] svg {{
             fill: {colors['primary']} !important;
         }}
-        /* Style selected tags */
         [data-testid="stMultiSelect"] [data-baseweb="tag"] {{
             background: {colors['primary']} !important;
             border-radius: 0px !important;
@@ -5556,18 +5573,15 @@ def render_analytics_page(colors):
             font-weight: 600 !important;
         }}
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
-    # Initialize clear counter for forcing re-render
-    if 'clear_filter_counter' not in st.session_state:
+    if "clear_filter_counter" not in st.session_state:
         st.session_state.clear_filter_counter = 0
 
-    # Get all unique names for the name search
-    all_names = sorted(df['Name'].unique().tolist())
-
-    # Create filter row with multiselect and clear button
+    cell_groups = sorted([c for c in df["Cell Group"].unique() if c])
     filter_col1, filter_col2 = st.columns([3, 1])
-
     with filter_col1:
         selected_cell_groups = st.multiselect(
             "Filter by Cell Group...",
@@ -5575,68 +5589,119 @@ def render_analytics_page(colors):
             default=[],
             key=f"analytics_cell_multiselect_{st.session_state.clear_filter_counter}",
             placeholder="Select cell groups...",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
-
     with filter_col2:
         if st.button("Clear All", type="secondary", use_container_width=True, key="clear_cell_filter"):
             st.session_state.clear_filter_counter += 1
             st.rerun()
 
-    # Add spacing between filters
-    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-
-    # Name search multiselect
-    name_filter_col1, name_filter_col2 = st.columns([3, 1])
-
-    with name_filter_col1:
-        selected_names = st.multiselect(
-            "Search by Name...",
-            options=all_names,
-            default=[],
-            key=f"analytics_name_multiselect_{st.session_state.clear_filter_counter}",
-            placeholder="Search and select names...",
-            label_visibility="collapsed"
-        )
-
-    with name_filter_col2:
-        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)  # Spacer to align with dropdown
-
-    # Filter dataframe based on selections
-    filtered_df = df.copy()
-
+    work_df = df.copy()
     if selected_cell_groups:
-        filtered_df = filtered_df[filtered_df['Cell Group'].isin(selected_cell_groups)]
+        work_df = work_df[work_df["Cell Group"].isin(selected_cell_groups)]
 
-    if selected_names:
-        filtered_df = filtered_df[filtered_df['Name'].isin(selected_names)]
-
-    # Sort by Attendance Rate descending
-    all_attendees = filtered_df.sort_values('Attendance Rate', ascending=False)[['Name', 'Cell Group', 'Zone', 'Total Attended', 'Attendance Rate']]
-
-    # Show count with filter info
-    filter_parts = []
-    if selected_cell_groups:
-        filter_parts.append(f"{len(selected_cell_groups)} cell group(s)")
-    if selected_names:
-        filter_parts.append(f"{len(selected_names)} name(s)")
-    filter_text = f" from {' and '.join(filter_parts)}" if filter_parts else ""
-    st.markdown(f"<p style='color: {colors['text_muted']}; font-family: Inter, sans-serif; font-size: 0.9rem; margin: 1rem 0 0.5rem 0;'>Showing <b style=\"color: {colors['primary']}\">{len(all_attendees)}</b> attendees{filter_text}</p>", unsafe_allow_html=True)
-
-    # Display as styled dataframe
-    st.dataframe(
-        all_attendees,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            'Name': st.column_config.TextColumn('Name', width='medium'),
-            'Cell Group': st.column_config.TextColumn('Cell Group', width='medium'),
-            'Zone': st.column_config.TextColumn('Zone', width='small'),
-            'Total Attended': st.column_config.NumberColumn('Attended', format='%d', width='small'),
-            'Attendance Rate': st.column_config.NumberColumn('Rate %', format='%.1f%%', width='small')
-        },
-        height=600
+    zone_for_cell = lambda cg: (
+        cell_to_zone_map.get(cg.lower(), cg) if cg else "Unknown"
     )
+
+    roster_cells = set(members_per_cell.keys())
+    analytics_cells = set(work_df["Cell Group"].dropna().unique())
+    all_cells = roster_cells | analytics_cells
+    if selected_cell_groups:
+        all_cells = set(selected_cell_groups) & all_cells
+
+    zone_to_cells = defaultdict(list)
+    for cg in all_cells:
+        if not str(cg).strip():
+            continue
+        zone_to_cells[zone_for_cell(cg)].append(cg)
+
+    for zone in sorted(zone_to_cells.keys(), key=str.lower):
+        cells = sorted(zone_to_cells[zone], key=str.lower)
+        long_rows = []
+        for cg in cells:
+            sub = work_df[work_df["Cell Group"] == cg]
+            mc = members_per_cell.get(cg, 0)
+            if mc == 0 and not sub.empty:
+                mc = sub["Name"].nunique()
+            if mc == 0:
+                continue
+            for dc in date_cols:
+                attended = int(sub[dc].sum()) if dc in sub.columns else 0
+                pct = 100.0 * attended / mc
+                long_rows.append(
+                    {
+                        "Saturday": dc,
+                        "Cell Group": cg,
+                        "Attendance rate %": round(pct, 1),
+                    }
+                )
+
+        plot_df = pd.DataFrame(long_rows)
+        if plot_df.empty:
+            continue
+
+        ymax = max(105.0, plot_df["Attendance rate %"].max() * 1.08)
+
+        fig_zone_cells = px.line(
+            plot_df,
+            x="Saturday",
+            y="Attendance rate %",
+            color="Cell Group",
+            markers=True,
+            title="",
+            height=420,
+        )
+        fig_zone_cells.update_traces(
+            line=dict(width=2),
+            marker=dict(size=8, line=dict(width=1, color=colors["card_bg"])),
+            hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>%{y:.1f}%<extra></extra>",
+        )
+        fig_zone_cells.update_layout(
+            plot_bgcolor=colors["background"],
+            paper_bgcolor=colors["card_bg"],
+            font=dict(family="Inter, sans-serif", size=12, color=colors["primary"]),
+            xaxis=dict(
+                title="Saturday service",
+                tickfont=dict(color=colors["text_muted"], family="Inter", size=10),
+                gridcolor=colors["text_muted"],
+                linecolor=colors["primary"],
+                linewidth=2,
+                tickangle=-35,
+                categoryorder="array",
+                categoryarray=date_cols,
+            ),
+            yaxis=dict(
+                title="Attendance rate %",
+                tickfont=dict(color=colors["text_muted"], family="Inter"),
+                gridcolor=colors["text_muted"],
+                linecolor=colors["primary"],
+                linewidth=2,
+                range=[0, ymax],
+            ),
+            legend=dict(
+                title="",
+                font=dict(color=colors["text_muted"], family="Inter", size=10),
+                bgcolor="rgba(0,0,0,0)",
+                borderwidth=0,
+            ),
+            hoverlabel=dict(bgcolor=colors["background"], font=dict(color=colors["primary"], family="Inter")),
+            margin=dict(l=50, r=30, t=50, b=120),
+            annotations=[
+                dict(
+                    text=f"<b>{zone}</b>",
+                    xref="paper",
+                    yref="paper",
+                    x=0,
+                    y=1.06,
+                    xanchor="left",
+                    yanchor="bottom",
+                    showarrow=False,
+                    font=dict(size=14, color=colors["primary"], family="Inter"),
+                )
+            ],
+        )
+        st.plotly_chart(fig_zone_cells, use_container_width=True)
 
     # ===== CELL GROUP BREAKDOWN =====
     st.markdown(f'<div class="analytics-section-title">Attendance by Cell Group</div>', unsafe_allow_html=True)
