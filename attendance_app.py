@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import importlib.util
 from pathlib import Path
 from collections import defaultdict
@@ -114,8 +115,12 @@ def _checkin_indeterminate_bar_html(primary: str, keyframe_name: str) -> str:
     """
 
 
-def _loading_bar_with_progress(page_colors_dict, caption: str, *, keyframe_name: str) -> tuple:
-    """Indeterminate strip + Streamlit progress. Returns (container_empty, progress_bar)."""
+# Minimum time the loading bar stays visible so Streamlit can paint it (fast Redis hits were invisible).
+_CHECKIN_LOADING_MIN_SEC = 0.22
+
+
+def _loading_bar_with_progress(page_colors_dict, caption: str, *, keyframe_name: str):
+    """Indeterminate strip + Streamlit progress. Returns (wrap, bar, t0) for _loading_finish."""
     primary = page_colors_dict.get("primary", "#22c55e")
     wrap = st.empty()
     with wrap.container():
@@ -128,7 +133,19 @@ def _loading_bar_with_progress(page_colors_dict, caption: str, *, keyframe_name:
         except TypeError:
             st.caption(caption)
             bar = st.progress(0)
-    return wrap, bar
+    t0 = time.monotonic()
+    return wrap, bar, t0
+
+
+def _loading_finish(wrap, bar, t0):
+    try:
+        bar.progress(1.0)
+    except Exception:
+        pass
+    elapsed = time.monotonic() - t0
+    if elapsed < _CHECKIN_LOADING_MIN_SEC:
+        time.sleep(_CHECKIN_LOADING_MIN_SEC - elapsed)
+    wrap.empty()
 
 
 def get_today_myt_date():
@@ -1848,30 +1865,6 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         st.info(f"↩️ {st.session_state['show_undo_success']}")
         st.session_state['show_undo_success'] = None
 
-    show_success = st.session_state.get('show_checkin_success')
-    if show_success and show_success.get('form_key') == form_key:
-        name_only = show_success.get('name', '').split(" - ")[0] if show_success.get('name') else ''
-        st.success(f"✅ {name_only} checked in!")
-        st.session_state['show_checkin_success'] = None
-
-    _fetch_wrap, _fetch_bar = _loading_bar_with_progress(
-        page_colors,
-        "Loading today's attendance…",
-        keyframe_name="nwst-roster-load",
-    )
-    try:
-        checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
-        try:
-            _fetch_bar.progress(1.0)
-        except Exception:
-            pass
-    finally:
-        _fetch_wrap.empty()
-
-    # Keep all options but track which are already checked in
-    available_options = [opt for opt in all_option_values if opt not in checked_in_today]
-    checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
-
     # Wrap form section with GIF background
     if background_gif and gif_src:
         st.markdown(f"""
@@ -1916,9 +1909,29 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        def _flush_checkin_success_here():
+            succ = st.session_state.get('show_checkin_success')
+            if succ and succ.get('form_key') == form_key:
+                name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
+                st.success(f"✅ {name_only} checked in!")
+                st.session_state['show_checkin_success'] = None
+
         selectbox_key = f"{form_key}_selectbox"
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
             st.session_state[selectbox_key] = ""
+
+        _fetch_wrap, _fetch_bar, _fetch_t0 = _loading_bar_with_progress(
+            page_colors,
+            "Loading today's attendance…",
+            keyframe_name="nwst-roster-load",
+        )
+        try:
+            checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
+        finally:
+            _loading_finish(_fetch_wrap, _fetch_bar, _fetch_t0)
+
+        available_options = [opt for opt in all_option_values if opt not in checked_in_today]
+        checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
 
         # Show instruction text
         if background_gif:
@@ -1944,6 +1957,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
 
         # Check if there are any available options
         if not available_options:
+            _flush_checkin_success_here()
             st.warning("All attendees have already checked in for today!")
         else:
             # Create formatted options: available ones normal, checked-in ones with tick prefix
@@ -2024,6 +2038,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 help="Select a name to instantly check in. Names with ✓ are already checked in today."
             )
 
+            _flush_checkin_success_here()
+
             # Add JavaScript to gray out checked-in options in the dropdown
             components.html(f"""
             <script>
@@ -2070,19 +2086,15 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         "option_type": option_type
                     }
 
-                    _save_wrap, _save_bar = _loading_bar_with_progress(
+                    _save_wrap, _save_bar, _save_t0 = _loading_bar_with_progress(
                         page_colors,
                         "Checking you in…",
                         keyframe_name="nwst-checkin-save",
                     )
                     try:
                         success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
-                        try:
-                            _save_bar.progress(1.0)
-                        except Exception:
-                            pass
                     finally:
-                        _save_wrap.empty()
+                        _loading_finish(_save_wrap, _save_bar, _save_t0)
 
                     if success:
                         # Store last check-in for potential undo
@@ -2180,29 +2192,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         st.info(f"↩️ {st.session_state['show_undo_success']}")
         st.session_state['show_undo_success'] = None
 
-    show_success = st.session_state.get('show_checkin_success')
-    if show_success and show_success.get('form_key') == form_key:
-        name_only = show_success.get('name', '').split(" - ")[0] if show_success.get('name') else ''
-        st.success(f"✅ {name_only} checked in!")
-        st.session_state['show_checkin_success'] = None
-
-    _fetch_wrap_m, _fetch_bar_m = _loading_bar_with_progress(
-        page_colors,
-        "Loading today's attendance…",
-        keyframe_name="nwst-roster-load-m",
-    )
-    try:
-        checked_in_today = get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME)
-        try:
-            _fetch_bar_m.progress(1.0)
-        except Exception:
-            pass
-    finally:
-        _fetch_wrap_m.empty()
-
-    # Keep all options but track which are already checked in
-    available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
-
     # Wrap form section with GIF background
     if background_gif and gif_src:
         st.markdown(f"""
@@ -2247,9 +2236,28 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        def _flush_ministry_checkin_success_here():
+            succ = st.session_state.get('show_checkin_success')
+            if succ and succ.get('form_key') == form_key:
+                name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
+                st.success(f"✅ {name_only} checked in!")
+                st.session_state['show_checkin_success'] = None
+
         selectbox_key = f"{form_key}_selectbox"
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
             st.session_state[selectbox_key] = ""
+
+        _fetch_wrap_m, _fetch_bar_m, _fetch_t0_m = _loading_bar_with_progress(
+            page_colors,
+            "Loading today's attendance…",
+            keyframe_name="nwst-roster-load-m",
+        )
+        try:
+            checked_in_today = get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME)
+        finally:
+            _loading_finish(_fetch_wrap_m, _fetch_bar_m, _fetch_t0_m)
+
+        available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
 
         # Show instruction text
         if background_gif:
@@ -2275,6 +2283,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
         # Check if there are any available options
         if not available_options:
+            _flush_ministry_checkin_success_here()
             st.warning(f"All {selected_ministry} ministry members have already checked in for today!")
         else:
             # Create formatted options: available ones normal, checked-in ones with tick prefix
@@ -2353,6 +2362,8 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                 help="Select a name to instantly check in. Names with ✓ are already checked in today."
             )
 
+            _flush_ministry_checkin_success_here()
+
             # Add JavaScript to gray out checked-in options
             components.html(f"""
             <script>
@@ -2395,19 +2406,15 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         "option_type": "Name"
                     }
 
-                    _save_wrap_m, _save_bar_m = _loading_bar_with_progress(
+                    _save_wrap_m, _save_bar_m, _save_t0_m = _loading_bar_with_progress(
                         page_colors,
                         "Checking you in…",
                         keyframe_name="nwst-checkin-save-m",
                     )
                     try:
                         success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
-                        try:
-                            _save_bar_m.progress(1.0)
-                        except Exception:
-                            pass
                     finally:
-                        _save_wrap_m.empty()
+                        _loading_finish(_save_wrap_m, _save_bar_m, _save_t0_m)
 
                     if success:
                         # Store last check-in for potential undo
