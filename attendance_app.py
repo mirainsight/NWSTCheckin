@@ -671,21 +671,28 @@ def _theme_overrides_from_redis():
     return {}
 
 
-def resolve_theme_override_row_for_today():
-    """Today's row from JSON + Theme Override (Redis snapshot): optional primary hex and/or banner."""
-    today = get_today_myt_date()
+def resolve_theme_override_row_for_today(from_sheet=None):
+    """Latest-dated row from the Theme Override Upstash snapshot (+ JSON merge for that date).
+
+    If the snapshot is empty, returns ``{}`` so callers use ``banner.gif`` and generated colors.
+    """
     from_file = _accent_overrides_from_project_config()
-    from_sheet = _theme_overrides_from_redis()
+    if from_sheet is None:
+        from_sheet = _theme_overrides_from_redis()
+    if not from_sheet:
+        return {}
     if _nwst_accent_cfg_mod:
-        merged = _nwst_accent_cfg_mod.merge_theme_override_maps(from_file, from_sheet)
+        row = _nwst_accent_cfg_mod.resolve_latest_cached_theme_row(from_file, from_sheet)
     else:
+        latest = max(from_sheet.keys())
         keys = set(from_file) | set(from_sheet)
         merged = {
             k: {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
             for k in keys
             if {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
         }
-    row = dict(merged.get(today) or {})
+        row = dict(merged.get(latest) or {})
+    today = get_today_myt_date()
     if not row.get("primary"):
         env_d = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_DATE", "").strip()
         env_h = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_HEX", "").strip()
@@ -704,11 +711,12 @@ def resolve_theme_override_row_for_today():
 
 
 def generate_daily_colors():
-    """Weekly Saturday-locked palette (MYT), unless today has a theme override row."""
+    """Weekly Saturday-locked palette (MYT), unless Theme Override is cached in Upstash (latest sheet row)."""
     today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
     days_since_saturday = (today.weekday() - 5) % 7
     last_saturday = today - timedelta(days=days_since_saturday)
-    row = resolve_theme_override_row_for_today()
+    from_sheet = _theme_overrides_from_redis()
+    row = resolve_theme_override_row_for_today(from_sheet=from_sheet)
     hex_override = row.get("primary")
     base = None
     if hex_override:
@@ -723,6 +731,13 @@ def generate_daily_colors():
             _accent_overrides_from_project_config()
         if _nwst_accent_cfg_mod:
             safe = _nwst_accent_cfg_mod.sanitize_banner_filename(b_raw)
+            if safe:
+                base = {**base, "banner": safe}
+    if not from_sheet:
+        if _nwst_accent_cfg_mod is None:
+            _accent_overrides_from_project_config()
+        if _nwst_accent_cfg_mod:
+            safe = _nwst_accent_cfg_mod.sanitize_banner_filename("banner.gif")
             if safe:
                 base = {**base, "banner": safe}
     return base
