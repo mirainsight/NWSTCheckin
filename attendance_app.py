@@ -3,6 +3,7 @@ import re
 import json
 import importlib.util
 from pathlib import Path
+from urllib.parse import quote
 from collections import defaultdict
 import streamlit as st
 import streamlit.components.v1 as components
@@ -1578,11 +1579,48 @@ st.markdown(f"""
 
 # GIF / banner (Theme Override filename in this folder, then BANNER_GIF_URL, then banner.gif)
 # Inlining multi‑MB GIFs as data URLs in HTML repeats ~50MB+ per rerun and breaks mobile + WebSockets.
+# Large banners stay inside the bordered frame via <img src="/app/static/..."> (see static/ + config.toml).
 MAX_BANNER_EMBED_BYTES = 512 * 1024
 
 _app_dir = os.path.dirname(__file__)
+_static_dir = os.path.join(_app_dir, "static")
 gif_url = os.getenv("BANNER_GIF_URL", "").strip()
 theme_banner_fn = daily_colors.get("banner")
+
+
+def _resolve_banner_file(rel_or_name: str | None) -> str | None:
+    """First existing path: app_root/rel_or_name, app_root/basename, static/basename."""
+    if not rel_or_name:
+        return None
+    bn = os.path.basename(rel_or_name)
+    if not bn:
+        return None
+    for candidate in (
+        os.path.join(_app_dir, rel_or_name),
+        os.path.join(_app_dir, bn),
+        os.path.join(_static_dir, bn),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _http_src_for_local_banner(path: str) -> str | None:
+    """Return /app/static/<file> if this file lives under static/ or static/<basename> exists."""
+    bn = os.path.basename(path)
+    if not bn:
+        return None
+    try:
+        real_static = os.path.realpath(_static_dir)
+        real_parent = os.path.realpath(os.path.dirname(path))
+    except OSError:
+        return None
+    static_copy = os.path.join(_static_dir, bn)
+    if real_parent == real_static:
+        return f"/app/static/{quote(bn)}"
+    if os.path.isfile(static_copy):
+        return f"/app/static/{quote(bn)}"
+    return None
 
 
 def _banner_mime_for_path(path: str) -> str:
@@ -1600,14 +1638,19 @@ background_gif = ""
 gif_src = ""
 banner_st_image_path = None
 if theme_banner_fn:
-    _p_theme = os.path.join(_app_dir, theme_banner_fn)
-    if os.path.isfile(_p_theme):
+    _p_theme = _resolve_banner_file(theme_banner_fn)
+    if _p_theme:
         try:
             _theme_sz = os.path.getsize(_p_theme)
         except OSError:
             _theme_sz = 0
         if _theme_sz > MAX_BANNER_EMBED_BYTES:
-            banner_st_image_path = _p_theme
+            _url = _http_src_for_local_banner(_p_theme)
+            if _url:
+                gif_src = _url
+                background_gif = f"url('{_url}')"
+            else:
+                banner_st_image_path = _p_theme
         else:
             import base64
 
@@ -1620,14 +1663,19 @@ if not gif_src and not banner_st_image_path and gif_url:
     background_gif = f"url('{gif_url}')"
     gif_src = gif_url
 if not gif_src and not banner_st_image_path:
-    _default = os.path.join(_app_dir, "banner.gif")
-    if os.path.isfile(_default):
+    _default = _resolve_banner_file("banner.gif")
+    if _default:
         try:
             _def_sz = os.path.getsize(_default)
         except OSError:
             _def_sz = 0
         if _def_sz > MAX_BANNER_EMBED_BYTES:
-            banner_st_image_path = _default
+            _url = _http_src_for_local_banner(_default)
+            if _url:
+                gif_src = _url
+                background_gif = f"url('{_url}')"
+            else:
+                banner_st_image_path = _default
         else:
             import base64
 
@@ -1701,7 +1749,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     available_options = [opt for opt in all_option_values if opt not in checked_in_today]
     checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
 
-    # Wrap form section with GIF background (large local files use st.image — not data URLs)
+    # Wrap form section with GIF background (<img> URL, small data URL, or /app/static/… for large files)
     if background_gif and gif_src:
         st.markdown(f"""
         <div style="
@@ -1742,39 +1790,15 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
     elif banner_st_image_path:
-        st.markdown(f"""
-        <div style="
-            position: relative;
-            padding: 2rem;
-            margin: 0;
-            border-radius: 8px;
-            border: 2px solid {page_colors['primary']};
-            min-height: 250px;
-            overflow: hidden;
-            background: {page_colors['card_bg']};
-        ">
-            <div style="
-                position: absolute;
-                top: 10px;
-                left: 10px;
-                background: {page_colors['primary']};
-                color: {page_colors['background']};
-                padding: 0.4rem 1rem;
-                font-family: 'Inter', sans-serif;
-                font-weight: 800;
-                font-size: 0.85rem;
-                letter-spacing: 1px;
-                text-transform: uppercase;
-                z-index: 2;
-            ">{page_label}</div>
-            <div style="position: relative; z-index: 1;">
-        """, unsafe_allow_html=True)
+        st.warning(
+            f"Banner **{os.path.basename(banner_st_image_path)}** is large. Put a copy in the **static/** folder "
+            f"(same filename) so it loads inside the bordered banner frame via `/app/static/…`."
+        )
+        st.image(banner_st_image_path, use_container_width=True)
 
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if banner_st_image_path:
-            st.image(banner_st_image_path, use_container_width=True)
         # Show instruction text
         if background_gif and gif_src:
             st_embed_html("""
@@ -2019,9 +2043,9 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                             st.error(undo_message)
 
     # Close background GIF container if it was opened
-    if (background_gif and gif_src) or banner_st_image_path:
+    if background_gif and gif_src:
         st.markdown("</div></div>", unsafe_allow_html=True)
-    else:
+    elif not banner_st_image_path:
         # Show placeholder if no GIF
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: {page_colors['card_bg']}; border: 2px dashed {page_colors['primary']}; border-radius: 8px;">
@@ -2064,7 +2088,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
     # Keep all options but track which are already checked in
     available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
 
-    # Wrap form section with GIF background (large local files use st.image — not data URLs)
+    # Wrap form section with GIF background (<img> URL, small data URL, or /app/static/… for large files)
     if background_gif and gif_src:
         st.markdown(f"""
         <div style="
@@ -2105,39 +2129,15 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
     elif banner_st_image_path:
-        st.markdown(f"""
-        <div style="
-            position: relative;
-            padding: 2rem;
-            margin: 0;
-            border-radius: 8px;
-            border: 2px solid {page_colors['primary']};
-            min-height: 250px;
-            overflow: hidden;
-            background: {page_colors['card_bg']};
-        ">
-            <div style="
-                position: absolute;
-                top: 10px;
-                left: 10px;
-                background: {page_colors['primary']};
-                color: {page_colors['background']};
-                padding: 0.4rem 1rem;
-                font-family: 'Inter', sans-serif;
-                font-weight: 800;
-                font-size: 0.85rem;
-                letter-spacing: 1px;
-                text-transform: uppercase;
-                z-index: 2;
-            ">{page_label}</div>
-            <div style="position: relative; z-index: 1;">
-        """, unsafe_allow_html=True)
+        st.warning(
+            f"Banner **{os.path.basename(banner_st_image_path)}** is large. Put a copy in the **static/** folder "
+            f"(same filename) so it loads inside the bordered banner frame via `/app/static/…`."
+        )
+        st.image(banner_st_image_path, use_container_width=True)
 
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if banner_st_image_path:
-            st.image(banner_st_image_path, use_container_width=True)
         # Show instruction text
         if background_gif and gif_src:
             st_embed_html("""
@@ -2373,9 +2373,9 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                             st.error(undo_message)
 
     # Close background GIF container if it was opened
-    if (background_gif and gif_src) or banner_st_image_path:
+    if background_gif and gif_src:
         st.markdown("</div></div>", unsafe_allow_html=True)
-    else:
+    elif not banner_st_image_path:
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 1rem; padding: 1rem; background: {page_colors['card_bg']}; border: 2px dashed {page_colors['primary']}; border-radius: 8px;">
             <p style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 600; margin: 0;">
