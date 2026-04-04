@@ -686,14 +686,22 @@ def run_streamlit_app() -> None:
         f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;700&family=Outfit:wght@400;500;600&display=swap');
+
+    /* Baseline: kill Streamlit theme primary on this app (matches attendance_app NWST) */
     .stApp {{
         background-color: {pc["background"]} !important;
+        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        --primary-color: {pc["primary"]} !important;
     }}
-    html, body, [data-testid="stAppViewContainer"] {{
+    html, body {{
         font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
     }}
-    h1 {{
+
+    .stApp h1, .stApp h2, .stApp h3,
+    .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown li {{
         font-family: 'Outfit', sans-serif !important;
+    }}
+    .stApp h1 {{
         color: {pc["text"]} !important;
         text-align: center !important;
         font-weight: 600 !important;
@@ -701,7 +709,7 @@ def run_streamlit_app() -> None:
         letter-spacing: 0.02em !important;
         margin-bottom: 0.5rem !important;
     }}
-    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div, .stMarkdown li {{
+    .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown div, .stApp .stMarkdown li {{
         color: {pc["text"]} !important;
     }}
     .sync-sub {{
@@ -723,6 +731,7 @@ def run_streamlit_app() -> None:
         margin-bottom: 0.35rem !important;
         font-family: 'Outfit', sans-serif !important;
     }}
+
     [data-testid="stVerticalBlock"] {{
         gap: 0.35rem !important;
     }}
@@ -730,23 +739,14 @@ def run_streamlit_app() -> None:
         margin-top: 0rem !important;
         margin-bottom: 0rem !important;
     }}
-    /* Match attendance_app NWST buttons (Inter, square corners, daily accent) */
-    div[data-testid="stMainBlockContainer"] .stButton > button {{
-        background-color: transparent !important;
-        color: {pc["primary"]} !important;
-        border: 2px solid {pc["primary"]} !important;
-        border-radius: 0px !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-        transition: all 0.2s ease !important;
-    }}
-    div[data-testid="stMainBlockContainer"] .stButton > button:hover {{
-        background-color: {pc["primary"]} !important;
-        color: {pc["background"]} !important;
-        transform: scale(1.02) !important;
-    }}
-    div[data-testid="stMainBlockContainer"] .stButton > button[kind="primary"] {{
+
+    /* Primary CTA: wrapper class st-key-flush_run; also baseButton-primary (Streamlit ≥1.32). */
+    .stApp div[class*="st-key-flush_run"] button,
+    .stApp .st-key-flush_run button,
+    .stApp .st-key-flush_run [data-testid="baseButton-primary"],
+    .stApp button[data-testid="baseButton-primary"],
+    .stApp .stButton > button[kind="primary"],
+    .stApp .stButton > button[data-testid="baseButton-primary"] {{
         background-color: {pc["primary"]} !important;
         color: {pc["background"]} !important;
         border: 2px solid {pc["primary"]} !important;
@@ -758,21 +758,36 @@ def run_streamlit_app() -> None:
         min-height: 3.35rem !important;
         padding-top: 0.85rem !important;
         padding-bottom: 0.85rem !important;
+        box-shadow: none !important;
+        transition: all 0.2s ease !important;
     }}
-    div[data-testid="stMainBlockContainer"] .stButton > button[kind="primary"]:hover {{
+    .stApp div[class*="st-key-flush_run"] button:hover,
+    .stApp .st-key-flush_run button:hover,
+    .stApp .st-key-flush_run [data-testid="baseButton-primary"]:hover,
+    .stApp button[data-testid="baseButton-primary"]:hover,
+    .stApp .stButton > button[kind="primary"]:hover,
+    .stApp .stButton > button[data-testid="baseButton-primary"]:hover {{
         background-color: {pc["light"]} !important;
         border-color: {pc["light"]} !important;
         color: {pc["background"]} !important;
+        transform: scale(1.02) !important;
     }}
-    .stProgress > div > div > div > div {{
+
+    .stProgress [role="progressbar"] {{
+        border-radius: 0px !important;
+    }}
+    .stProgress > div > div > div > div,
+    .stProgress div[aria-valuemax="1"] {{
         border-radius: 0px !important;
         background-color: {pc["primary"]} !important;
     }}
-    [data-testid="stCode"] {{
+
+    [data-testid="stCode"],
+    [data-testid="stCodeBlock"] {{
         border: 2px solid {pc["primary"]} !important;
         border-radius: 0px !important;
     }}
-    pre code {{
+    .stApp pre, .stApp code {{
         font-size: 0.78rem !important;
     }}
 </style>
