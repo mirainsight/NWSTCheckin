@@ -4,9 +4,10 @@
    Refreshed from **either** app: CHECK IN **Update names** (`attendance_app.perform_hard_sheet_resync`)
    **or** NWST Health **Sync from Google Sheets**. Same key; not pulled on every page view.
 
-2) Sibling file nwst_accent_overrides.json — re-read each resolve (Rerun picks up edits).
+2) Sibling file nwst_accent_overrides.json — merged only for the **latest cached sheet date** (not per-today).
 
-Redis Theme rows override JSON for the same date (per field). Env/secrets still apply for hex after both.
+Apps use the row with the **maximum date** in the Upstash snapshot; if the snapshot is empty, they use
+``banner.gif`` and generated colors only (no JSON/env theme for that path).
 
 Banner values must be filenames only (e.g. banner.gif); place files in the app root folder
 ( CHECK IN / or NWST HEALTH / next to the Streamlit app)."""
@@ -60,6 +61,21 @@ def merge_theme_override_maps(
         if inner:
             out[k] = inner
     return out
+
+
+def resolve_latest_cached_theme_row(
+    file_map: dict[str, dict[str, str]],
+    sheet_map: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Row for the latest date in the Upstash Theme Override snapshot, merged with JSON for that date.
+
+    If ``sheet_map`` is empty (spreadsheet tab not cached), returns ``{}``.
+    """
+    if not sheet_map:
+        return {}
+    latest = max(sheet_map.keys())
+    merged = merge_theme_override_maps(file_map, sheet_map)
+    return dict(merged.get(latest) or {})
 
 
 def _coerce_date_entry(value: object) -> dict[str, str]:
