@@ -1,6 +1,8 @@
 import os
 import re
 import json
+import importlib.util
+from pathlib import Path
 from collections import defaultdict
 import streamlit as st
 import streamlit.components.v1 as components
@@ -41,6 +43,10 @@ MINISTRY_OPTIONS_TAB_NAME = "Options - Ministry"  # Tab name for ministry option
 MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"  # Tab name for ministry check-in
 FORM_RESPONSES_TAB_NAME = "Form Responses 1"  # Tab name for newcomer form responses (P=Area of residence, Q=Status)
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
+
+# One-off accent: optional tab **Theme Override** on this spreadsheet (ATTENDANCE_SHEET_ID),
+# plus ../nwst_accent_overrides.json — see PROJECTS/nwst_accent_gsheet.py.
+# Optional: ATTENDANCE_ACCENT_OVERRIDE_DATE + ATTENDANCE_ACCENT_OVERRIDE_HEX env or Streamlit secrets.
 
 # Redis cache configuration
 REDIS_CACHE_TTL = 86400  # 24 hours in seconds (cache resets daily via key)
@@ -557,15 +563,146 @@ def generate_colors_for_date(date_str):
         'accent': primary_color
     }
 
+
+def _normalize_primary_hex(hex_str):
+    h = (hex_str or "").strip()
+    if not h:
+        return None
+    if not h.startswith("#"):
+        h = "#" + h
+    if len(h) != 7:
+        return None
+    try:
+        int(h[1:], 16)
+    except ValueError:
+        return None
+    return h.lower()
+
+
+def theme_from_primary_hex(primary_hex):
+    """Build the same daily_colors shape as generate_colors_for_date from a fixed primary."""
+    p = _normalize_primary_hex(primary_hex)
+    if not p:
+        raise ValueError("Invalid primary hex")
+    r = int(p[1:3], 16) / 255.0
+    g = int(p[3:5], 16) / 255.0
+    b = int(p[5:7], 16) / 255.0
+    h, light, sat = colorsys.rgb_to_hls(r, g, b)
+    rgb_light = colorsys.hls_to_rgb(h, min(light + 0.2, 0.9), sat)
+    light_color = "#{:02x}{:02x}{:02x}".format(
+        int(rgb_light[0] * 255),
+        int(rgb_light[1] * 255),
+        int(rgb_light[2] * 255),
+    )
+    return {
+        "primary": p,
+        "light": light_color,
+        "background": "#000000",
+        "accent": p,
+    }
+
+
+_nwst_accent_cfg_mod = None
+
+
+def _accent_overrides_from_project_config():
+    """Load nwst_accent_config.py from parent PROJECTS folder (shared with NWST Health)."""
+    global _nwst_accent_cfg_mod
+    if _nwst_accent_cfg_mod is None:
+        p = Path(__file__).resolve().parent
+        for _ in range(15):
+            cfg = p / "nwst_accent_config.py"
+            if cfg.is_file():
+                spec = importlib.util.spec_from_file_location("_nwst_accent_cfg", cfg)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _nwst_accent_cfg_mod = mod
+                break
+            if p.parent == p:
+                break
+            p = p.parent
+    if _nwst_accent_cfg_mod is None:
+        return {}
+    return _nwst_accent_cfg_mod.get_accent_override_by_date()
+
+
+@st.cache_data(ttl=120)
+def _theme_overrides_from_gsheet_cached(sheet_id: str):
+    """Rows from tab Theme Override on ATTENDANCE_SHEET_ID (cached ~2 min)."""
+    if not (sheet_id or "").strip():
+        return {}
+    client = get_gsheet_client()
+    if not client:
+        return {}
+    p = Path(__file__).resolve().parent
+    for _ in range(15):
+        gpath = p / "nwst_accent_gsheet.py"
+        if gpath.is_file():
+            spec = importlib.util.spec_from_file_location("_nwst_accent_gsheet", gpath)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.fetch_accent_overrides_from_gsheet(client, sheet_id)
+        if p.parent == p:
+            break
+        p = p.parent
+    return {}
+
+
+def resolve_theme_override_row_for_today():
+    """Today's row from JSON + Theme Override sheet: optional primary hex and/or banner filename."""
+    today = get_today_myt_date()
+    from_file = _accent_overrides_from_project_config()
+    from_sheet = _theme_overrides_from_gsheet_cached(SHEET_ID) if SHEET_ID else {}
+    if _nwst_accent_cfg_mod:
+        merged = _nwst_accent_cfg_mod.merge_theme_override_maps(from_file, from_sheet)
+    else:
+        keys = set(from_file) | set(from_sheet)
+        merged = {
+            k: {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
+            for k in keys
+            if {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
+        }
+    row = dict(merged.get(today) or {})
+    if not row.get("primary"):
+        env_d = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_DATE", "").strip()
+        env_h = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_HEX", "").strip()
+        if env_d == today and env_h:
+            row["primary"] = env_h.strip()
+        else:
+            try:
+                if hasattr(st, "secrets"):
+                    sd = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_DATE", "")).strip()
+                    sh = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_HEX", "")).strip()
+                    if sd == today and sh:
+                        row["primary"] = sh.strip()
+            except Exception:
+                pass
+    return row
+
+
 def generate_daily_colors():
-    """Generate random colors based on the most recent Saturday (MYT).
-    Colors change every Saturday and stay the same throughout the week."""
+    """Weekly Saturday-locked palette (MYT), unless today has a theme override row."""
     today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
-    # Calculate days since last Saturday (Saturday = weekday 5)
     days_since_saturday = (today.weekday() - 5) % 7
-    # Get the most recent Saturday
     last_saturday = today - timedelta(days=days_since_saturday)
-    return generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
+    row = resolve_theme_override_row_for_today()
+    hex_override = row.get("primary")
+    base = None
+    if hex_override:
+        pn = _normalize_primary_hex(hex_override)
+        if pn:
+            base = theme_from_primary_hex(pn)
+    if base is None:
+        base = generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
+    b_raw = row.get("banner")
+    if b_raw:
+        if _nwst_accent_cfg_mod is None:
+            _accent_overrides_from_project_config()
+        if _nwst_accent_cfg_mod:
+            safe = _nwst_accent_cfg_mod.sanitize_banner_filename(b_raw)
+            if safe:
+                base = {**base, "banner": safe}
+    return base
 
 def generate_daily_colors_legacy():
     """Legacy version - kept for reference"""
@@ -1404,23 +1541,45 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# GIF Background Section
-# You can set a GIF URL in your .env file as BANNER_GIF_URL, or upload a file
-gif_url = os.getenv("BANNER_GIF_URL", "")
-gif_path = os.path.join(os.path.dirname(__file__), "banner.gif")
+# GIF / banner (Theme Override filename in this folder, then BANNER_GIF_URL, then banner.gif)
+_app_dir = os.path.dirname(__file__)
+gif_url = os.getenv("BANNER_GIF_URL", "").strip()
+theme_banner_fn = daily_colors.get("banner")
 
-# Prepare background GIF
+
+def _banner_mime_for_path(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    return {
+        ".gif": "image/gif",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(ext, "image/gif")
+
+
 background_gif = ""
 gif_src = ""
-if gif_url:
+if theme_banner_fn:
+    _p_theme = os.path.join(_app_dir, theme_banner_fn)
+    if os.path.isfile(_p_theme):
+        import base64
+        with open(_p_theme, "rb") as f:
+            _raw = base64.b64encode(f.read()).decode()
+        _mime = _banner_mime_for_path(_p_theme)
+        background_gif = f"url('data:{_mime};base64,{_raw}')"
+        gif_src = f"data:{_mime};base64,{_raw}"
+if not gif_src and gif_url:
     background_gif = f"url('{gif_url}')"
     gif_src = gif_url
-elif os.path.exists(gif_path):
-    import base64
-    with open(gif_path, "rb") as f:
-        gif_data = base64.b64encode(f.read()).decode()
-    background_gif = f"url('data:image/gif;base64,{gif_data}')"
-    gif_src = f"data:image/gif;base64,{gif_data}"
+if not gif_src:
+    _default = os.path.join(_app_dir, "banner.gif")
+    if os.path.isfile(_default):
+        import base64
+        with open(_default, "rb") as f:
+            _raw = base64.b64encode(f.read()).decode()
+        background_gif = f"url('data:image/gif;base64,{_raw}')"
+        gif_src = f"data:image/gif;base64,{_raw}"
 
 # Initialize Google Sheets client
 client = get_gsheet_client()
