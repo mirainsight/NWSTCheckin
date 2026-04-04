@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Append pending check-in rows from Upstash to Google Sheets (same queues as attendance_app).
+Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_resync``):
 
-**CLI (cron / terminal):**
+1. Append pending check-in rows from Upstash to Google Sheets (per selected tabs).
+2. Clear Upstash caches: options, zone mapping, today’s attendance snapshots (all three tabs),
+   ministry option keys, newcomers snapshot.
+3. Refresh Theme Override snapshot into Upstash (same as main app after resync).
+
+**CLI (default = full sync):**
   cd "PROJECTS/CHECK IN" && python jobs/flush_pending.py
-  python jobs/flush_pending.py --tabs attendance leaders
+  python jobs/flush_pending.py --pending-only
+  python jobs/flush_pending.py --tabs attendance leaders --pending-only
 
-**Streamlit UI (button + on-screen log):**
-  cd "PROJECTS/CHECK IN" && streamlit run jobs/flush_pending.py
+**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — log clears on each run.
 
 Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
@@ -53,7 +58,14 @@ ATTENDANCE_TAB_NAME = "Attendance"
 LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"
 MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
+REDIS_OPTIONS_KEY = "attendance:options"
+REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
+REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"
+REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"
+# Same list as attendance_app.MINISTRY_LIST (ministry option cache keys)
+MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]
 SESSION_LOG_KEY = "flush_pending_session_log"
+ALL_PENDING_TABS = [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME, MINISTRY_ATTENDANCE_TAB_NAME]
 
 _nwst_accent_cfg_mod = None
 
@@ -657,14 +669,120 @@ def flush_pending_attendance_for_tabs(
         return False, str(e)
 
 
+def _pending_queues_nonempty(redis_client, today_myt: str, tab_names: list[str]) -> bool:
+    for tab_name in tab_names:
+        pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+        try:
+            if redis_client.lrange(pk, 0, 0):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[str] | None) -> None:
+    """Match congregation + ministry branches of ``perform_hard_sheet_resync`` (union of keys)."""
+    try:
+        redis_client.delete(REDIS_OPTIONS_KEY)
+        redis_client.delete(REDIS_ZONE_MAPPING_KEY)
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+        for ministry in MINISTRY_LIST:
+            redis_client.delete(f"attendance:ministry_options:{ministry}")
+        redis_client.delete("attendance:ministry_options:all")
+        _emit(
+            "Cleared Redis: options, zone map, today’s attendance cache (3 tabs), newcomers, ministry option keys.",
+            log_lines,
+        )
+    except Exception as e:
+        _emit(f"Redis cache clear partial failure: {e}", log_lines, err=True)
+
+
+def _refresh_theme_override_shared(
+    redis_client,
+    gsheet_client,
+    sheet_id: str,
+    log_lines: list[str] | None,
+) -> None:
+    if not (sheet_id or "").strip() or not redis_client or not gsheet_client:
+        return
+    mod = _load_nwst_accent_cfg()
+    if mod is None:
+        _emit("nwst_accent_config not found; skipping Theme Override snapshot.", log_lines)
+        return
+    try:
+        mod.refresh_theme_override_shared_cache(redis_client, gsheet_client, sheet_id)
+        _emit("Theme Override snapshot refreshed in Upstash.", log_lines)
+    except Exception as e:
+        _emit(f"Theme Override refresh failed: {e}", log_lines, err=True)
+
+
+def run_full_sheet_resync(
+    client,
+    sheet_id: str,
+    pending_tab_names: list[str],
+    log_lines: list[str] | None,
+) -> tuple[bool, str]:
+    """Flush selected pending queues, then full Redis cache clear + theme snapshot (see module doc)."""
+    if not client or not sheet_id.strip():
+        msg = "Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(msg, log_lines, err=True)
+        return False, msg
+
+    ok_flush, flush_summary = flush_pending_attendance_for_tabs(
+        client, sheet_id, pending_tab_names, log_lines=log_lines
+    )
+    if not ok_flush:
+        return False, flush_summary
+
+    today_myt = get_today_myt_date()
+    redis_client = _redis_client(log_lines)
+    if not redis_client:
+        extra = " Upstash not configured — skipped Redis cache clear and Theme Override refresh."
+        _emit(extra.strip(), log_lines)
+        return True, flush_summary + extra
+
+    _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
+    _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
+    _emit(
+        "Full resync finished. Upstash mirrors are cleared; the main app reads Sheets on the next cache miss.",
+        log_lines,
+    )
+    _emit(
+        "Tip: Refresh the Church Check-in browser tab if lists still look stale (Streamlit caches ~30–60s).",
+        log_lines,
+    )
+    return True, flush_summary
+
+
+def _tab_names_from_multiselect(tab_choice: list[str]) -> list[str]:
+    if not tab_choice or "all" in tab_choice:
+        return list(ALL_PENDING_TABS)
+    mapping = {
+        "attendance": ATTENDANCE_TAB_NAME,
+        "leaders": LEADERS_ATTENDANCE_TAB_NAME,
+        "ministry": MINISTRY_ATTENDANCE_TAB_NAME,
+    }
+    return [mapping[t] for t in tab_choice if t != "all"]
+
+
 def main_cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Flush pending attendance from Upstash to Google Sheets.")
+    parser = argparse.ArgumentParser(
+        description="Full sheet sync (flush pending + clear caches + theme), or pending-only."
+    )
+    parser.add_argument(
+        "--pending-only",
+        action="store_true",
+        help="Only append pending rows to Sheets; do not clear Redis caches or refresh Theme Override.",
+    )
     parser.add_argument(
         "--tabs",
         nargs="*",
         choices=["attendance", "leaders", "ministry", "all"],
         default=["all"],
-        help="Which queues to flush (default: all three sheet tabs).",
+        help="Which pending queues to flush before cache steps (default: all three sheets).",
     )
     args = parser.parse_args(argv)
 
@@ -674,21 +792,27 @@ def main_cli(argv: list[str] | None = None) -> int:
         _emit("Set ATTENDANCE_SHEET_ID in the environment or Streamlit secrets.", log_lines, err=True)
         return 1
 
-    if "all" in args.tabs:
-        tab_names = [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME, MINISTRY_ATTENDANCE_TAB_NAME]
-    else:
-        mapping = {
-            "attendance": ATTENDANCE_TAB_NAME,
-            "leaders": LEADERS_ATTENDANCE_TAB_NAME,
-            "ministry": MINISTRY_ATTENDANCE_TAB_NAME,
-        }
-        tab_names = [mapping[t] for t in args.tabs]
+    tab_names = _tab_names_from_multiselect(list(args.tabs))
 
     client = _gsheet_client(log_lines)
     if not client:
+        if args.pending_only:
+            return 1
+        rc = _redis_client(log_lines)
+        today_chk = get_today_myt_date()
+        if rc and _pending_queues_nonempty(rc, today_chk, tab_names):
+            _emit(
+                "Google Sheets not connected, but pending check-ins exist. Fix credentials and retry.",
+                log_lines,
+                err=True,
+            )
         return 1
 
-    ok, _msg = flush_pending_attendance_for_tabs(client, sheet_id, tab_names, log_lines=log_lines)
+    if args.pending_only:
+        ok, _msg = flush_pending_attendance_for_tabs(client, sheet_id, tab_names, log_lines=log_lines)
+    else:
+        ok, _msg = run_full_sheet_resync(client, sheet_id, tab_names, log_lines)
+
     return 0 if ok else 1
 
 
@@ -696,7 +820,7 @@ def run_streamlit_app() -> None:
     import streamlit as st
 
     st.set_page_config(
-        page_title="Church Check-In — Flush pending",
+        page_title="Church Check-In — Full sheet sync",
         page_icon="⛪",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -730,7 +854,7 @@ def run_streamlit_app() -> None:
     st.markdown(_flush_page_css(page_colors, is_leaders_page=is_leaders_page), unsafe_allow_html=True)
 
     background_gif, gif_src = resolve_banner_gif_src(daily_colors)
-    hero_label = "Flush pending"
+    hero_label = "Full sheet sync"
 
     if SESSION_LOG_KEY not in st.session_state:
         st.session_state[SESSION_LOG_KEY] = []
@@ -781,56 +905,42 @@ def run_streamlit_app() -> None:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         tab_choice = st.multiselect(
-            "Tabs to flush",
+            "Pending rows to append first",
             options=["attendance", "leaders", "ministry", "all"],
             default=["all"],
-            help="Which sheet tabs to process. Include **all** to flush every pending queue for today (MYT).",
+            help="Which **Upstash pending lists** to append to Sheets today (MYT). After that, **all** roster "
+            "caches are cleared (options, zones, attendance snapshots, ministry options, newcomers) and "
+            "Theme Override is refreshed — same as a full resync in the main app.",
         )
         if not tab_choice:
             st.warning("Select at least one tab.")
             tab_choice = ["all"]
 
-        if st.button("Run flush now", type="primary", use_container_width=True, key="flush_run"):
+        if st.button("Run full sync now", type="primary", use_container_width=True, key="flush_run"):
             run_log: list[str] = []
-            st.session_state[SESSION_LOG_KEY].append("--- run started ---")
-
             sheet_id = _resolve_sheet_id(run_log)
             if not sheet_id:
+                st.session_state[SESSION_LOG_KEY] = run_log
                 st.error("⚠️ ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
-                st.session_state[SESSION_LOG_KEY].extend(run_log)
             else:
-                with st.spinner("Flushing…"):
+                with st.spinner("Running full sheet sync…"):
                     client = _gsheet_client(run_log)
                     if not client:
-                        st.session_state[SESSION_LOG_KEY].extend(run_log)
+                        st.session_state[SESSION_LOG_KEY] = run_log
                         st.error("Could not build Google Sheets client — see session log below.")
                     else:
-                        if "all" in tab_choice:
-                            tab_names = [
-                                ATTENDANCE_TAB_NAME,
-                                LEADERS_ATTENDANCE_TAB_NAME,
-                                MINISTRY_ATTENDANCE_TAB_NAME,
-                            ]
-                        else:
-                            mapping = {
-                                "attendance": ATTENDANCE_TAB_NAME,
-                                "leaders": LEADERS_ATTENDANCE_TAB_NAME,
-                                "ministry": MINISTRY_ATTENDANCE_TAB_NAME,
-                            }
-                            tab_names = [mapping[t] for t in tab_choice if t != "all"]
-
-                        ok, summary = flush_pending_attendance_for_tabs(
+                        tab_names = _tab_names_from_multiselect(tab_choice)
+                        ok, summary = run_full_sheet_resync(
                             client, sheet_id, tab_names, log_lines=run_log
                         )
-                        st.session_state[SESSION_LOG_KEY].extend(run_log)
+                        st.session_state[SESSION_LOG_KEY] = run_log
                         if ok:
                             st.success(summary)
                             toast = getattr(st, "toast", None)
                             if toast:
-                                toast("Flush completed", icon="✅")
+                                toast("Full sync completed", icon="✅")
                         else:
-                            st.error(summary or "Flush failed.")
-
+                            st.error(summary or "Sync failed.")
             st.rerun()
 
         col_a, col_b = st.columns(2)
