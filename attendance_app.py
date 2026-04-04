@@ -56,6 +56,35 @@ REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date a
 REDIS_HISTORICAL_KEY_PREFIX = "attendance:historical:"  # For historical date queries
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with date
+# Rows not yet appended to Google Sheets (flushed on Update names → Sync)
+REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
+
+# Confetti snippet (check-in celebration)
+CHECKIN_CONFETTI_HTML = """
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script>
+    var existingCanvas = parent.document.getElementById('confetti-canvas');
+    if (existingCanvas) { existingCanvas.remove(); }
+    var canvas = parent.document.createElement('canvas');
+    canvas.id = 'confetti-canvas';
+    canvas.style.position = 'fixed';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.pointerEvents = 'none';
+    canvas.style.zIndex = '9999';
+    parent.document.body.appendChild(canvas);
+    var myConfetti = confetti.create(canvas, { resize: true });
+    myConfetti({
+        particleCount: 150,
+        spread: 100,
+        origin: { x: 0.5, y: 0.5 },
+        colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
+    });
+    setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
+</script>
+"""
 
 def get_today_myt_date():
     """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
@@ -148,7 +177,7 @@ def _refresh_theme_override_redis_after_resync():
 
 
 def perform_hard_sheet_resync(mode="congregation"):
-    """Clear Redis + Streamlit caches so the app re-fetches from Google Sheets.
+    """Flush pending check-ins to Google Sheets, then clear Redis + Streamlit caches.
 
     Use after edits to roster / Options / ministry tabs. Hits more API calls than Refresh;
     avoid repeated clicks to reduce quota timeouts.
@@ -156,6 +185,30 @@ def perform_hard_sheet_resync(mode="congregation"):
     mode: \"congregation\" — main & leaders attendance, options, zones, newcomers.
           \"ministry\" — ministry options & attendance, main options (roles), newcomers.
     """
+    gclient = get_gsheet_client()
+    flush_tabs = (
+        [MINISTRY_ATTENDANCE_TAB_NAME]
+        if mode == "ministry"
+        else [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]
+    )
+    if not gclient:
+        rc = get_redis_client()
+        today_chk = get_today_myt_date()
+        if rc:
+            for t in flush_tabs:
+                pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_chk}:{t}"
+                if rc.lrange(pk, 0, 0):
+                    st.error(
+                        "Google Sheets is not connected, but there are check-ins waiting to be written. "
+                        "Fix credentials, then use **Update names** again."
+                    )
+                    return
+    else:
+        ok, err = flush_pending_attendance_for_tabs(gclient, flush_tabs)
+        if not ok:
+            st.error(f"Could not write pending check-ins to Google Sheets: {err}")
+            return
+
     st.session_state.refresh_counter = st.session_state.get("refresh_counter", 0) + 1
     st.session_state.last_refresh_time = get_now_myt()
     get_newcomers_count.clear()
@@ -195,14 +248,15 @@ def perform_hard_sheet_resync(mode="congregation"):
 
 
 def render_update_names_sheet_popover(sync_mode, confirm_button_key):
-    """Popover next to I'm New / toolbar: full Google Sheet resync.
+    """Popover next to I'm New / toolbar: flush pending check-ins to Sheets, then full resync.
 
     sync_mode: \"congregation\" | \"ministry\"
     confirm_button_key: unique st.button key (Streamlit requirement).
     """
     with st.popover("Update names", use_container_width=True):
         st.caption(
-            "If newcomer's name is missing, or want to update names use this."
+            "If newcomer's name is missing, or you edited the roster, use this."
+            "\n\nCheck-ins are saved to Upstash first; **Sync** writes them to Google Sheets and reloads roster data."
             "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
         )
         if st.button("Sync with Google Sheets", type="primary", key=confirm_button_key):
@@ -278,6 +332,57 @@ def get_gsheet_client():
     except Exception as e:
         st.error(f"❌ Could not connect to Google Sheets: {str(e)}")
         return None
+
+
+def _ensure_attendance_worksheet(spreadsheet, tab_name):
+    """Open or create the attendance worksheet; ensure header row exists."""
+    try:
+        sh = spreadsheet.worksheet(tab_name)
+    except gspread.exceptions.WorksheetNotFound:
+        sh = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=20)
+        sh.append_row(["Timestamp", "Option"])
+        return sh
+    hdr = sh.row_values(1)
+    if not hdr:
+        sh.append_row(["Timestamp", "Option"])
+    return sh
+
+
+def flush_pending_attendance_for_tabs(client, tab_names):
+    """Append queued check-in rows from Upstash to Google Sheets, then clear each pending list.
+
+    Returns:
+        tuple: (ok: bool, error_message: str)
+    """
+    if not client or not (SHEET_ID or "").strip():
+        return False, "Google Sheets client or ATTENDANCE_SHEET_ID not available."
+    redis_client = get_redis_client()
+    if not redis_client:
+        return True, ""
+    today_myt = get_today_myt_date()
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+        for tab_name in tab_names:
+            pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+            raw_items = redis_client.lrange(pk, 0, -1)
+            if not raw_items:
+                continue
+            rows = []
+            for raw in raw_items:
+                s = raw.decode() if isinstance(raw, bytes) else raw
+                d = json.loads(s)
+                rows.append([d["ts"], d["opt"]])
+            sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
+            sh.append_rows(rows)
+            redis_client.delete(pk)
+        return True, ""
+    except gspread.exceptions.APIError as e:
+        if "429" in str(e) or "Quota exceeded" in str(e):
+            return False, "API quota exceeded. Try again in a moment."
+        return False, str(e)
+    except Exception as e:
+        return False, str(e)
+
 
 def _is_email_format(value):
     """Return True if value looks like an email address (treat role as blank)."""
@@ -851,6 +956,24 @@ def parse_name_cell_group(name_cell_group_str):
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
 
+
+def _rebuild_attendance_structures_from_recent(recent_checkins):
+    """Rebuild checked_in_list and cell_group_data from ordered recent_checkins (newest first)."""
+    checked_in_list = []
+    seen = set()
+    for _ts, opt in reversed(recent_checkins):
+        if opt not in seen:
+            seen.add(opt)
+            checked_in_list.append(opt)
+    cell_group_data = {}
+    for opt in checked_in_list:
+        name, cell_group = parse_name_cell_group(opt)
+        if cell_group not in cell_group_data:
+            cell_group_data[cell_group] = []
+        cell_group_data[cell_group].append(name)
+    return cell_group_data, checked_in_list
+
+
 @st.cache_data(ttl=30)  # Local cache for 30 seconds - allows more frequent Upstash reads
 def get_today_attendance_data(_client, sheet_id, refresh_key=0, tab_name=ATTENDANCE_TAB_NAME):
     """Get today's attendance data with names and cell groups grouped.
@@ -1150,101 +1273,89 @@ def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTEND
         return {}, [], []
 
 def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
-    """Save attendance data to the specified tab - supports batch check-ins.
-    Also updates Redis cache to ensure immediate visibility for other users."""
+    """Queue check-ins in Upstash first; rows are appended to Google Sheets on **Update names → Sync**.
+
+    If Redis is unavailable, falls back to appending directly to the sheet (legacy behaviour).
+    Supports batch check-ins."""
+    myt = timezone(timedelta(hours=8))
+    timestamp = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+    today_myt = get_today_myt_date()
+
+    selected_options = attendance_data.get("selected_options", [])
+    if not selected_options:
+        selected_option = attendance_data.get("selected_option", "")
+        if selected_option:
+            selected_options = [selected_option]
+
+    if not selected_options:
+        return False, "No options selected"
+
+    option_type = attendance_data.get("option_type", "Option")
+
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+            pending_key = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+            cached = redis_client.get(redis_key)
+
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                cell_group_data = data.get("cell_group_data", {})
+                checked_in_list = data.get("checked_in_list", [])
+                recent_checkins = data.get("recent_checkins", [])
+            else:
+                cell_group_data = {}
+                checked_in_list = []
+                recent_checkins = []
+
+            checked_in_set = set(checked_in_list)
+            for option in selected_options:
+                recent_checkins.insert(0, (timestamp, option))
+                if option not in checked_in_set:
+                    checked_in_set.add(option)
+                    checked_in_list.append(option)
+                    pname, cell_group = parse_name_cell_group(option)
+                    if cell_group not in cell_group_data:
+                        cell_group_data[cell_group] = []
+                    cell_group_data[cell_group].append(pname)
+
+            cache_data = {
+                "cell_group_data": cell_group_data,
+                "checked_in_list": checked_in_list,
+                "recent_checkins": recent_checkins,
+            }
+            redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+
+            for option in selected_options:
+                line = json.dumps({"opt": option, "ts": timestamp}, sort_keys=True, separators=(",", ":"))
+                redis_client.rpush(pending_key, line)
+            redis_client.expire(pending_key, REDIS_CACHE_TTL)
+
+            count = len(selected_options)
+            return True, f"Checked in {count} {'person' if count == 1 else 'people'} successfully!"
+        except Exception as e:
+            return False, f"Failed to save check-in (Redis): {str(e)}"
+
+    # No Redis: write Google Sheet immediately
+    if not client:
+        return False, "Google Sheets client not available."
     try:
         spreadsheet = client.open_by_key(SHEET_ID)
-
-        # Try to get the Attendance worksheet, create if it doesn't exist
         try:
             attendance_sheet = spreadsheet.worksheet(tab_name)
-            # Check if headers exist, if not add them
             existing_headers = attendance_sheet.row_values(1)
             if not existing_headers:
-                headers = ["Timestamp", attendance_data.get("option_type", "Option")]
-                attendance_sheet.append_row(headers)
+                attendance_sheet.append_row(["Timestamp", option_type])
         except gspread.exceptions.WorksheetNotFound:
-            # Create the worksheet
-            attendance_sheet = spreadsheet.add_worksheet(
-                title=tab_name,
-                rows=1000,
-                cols=20
-            )
-            # Add headers
-            headers = ["Timestamp", attendance_data.get("option_type", "Option")]
-            attendance_sheet.append_row(headers)
+            attendance_sheet = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=20)
+            attendance_sheet.append_row(["Timestamp", option_type])
 
-        # Get current time in Malaysia Time (MYT, UTC+8)
-        myt = timezone(timedelta(hours=8))
-        timestamp = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
-        today_myt = get_today_myt_date()
-
-        # Check if this is a batch check-in (list of options) or single
-        selected_options = attendance_data.get("selected_options", [])
-        if not selected_options:
-            # Single check-in (backwards compatibility)
-            selected_option = attendance_data.get("selected_option", "")
-            if selected_option:
-                selected_options = [selected_option]
-
-        if not selected_options:
-            return False, "No options selected"
-
-        # Prepare all rows for batch insert
         rows = [[timestamp, option] for option in selected_options]
-
-        # Batch append all rows at once (single API call)
         attendance_sheet.append_rows(rows)
-
-        # Update Redis cache with new check-ins (so other users see immediately)
-        redis_client = get_redis_client()
-        if redis_client:
-            try:
-                redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
-                cached = redis_client.get(redis_key)
-
-                if cached:
-                    # Update existing cache
-                    data = json.loads(cached) if isinstance(cached, str) else cached
-                    cell_group_data = data.get("cell_group_data", {})
-                    checked_in_list = data.get("checked_in_list", [])
-                    recent_checkins = data.get("recent_checkins", [])
-                else:
-                    # Initialize new cache
-                    cell_group_data = {}
-                    checked_in_list = []
-                    recent_checkins = []
-
-                # Add new check-ins to cache
-                checked_in_set = set(checked_in_list)
-                for option in selected_options:
-                    # Add to recent checkins
-                    recent_checkins.insert(0, (timestamp, option))
-
-                    # Only add to list if not already checked in
-                    if option not in checked_in_set:
-                        checked_in_set.add(option)
-                        checked_in_list.append(option)
-
-                        # Parse and add to cell group data
-                        name, cell_group = parse_name_cell_group(option)
-                        if cell_group not in cell_group_data:
-                            cell_group_data[cell_group] = []
-                        cell_group_data[cell_group].append(name)
-
-                # Save updated cache
-                cache_data = {
-                    "cell_group_data": cell_group_data,
-                    "checked_in_list": checked_in_list,
-                    "recent_checkins": recent_checkins
-                }
-                redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
-            except Exception:
-                pass  # Redis update failed, but Sheets save succeeded
 
         count = len(selected_options)
         return True, f"Checked in {count} {'person' if count == 1 else 'people'} successfully!"
-
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
             return False, "⚠️ API quota exceeded. Please wait a moment and try again."
@@ -1254,73 +1365,111 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
 
 
 def undo_last_checkin(client, name, tab_name):
-    """Undo the last check-in by removing the most recent entry for the given name.
-    Returns (success, message) tuple."""
-    try:
-        spreadsheet = client.open_by_key(SHEET_ID)
-        attendance_sheet = spreadsheet.worksheet(tab_name)
+    """Undo the most recent check-in for this name: remove from Upstash pending queue or delete a sheet row."""
+    today_myt = get_today_myt_date()
+    redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
+    pending_key = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+    display_name = name.split(" - ")[0] if " - " in name else name
 
-        # Get all values to find the row to delete
-        all_values = attendance_sheet.get_all_values()
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(redis_key)
+            if cached:
+                data = json.loads(cached) if isinstance(cached, str) else cached
+                recent_checkins = data.get("recent_checkins", [])
+                idx = None
+                for i, pair in enumerate(recent_checkins):
+                    ts_i, n = pair[0], pair[1]
+                    if n == name:
+                        idx = i
+                        break
+                if idx is not None:
+                    ts, opt = recent_checkins[idx][0], recent_checkins[idx][1]
+                    recent_checkins.pop(idx)
+                    line = json.dumps({"opt": opt, "ts": ts}, sort_keys=True, separators=(",", ":"))
+                    try:
+                        removed_raw = redis_client.lrem(pending_key, 1, line)
+                        removed = int(removed_raw) if removed_raw is not None else 0
+                    except (TypeError, ValueError):
+                        removed = 0
 
-        # Find the most recent row with this name (search from bottom)
-        row_to_delete = None
-        for i in range(len(all_values) - 1, 0, -1):  # Skip header row
-            if len(all_values[i]) >= 2 and all_values[i][1] == name:
-                row_to_delete = i + 1  # gspread uses 1-based indexing
-                break
-
-        if row_to_delete is None:
-            return False, f"Could not find check-in record for {name}"
-
-        # Delete the row
-        attendance_sheet.delete_rows(row_to_delete)
-
-        # Update Redis cache to remove the person
-        today_myt = get_today_myt_date()
-        redis_client = get_redis_client()
-        if redis_client:
-            try:
-                redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
-                cached = redis_client.get(redis_key)
-
-                if cached:
-                    data = json.loads(cached) if isinstance(cached, str) else cached
-                    cell_group_data = data.get("cell_group_data", {})
-                    checked_in_list = data.get("checked_in_list", [])
-                    recent_checkins = data.get("recent_checkins", [])
-
-                    # Remove from checked_in_list
-                    if name in checked_in_list:
-                        checked_in_list.remove(name)
-
-                    # Remove from cell_group_data
-                    parsed_name, cell_group = parse_name_cell_group(name)
-                    if cell_group in cell_group_data and parsed_name in cell_group_data[cell_group]:
-                        cell_group_data[cell_group].remove(parsed_name)
-                        if not cell_group_data[cell_group]:
-                            del cell_group_data[cell_group]
-
-                    # Remove from recent_checkins (first occurrence)
-                    for i, (ts, n) in enumerate(recent_checkins):
-                        if n == name:
-                            recent_checkins.pop(i)
-                            break
-
-                    # Save updated cache
+                    cell_group_data, checked_in_list = _rebuild_attendance_structures_from_recent(
+                        recent_checkins
+                    )
                     cache_data = {
                         "cell_group_data": cell_group_data,
                         "checked_in_list": checked_in_list,
-                        "recent_checkins": recent_checkins
+                        "recent_checkins": recent_checkins,
                     }
                     redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
+
+                    if removed > 0:
+                        return True, f"Undone! {display_name} has been removed from today's check-in."
+
+                    if client and (SHEET_ID or "").strip():
+                        try:
+                            spreadsheet = client.open_by_key(SHEET_ID)
+                            attendance_sheet = spreadsheet.worksheet(tab_name)
+                            all_values = attendance_sheet.get_all_values()
+                            row_to_delete = None
+                            for i in range(len(all_values) - 1, 0, -1):
+                                if len(all_values[i]) >= 2 and all_values[i][1] == name and all_values[i][0] == ts:
+                                    row_to_delete = i + 1
+                                    break
+                            if row_to_delete is None:
+                                for i in range(len(all_values) - 1, 0, -1):
+                                    if len(all_values[i]) >= 2 and all_values[i][1] == name:
+                                        row_to_delete = i + 1
+                                        break
+                            if row_to_delete is not None:
+                                attendance_sheet.delete_rows(row_to_delete)
+                        except Exception:
+                            pass
+                    return True, f"Undone! {display_name} has been removed from today's check-in."
+        except Exception as e:
+            return False, f"Failed to undo: {str(e)}"
+
+    if not client:
+        return False, "Could not undo: no Sheets client and no Redis cache."
+
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+        attendance_sheet = spreadsheet.worksheet(tab_name)
+        all_values = attendance_sheet.get_all_values()
+        row_to_delete = None
+        for i in range(len(all_values) - 1, 0, -1):
+            if len(all_values[i]) >= 2 and all_values[i][1] == name:
+                row_to_delete = i + 1
+                break
+        if row_to_delete is None:
+            return False, f"Could not find check-in record for {name}"
+        attendance_sheet.delete_rows(row_to_delete)
+        if redis_client:
+            try:
+                cached = redis_client.get(redis_key)
+                if cached:
+                    data = json.loads(cached) if isinstance(cached, str) else cached
+                    recent_checkins = data.get("recent_checkins", [])
+                    for i, pair in enumerate(recent_checkins):
+                        if pair[1] == name:
+                            recent_checkins.pop(i)
+                            break
+                    cell_group_data, checked_in_list = _rebuild_attendance_structures_from_recent(
+                        recent_checkins
+                    )
+                    redis_client.set(
+                        redis_key,
+                        json.dumps({
+                            "cell_group_data": cell_group_data,
+                            "checked_in_list": checked_in_list,
+                            "recent_checkins": recent_checkins,
+                        }),
+                        ex=REDIS_CACHE_TTL,
+                    )
             except Exception:
-                pass  # Redis update failed, but Sheets deletion succeeded
-
-        # Extract just the name part for the message
-        display_name = name.split(" - ")[0] if " - " in name else name
+                pass
         return True, f"Undone! {display_name} has been removed from today's check-in."
-
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
             return False, "⚠️ API quota exceeded. Please wait a moment and try again."
@@ -1728,6 +1877,10 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        selectbox_key = f"{form_key}_selectbox"
+        if st.session_state.pop(f"{form_key}_reset_selectbox", None):
+            st.session_state[selectbox_key] = ""
+
         # Show instruction text
         if background_gif:
             components.html("""
@@ -1761,46 +1914,12 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             success_info = st.session_state['show_checkin_success']
             name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
             st.success(f"✅ {name_only} checked in!")
-
-            # Fire confetti
-            components.html("""
-            <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-            <script>
-                // Remove any existing confetti canvas first
-                var existingCanvas = parent.document.getElementById('confetti-canvas');
-                if (existingCanvas) { existingCanvas.remove(); }
-
-                var canvas = parent.document.createElement('canvas');
-                canvas.id = 'confetti-canvas';
-                canvas.style.position = 'fixed';
-                canvas.style.top = '0';
-                canvas.style.left = '0';
-                canvas.style.width = '100%';
-                canvas.style.height = '100%';
-                canvas.style.pointerEvents = 'none';
-                canvas.style.zIndex = '9999';
-                parent.document.body.appendChild(canvas);
-                var myConfetti = confetti.create(canvas, { resize: true });
-                myConfetti({
-                    particleCount: 150,
-                    spread: 100,
-                    origin: { x: 0.5, y: 0.5 },
-                    colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
-                });
-                setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
-            </script>
-            """, height=0)
-
-            # Clear success state after displaying (so it doesn't show on next interaction)
             st.session_state['show_checkin_success'] = None
 
         # Check if there are any available options
         if not available_options:
             st.warning("All attendees have already checked in for today!")
         else:
-            # Key for the selectbox widget
-            selectbox_key = f"{form_key}_selectbox"
-
             # Create formatted options: available ones normal, checked-in ones with tick prefix
             # Format: "✓ Name - Cell" for checked in, "Name - Cell" for available
             # Sort by Cell Group first, then by Name within each group
@@ -1925,7 +2044,6 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         "option_type": option_type
                     }
 
-                    # Save to Google Sheets
                     success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
 
                     if success:
@@ -1937,15 +2055,21 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                             'form_type': 'attendance'
                         }
 
-                        # Increment refresh counter to invalidate local Streamlit cache
                         st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                         st.session_state.last_refresh_time = get_now_myt()
 
-                        # Show success on next run
+                        name_only = original_name.split(" - ")[0] if " - " in original_name else original_name
+                        components.html(CHECKIN_CONFETTI_HTML, height=0)
+                        toast_fn = getattr(st, "toast", None)
+                        if toast_fn:
+                            toast_fn(f"Checked in: {name_only}", icon="✅")
+
                         st.session_state['show_checkin_success'] = {
                             'name': original_name,
                             'message': message
                         }
+                        st.session_state[f'{form_key}_reset_selectbox'] = True
+                        st.session_state['last_processed_checkin'] = None
                         st.rerun()
                     else:
                         # Clear the processed flag on error
@@ -2061,6 +2185,10 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        selectbox_key = f"{form_key}_selectbox"
+        if st.session_state.pop(f"{form_key}_reset_selectbox", None):
+            st.session_state[selectbox_key] = ""
+
         # Show instruction text
         if background_gif:
             components.html("""
@@ -2094,43 +2222,12 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             success_info = st.session_state['show_checkin_success']
             name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
             st.success(f"✅ {name_only} checked in!")
-
-            # Fire confetti
-            components.html("""
-            <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-            <script>
-                // Remove any existing confetti canvas first
-                var existingCanvas = parent.document.getElementById('confetti-canvas');
-                if (existingCanvas) { existingCanvas.remove(); }
-
-                var canvas = parent.document.createElement('canvas');
-                canvas.id = 'confetti-canvas';
-                canvas.style.position = 'fixed';
-                canvas.style.top = '0';
-                canvas.style.left = '0';
-                canvas.style.width = '100%';
-                canvas.style.height = '100%';
-                canvas.style.pointerEvents = 'none';
-                canvas.style.zIndex = '9999';
-                parent.document.body.appendChild(canvas);
-                var myConfetti = confetti.create(canvas, { resize: true });
-                myConfetti({
-                    particleCount: 150,
-                    spread: 100,
-                    origin: { x: 0.5, y: 0.5 },
-                    colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
-                });
-                setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
-            </script>
-            """, height=0)
+            st.session_state['show_checkin_success'] = None
 
         # Check if there are any available options
         if not available_options:
             st.warning(f"All {selected_ministry} ministry members have already checked in for today!")
         else:
-            # Key for the selectbox widget
-            selectbox_key = f"{form_key}_selectbox"
-
             # Create formatted options: available ones normal, checked-in ones with tick prefix
             # Sort by Department first, then by Name within each department
             def get_sort_key(opt):
@@ -2249,7 +2346,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         "option_type": "Name"
                     }
 
-                    # Save to Ministry Attendance tab
                     success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
 
                     if success:
@@ -2265,11 +2361,18 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                         st.session_state.last_refresh_time = get_now_myt()
 
-                        # Show success on next run
+                        name_only = original_name.split(" - ")[0] if " - " in original_name else original_name
+                        components.html(CHECKIN_CONFETTI_HTML, height=0)
+                        toast_fn = getattr(st, "toast", None)
+                        if toast_fn:
+                            toast_fn(f"Checked in: {name_only}", icon="✅")
+
                         st.session_state['show_checkin_success'] = {
                             'name': original_name,
                             'message': message
                         }
+                        st.session_state[f'{form_key}_reset_selectbox'] = True
+                        st.session_state['last_processed_ministry_checkin'] = None
                         st.rerun()
                     else:
                         # Clear the processed flag on error
@@ -2857,6 +2960,12 @@ def render_qr_section():
                 # Clear Redis cache for options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
+                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
+                        client, [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]
+                    )
+                    if not ok_flush:
+                        st.error(f"Could not save pending check-ins: {err_flush}")
+                        st.stop()
                     try:
                         redis_client.delete(REDIS_OPTIONS_KEY)
                         # Also clear attendance data cache
@@ -2967,6 +3076,12 @@ def render_qr_section():
                 # Clear Redis cache for options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
+                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
+                        client, [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]
+                    )
+                    if not ok_flush:
+                        st.error(f"Could not save pending check-ins: {err_flush}")
+                        st.stop()
                     try:
                         redis_client.delete(REDIS_OPTIONS_KEY)
                         # Also clear attendance data cache
@@ -3006,6 +3121,12 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear Redis cache for ministry options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
+                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
+                        client, [MINISTRY_ATTENDANCE_TAB_NAME]
+                    )
+                    if not ok_flush:
+                        st.error(f"Could not save pending check-ins: {err_flush}")
+                        st.stop()
                     try:
                         for ministry in MINISTRY_LIST:
                             redis_client.delete(f"attendance:ministry_options:{ministry}")
@@ -3117,6 +3238,12 @@ def render_ministry_qr_section(selected_ministry):
                 # Clear Redis cache for ministry options AND attendance data AND newcomers
                 redis_client = get_redis_client()
                 if redis_client:
+                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
+                        client, [MINISTRY_ATTENDANCE_TAB_NAME]
+                    )
+                    if not ok_flush:
+                        st.error(f"Could not save pending check-ins: {err_flush}")
+                        st.stop()
                     try:
                         for ministry in MINISTRY_LIST:
                             redis_client.delete(f"attendance:ministry_options:{ministry}")
@@ -4282,6 +4409,24 @@ def render_dashboard(tab_name, group_by_zone=False):
             num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_empty = 150 + (num_items_empty * 60)
             components.html(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
+
+
+if hasattr(st, "fragment"):
+    @st.fragment
+    def render_dashboard_fragment(tab_name, group_by_zone=False):
+        render_dashboard(tab_name, group_by_zone)
+else:
+    def render_dashboard_fragment(tab_name, group_by_zone=False):
+        render_dashboard(tab_name, group_by_zone)
+
+
+if hasattr(st, "fragment"):
+    @st.fragment
+    def render_ministry_dashboard_fragment(selected_ministry):
+        render_ministry_dashboard(selected_ministry)
+else:
+    def render_ministry_dashboard_fragment(selected_ministry):
+        render_ministry_dashboard(selected_ministry)
 
 
 def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
@@ -5669,7 +5814,7 @@ if page == "NWST Check In":
         render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
         render_qr_section()
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
-        render_dashboard(ATTENDANCE_TAB_NAME)
+        render_dashboard_fragment(ATTENDANCE_TAB_NAME)
 
 elif page == "Leaders Discipleship":
     st.markdown(f"""
@@ -5689,7 +5834,7 @@ elif page == "Leaders Discipleship":
     else:
         render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
-        render_dashboard(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
+        render_dashboard_fragment(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
 elif page == "Ministry Discipleship":
     # Ministry page header
@@ -5724,7 +5869,7 @@ elif page == "Ministry Discipleship":
         render_ministry_check_in_form(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
         render_ministry_qr_section(st.session_state.selected_ministry)
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
-        render_ministry_dashboard(st.session_state.selected_ministry)
+        render_ministry_dashboard_fragment(st.session_state.selected_ministry)
     else:
         st.info("Historical view is not yet available for Ministry Discipleship. Switch to NWST or Leaders Discipleship to view historical data.")
 
