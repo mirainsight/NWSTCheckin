@@ -1869,28 +1869,6 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         available_options = [opt for opt in all_option_values if opt not in checked_in_today]
         checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
 
-        # Show instruction text
-        if background_gif:
-            components.html("""
-            <div style="
-                background: rgba(0, 0, 0, 0.6);
-                padding: 0.75rem 1rem;
-                border-radius: 6px;
-                margin-bottom: 1rem;
-            ">
-                <p style="
-                    font-size: 1rem;
-                    margin: 0;
-                    color: #ffffff;
-                    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-                    text-align: center;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">Select a name from the dropdown below to check in.</p>
-            </div>
-            """, height=60)
-        else:
-            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
-
         # Check if there are any available options
         if not available_options:
             _flush_checkin_success_here()
@@ -1970,7 +1948,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 options=options_with_placeholder,
                 index=0,
                 key=selectbox_key,
-                help="Select a name to instantly check in. Names with ✓ are already checked in today."
+                label_visibility="hidden",
+                help="Select a name to instantly check in. Names with ✓ are already checked in today.",
             )
 
             _flush_checkin_success_here()
@@ -2180,28 +2159,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
 
         available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
 
-        # Show instruction text
-        if background_gif:
-            components.html("""
-            <div style="
-                background: rgba(0, 0, 0, 0.6);
-                padding: 0.75rem 1rem;
-                border-radius: 6px;
-                margin-bottom: 1rem;
-            ">
-                <p style="
-                    font-size: 1rem;
-                    margin: 0;
-                    color: #ffffff;
-                    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-                    text-align: center;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">Select a name from the dropdown below to check in.</p>
-            </div>
-            """, height=60)
-        else:
-            st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
-
         # Check if there are any available options
         if not available_options:
             _flush_ministry_checkin_success_here()
@@ -2279,7 +2236,8 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                 options=options_with_placeholder,
                 index=0,
                 key=selectbox_key,
-                help="Select a name to instantly check in. Names with ✓ are already checked in today."
+                label_visibility="hidden",
+                help="Select a name to instantly check in. Names with ✓ are already checked in today.",
             )
 
             _flush_ministry_checkin_success_here()
