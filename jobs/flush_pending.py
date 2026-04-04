@@ -685,21 +685,23 @@ def run_streamlit_app() -> None:
     st.markdown(
         f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;700&family=Outfit:wght@400;500;600&display=swap');
+    /* Same font imports as attendance_app NWST chrome (Outfit + Inter stack used across the app). */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
     /* Baseline: kill Streamlit theme primary on this app (matches attendance_app NWST) */
     .stApp {{
         background-color: {pc["background"]} !important;
-        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        font-family: 'Inter', sans-serif !important;
         --primary-color: {pc["primary"]} !important;
     }}
     html, body {{
-        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        font-family: 'Inter', sans-serif !important;
     }}
 
     .stApp h1, .stApp h2, .stApp h3,
     .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown li {{
-        font-family: 'Outfit', sans-serif !important;
+        font-family: 'Inter', sans-serif !important;
     }}
     .stApp h1 {{
         color: {pc["text"]} !important;
@@ -712,24 +714,12 @@ def run_streamlit_app() -> None:
     .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown div, .stApp .stMarkdown li {{
         color: {pc["text"]} !important;
     }}
-    .sync-sub {{
-        text-align: center;
-        color: {pc["text_muted"]} !important;
-        font-size: 0.92rem;
-        max-width: 26rem;
-        margin: 0 auto 1.25rem auto;
-        line-height: 1.45;
-        font-family: 'Outfit', sans-serif !important;
-    }}
-    .sync-sub strong {{
-        color: {pc["text"]} !important;
-    }}
     .log-caption {{
         color: {pc["text_muted"]} !important;
         font-size: 0.82rem !important;
         margin-top: 1.25rem !important;
         margin-bottom: 0.35rem !important;
-        font-family: 'Outfit', sans-serif !important;
+        font-family: 'Inter', sans-serif !important;
     }}
 
     [data-testid="stVerticalBlock"] {{
@@ -752,7 +742,7 @@ def run_streamlit_app() -> None:
         border: 2px solid {pc["primary"]} !important;
         border-radius: 0px !important;
         font-family: 'Inter', sans-serif !important;
-        font-weight: 700 !important;
+        font-weight: 600 !important;
         letter-spacing: 0.5px !important;
         font-size: 1.08rem !important;
         min-height: 3.35rem !important;
@@ -796,12 +786,6 @@ def run_streamlit_app() -> None:
     )
 
     st.title("Click me to update")
-    st.markdown(
-        '<p class="sync-sub">Push queued check-ins to Google Sheets, wipe Upstash roster caches, '
-        "refresh theme. <strong>Run log</strong> below resets every time you tap the button — then refresh "
-        "Church Check-in.</p>",
-        unsafe_allow_html=True,
-    )
 
     if SESSION_LOG_KEY not in st.session_state:
         st.session_state[SESSION_LOG_KEY] = []
