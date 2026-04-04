@@ -2,26 +2,16 @@
 """
 Append pending check-in rows from Upstash to Google Sheets (same queues as attendance_app).
 
-Run from cron or a scheduler, not via Streamlit:
+**CLI (cron / terminal):**
   cd "PROJECTS/CHECK IN" && python jobs/flush_pending.py
+  python jobs/flush_pending.py --tabs attendance leaders
 
-Env (same as the app):
-  ATTENDANCE_SHEET_ID
-  UPSTASH_REDIS_REST_URL
-  UPSTASH_REDIS_REST_TOKEN
+**Streamlit UI (button + on-screen log):**
+  cd "PROJECTS/CHECK IN" && streamlit run jobs/flush_pending.py
 
-Google credentials (first match wins):
-  - GCP_SERVICE_ACCOUNT_JSON — env var with the full JSON string
-  - .streamlit/secrets.toml — table [gcp_service_account] (same shapes as local Streamlit / attendance_app)
-  - CHECK IN/credentials.json, cwd credentials.json, or GOOGLE_APPLICATION_CREDENTIALS
-
-Using the same **Streamlit Secrets** as attendance_app:
-
-- **Inside** `streamlit run` (e.g. call `main()` from a button callback in your app): this file reads
-  `st.secrets["gcp_service_account"]`, `ATTENDANCE_SHEET_ID`, and Upstash keys from `st.secrets` when env vars
-  are unset—same as the UI you configured.
-- **Outside** Streamlit (`python jobs/flush_pending.py` on Cloud CI): Secrets UI is **not** loaded; use
-  `.streamlit/secrets.toml`, `credentials.json`, or env vars instead.
+Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
+  credentials.json, GOOGLE_APPLICATION_CREDENTIALS — see module doc in code below.
 """
 from __future__ import annotations
 
@@ -56,11 +46,30 @@ ATTENDANCE_TAB_NAME = "Attendance"
 LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"
 MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
+SESSION_LOG_KEY = "flush_pending_session_log"
 
 
 def get_today_myt_date() -> str:
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt).strftime("%Y-%m-%d")
+
+
+def _log_ts() -> str:
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _emit(
+    message: str,
+    log_lines: list[str] | None,
+    *,
+    err: bool = False,
+    with_ts: bool = True,
+) -> None:
+    line = f"[{_log_ts()} MYT] {message}" if with_ts else message
+    if log_lines is not None:
+        log_lines.append(line)
+    print(line, file=sys.stderr if err else sys.stdout, flush=True)
 
 
 def _tomllib_load(path: Path) -> dict:
@@ -79,7 +88,6 @@ def _tomllib_load(path: Path) -> dict:
 
 
 def _credentials_from_streamlit_secrets_toml(scope: list[str]):
-    """Load [gcp_service_account] from the same TOML file Streamlit uses locally."""
     candidates = []
     env_path = os.getenv("STREAMLIT_SECRETS_FILE", "").strip()
     if env_path:
@@ -101,7 +109,7 @@ def _credentials_from_streamlit_secrets_toml(scope: list[str]):
         try:
             data = _tomllib_load(path)
         except Exception as e:
-            print(f"[flush_pending] Could not read {path}: {e}", file=sys.stderr)
+            _emit(f"Could not read {path}: {e}", None, err=True)
             continue
         gsa = data.get("gcp_service_account")
         if not isinstance(gsa, dict):
@@ -109,13 +117,14 @@ def _credentials_from_streamlit_secrets_toml(scope: list[str]):
         try:
             return Credentials.from_service_account_info(gsa, scopes=scope)
         except Exception as e:
-            print(f"[flush_pending] Invalid gcp_service_account in {path}: {e}", file=sys.stderr)
+            _emit(f"Invalid gcp_service_account in {path}: {e}", None, err=True)
             continue
     return None
 
 
-def _redis_client():
+def _redis_client(log_lines: list[str] | None = None):
     if Redis is None:
+        _emit("upstash_redis package not installed.", log_lines, err=True)
         return None
     url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
     token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
@@ -134,12 +143,11 @@ def _redis_client():
     try:
         return Redis(url=url, token=token)
     except Exception as e:
-        print(f"[flush_pending] Redis connection failed: {e}", file=sys.stderr)
+        _emit(f"Redis connection failed: {e}", log_lines, err=True)
         return None
 
 
 def _credentials_from_streamlit_secrets_runtime(scope: list[str]):
-    """Use Secrets UI / st.secrets — only works in the same process as `streamlit run` (e.g. attendance_app)."""
     try:
         import streamlit as st
     except ImportError:
@@ -150,13 +158,13 @@ def _credentials_from_streamlit_secrets_runtime(scope: list[str]):
         info = dict(st.secrets["gcp_service_account"])
         return Credentials.from_service_account_info(info, scopes=scope)
     except (TypeError, KeyError, ValueError) as e:
-        print(f"[flush_pending] st.secrets['gcp_service_account'] unusable: {e}", file=sys.stderr)
+        _emit(f"st.secrets['gcp_service_account'] unusable: {e}", None, err=True)
         return None
     except Exception:
         return None
 
 
-def _gsheet_client():
+def _gsheet_client(log_lines: list[str] | None = None):
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -164,21 +172,27 @@ def _gsheet_client():
     creds = None
 
     creds = _credentials_from_streamlit_secrets_runtime(scope)
+    if creds and log_lines is not None:
+        _emit("Using Google credentials from Streamlit secrets (gcp_service_account).", log_lines)
 
     json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
     if creds is None and json_blob:
         try:
             info = json.loads(json_blob)
             creds = Credentials.from_service_account_info(info, scopes=scope)
+            if log_lines is not None:
+                _emit("Using GCP_SERVICE_ACCOUNT_JSON from environment.", log_lines)
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            print(f"[flush_pending] GCP_SERVICE_ACCOUNT_JSON is invalid: {e}", file=sys.stderr)
+            _emit(f"GCP_SERVICE_ACCOUNT_JSON is invalid: {e}", log_lines, err=True)
             return None
 
     if creds is None:
         try:
             creds = _credentials_from_streamlit_secrets_toml(scope)
+            if creds and log_lines is not None:
+                _emit("Using [gcp_service_account] from .streamlit/secrets.toml.", log_lines)
         except RuntimeError as e:
-            print(f"[flush_pending] {e}", file=sys.stderr)
+            _emit(str(e), log_lines, err=True)
 
     if creds is None:
         paths_to_try = [
@@ -193,21 +207,19 @@ def _gsheet_client():
             if p.is_file():
                 try:
                     creds = Credentials.from_service_account_file(str(p), scopes=scope)
+                    if log_lines is not None:
+                        _emit(f"Using service account file: {p}", log_lines)
                     break
                 except Exception as e:
-                    print(f"[flush_pending] Could not load {p}: {e}", file=sys.stderr)
+                    _emit(f"Could not load {p}: {e}", log_lines, err=True)
                     return None
 
     if creds is None:
-        print(
-            "[flush_pending] No Google credentials. Tried (in order):\n"
-            "  1) st.secrets['gcp_service_account'] — only when this runs inside the same process as Streamlit\n"
-            "  2) GCP_SERVICE_ACCOUNT_JSON\n"
-            "  3) .streamlit/secrets.toml [gcp_service_account]\n"
-            "  4) credentials.json / GOOGLE_APPLICATION_CREDENTIALS\n"
-            "Plain `python jobs/flush_pending.py` on Streamlit Cloud does not load the Secrets UI; run flush from\n"
-            "the app (e.g. import and call main() from a Streamlit callback), or use files/env on the host.",
-            file=sys.stderr,
+        _emit(
+            "No Google credentials. Tried: st.secrets → GCP_SERVICE_ACCOUNT_JSON → "
+            "secrets.toml → credentials.json / GOOGLE_APPLICATION_CREDENTIALS.",
+            log_lines,
+            err=True,
         )
         return None
     return gspread.authorize(creds)
@@ -226,21 +238,49 @@ def _ensure_attendance_worksheet(spreadsheet, tab_name: str):
     return sh
 
 
-def flush_pending_attendance_for_tabs(client, sheet_id: str, tab_names: list[str]) -> tuple[bool, str]:
+def _resolve_sheet_id(log_lines: list[str] | None = None) -> str:
+    sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "").strip()
+    if not sheet_id:
+        try:
+            import streamlit as st
+
+            sheet_id = (st.secrets.get("ATTENDANCE_SHEET_ID") or "").strip()
+            if sheet_id and log_lines is not None:
+                _emit("Using ATTENDANCE_SHEET_ID from Streamlit secrets.", log_lines)
+        except Exception:
+            pass
+    return sheet_id
+
+
+def flush_pending_attendance_for_tabs(
+    client,
+    sheet_id: str,
+    tab_names: list[str],
+    log_lines: list[str] | None = None,
+) -> tuple[bool, str]:
     if not client or not sheet_id.strip():
-        return False, "Google Sheets client or ATTENDANCE_SHEET_ID not available."
-    redis_client = _redis_client()
+        m = "Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(m, log_lines, err=True)
+        return False, m
+
+    redis_client = _redis_client(log_lines)
     if not redis_client:
-        print("[flush_pending] No Upstash Redis configured; nothing to flush from queues.")
-        return True, ""
+        m = "Upstash not configured — there is no pending queue (check-ins write straight to the sheet)."
+        _emit(m, log_lines)
+        return True, m
+
     today_myt = get_today_myt_date()
-    total_rows = 0
+    _emit(f"Today (MYT): {today_myt}; tabs: {', '.join(tab_names)}", log_lines)
+
     try:
         spreadsheet = client.open_by_key(sheet_id)
+        total_rows = 0
+        parts = []
         for tab_name in tab_names:
             pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
             raw_items = redis_client.lrange(pk, 0, -1)
             if not raw_items:
+                _emit(f"  {tab_name}: pending queue empty (skip).", log_lines)
                 continue
             rows = []
             for raw in raw_items:
@@ -250,20 +290,31 @@ def flush_pending_attendance_for_tabs(client, sheet_id: str, tab_names: list[str
             sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
             sh.append_rows(rows)
             redis_client.delete(pk)
-            total_rows += len(rows)
-            print(f"[flush_pending] {today_myt} {tab_name}: wrote {len(rows)} row(s), cleared pending key.")
+            n = len(rows)
+            total_rows += n
+            parts.append(f"{tab_name}: {n}")
+            _emit(f"  {tab_name}: appended {n} row(s), cleared Redis pending key.", log_lines)
+
         if total_rows == 0:
-            print(f"[flush_pending] {today_myt}: no pending rows for tabs {tab_names}.")
-        return True, ""
+            summary = f"No pending rows for {today_myt} (all queues empty or already flushed)."
+            _emit(summary, log_lines)
+            return True, summary
+
+        summary = f"Wrote {total_rows} pending row(s) to Google Sheets — " + "; ".join(parts)
+        _emit(summary, log_lines)
+        return True, summary
     except gspread.exceptions.APIError as e:
-        if "429" in str(e) or "Quota exceeded" in str(e):
-            return False, "API quota exceeded. Try again in a moment."
-        return False, str(e)
+        m = "API quota exceeded. Try again in a moment." if (
+            "429" in str(e) or "Quota exceeded" in str(e)
+        ) else str(e)
+        _emit(m, log_lines, err=True)
+        return False, m
     except Exception as e:
+        _emit(str(e), log_lines, err=True)
         return False, str(e)
 
 
-def main() -> int:
+def main_cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Flush pending attendance from Upstash to Google Sheets.")
     parser.add_argument(
         "--tabs",
@@ -272,18 +323,12 @@ def main() -> int:
         default=["all"],
         help="Which queues to flush (default: all three sheet tabs).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "").strip()
+    log_lines: list[str] = []
+    sheet_id = _resolve_sheet_id(log_lines)
     if not sheet_id:
-        try:
-            import streamlit as st
-
-            sheet_id = (st.secrets.get("ATTENDANCE_SHEET_ID") or "").strip()
-        except Exception:
-            pass
-    if not sheet_id:
-        print("[flush_pending] Set ATTENDANCE_SHEET_ID in the environment or Streamlit secrets.", file=sys.stderr)
+        _emit("Set ATTENDANCE_SHEET_ID in the environment or Streamlit secrets.", log_lines, err=True)
         return 1
 
     if "all" in args.tabs:
@@ -296,16 +341,103 @@ def main() -> int:
         }
         tab_names = [mapping[t] for t in args.tabs]
 
-    client = _gsheet_client()
+    client = _gsheet_client(log_lines)
     if not client:
         return 1
 
-    ok, err = flush_pending_attendance_for_tabs(client, sheet_id, tab_names)
-    if not ok:
-        print(f"[flush_pending] FAILED: {err}", file=sys.stderr)
-        return 1
-    return 0
+    ok, _msg = flush_pending_attendance_for_tabs(client, sheet_id, tab_names, log_lines=log_lines)
+    return 0 if ok else 1
+
+
+def run_streamlit_app() -> None:
+    import streamlit as st
+
+    st.set_page_config(page_title="Flush pending check-ins", layout="centered")
+    st.title("Flush pending check-ins")
+    st.markdown(
+        "Writes queued Upstash rows to **Google Sheets** (Attendance, Leaders Attendance, Ministry Attendance "
+        "for today in MYT). Uses the same **Secrets** as your main app when deployed on Streamlit."
+    )
+
+    if SESSION_LOG_KEY not in st.session_state:
+        st.session_state[SESSION_LOG_KEY] = []
+
+    tab_choice = st.multiselect(
+        "Tabs to flush",
+        options=["attendance", "leaders", "ministry", "all"],
+        default=["all"],
+        help="Choose which sheet tabs to process. Include **all** to clear every pending queue for today.",
+    )
+    if not tab_choice:
+        st.warning("Select at least one tab.")
+        tab_choice = ["all"]
+
+    if st.button("Run flush now", type="primary", use_container_width=True):
+        run_log: list[str] = []
+        st.session_state[SESSION_LOG_KEY].append(f"--- run started ---")
+
+        sheet_id = _resolve_sheet_id(run_log)
+        if not sheet_id:
+            st.error("ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
+            st.session_state[SESSION_LOG_KEY].extend(run_log)
+        else:
+            with st.spinner("Flushing…"):
+                client = _gsheet_client(run_log)
+                if not client:
+                    st.session_state[SESSION_LOG_KEY].extend(run_log)
+                    st.error("Could not build Google Sheets client — see log below.")
+                else:
+                    if "all" in tab_choice:
+                        tab_names = [
+                            ATTENDANCE_TAB_NAME,
+                            LEADERS_ATTENDANCE_TAB_NAME,
+                            MINISTRY_ATTENDANCE_TAB_NAME,
+                        ]
+                    else:
+                        mapping = {
+                            "attendance": ATTENDANCE_TAB_NAME,
+                            "leaders": LEADERS_ATTENDANCE_TAB_NAME,
+                            "ministry": MINISTRY_ATTENDANCE_TAB_NAME,
+                        }
+                        tab_names = [mapping[t] for t in tab_choice if t != "all"]
+
+                    ok, summary = flush_pending_attendance_for_tabs(
+                        client, sheet_id, tab_names, log_lines=run_log
+                    )
+                    st.session_state[SESSION_LOG_KEY].extend(run_log)
+                    if ok:
+                        st.success(summary)
+                        toast = getattr(st, "toast", None)
+                        if toast:
+                            toast("Flush completed", icon="✅")
+                    else:
+                        st.error(summary or "Flush failed.")
+
+        st.rerun()
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Clear on-screen log"):
+            st.session_state[SESSION_LOG_KEY] = []
+            st.rerun()
+    with col_b:
+        st.caption(f"{len(st.session_state[SESSION_LOG_KEY])} line(s) in session log")
+
+    with st.expander("Session log", expanded=True):
+        st.code("\n".join(st.session_state[SESSION_LOG_KEY]) or "(empty)", language="text")
+
+
+def _inside_streamlit_script_run() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    if _inside_streamlit_script_run():
+        run_streamlit_app()
+    else:
+        sys.exit(main_cli())
