@@ -1936,6 +1936,34 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             placeholder = ""
             options_with_placeholder = [placeholder] + formatted_options
 
+            # Gradient instruction pill above the dropdown
+            newcomer_note_html = f"""
+            <div style="
+                margin-bottom: 1rem;
+                padding: 2px;
+                background: linear-gradient(135deg, {page_colors['primary']} 0%, {page_colors['light']} 50%, {page_colors['primary']} 100%);
+                border-radius: 999px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.12), 0 0 20px {page_colors['primary']}20;
+            ">
+                <div style="
+                    padding: 0.55rem 1.2rem;
+                    background: {page_colors['background']};
+                    border-radius: 999px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    font-family: 'Outfit', 'Inter', -apple-system, sans-serif;
+                    font-size: 0.88rem;
+                    font-weight: 500;
+                    color: {page_colors['text']};
+                    letter-spacing: 0.03em;
+                ">
+                    <span>Select a name from dropdown below to check in.</span>
+                </div>
+            </div>
+            """
+            st.markdown(newcomer_note_html, unsafe_allow_html=True)
+
             # Auto-submit selectbox
             selected_display = st.selectbox(
                 "Select your name",
@@ -2216,6 +2244,34 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             # Add placeholder at the beginning
             placeholder = ""
             options_with_placeholder = [placeholder] + formatted_options
+
+            # Gradient instruction pill above the dropdown
+            newcomer_note_html = f"""
+            <div style="
+                margin-bottom: 1rem;
+                padding: 2px;
+                background: linear-gradient(135deg, {page_colors['primary']} 0%, {page_colors['light']} 50%, {page_colors['primary']} 100%);
+                border-radius: 999px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.12), 0 0 20px {page_colors['primary']}20;
+            ">
+                <div style="
+                    padding: 0.55rem 1.2rem;
+                    background: {page_colors['background']};
+                    border-radius: 999px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    font-family: 'Outfit', 'Inter', -apple-system, sans-serif;
+                    font-size: 0.88rem;
+                    font-weight: 500;
+                    color: {page_colors['text']};
+                    letter-spacing: 0.03em;
+                ">
+                    <span>Select a name from dropdown below to check in.</span>
+                </div>
+            </div>
+            """
+            st.markdown(newcomer_note_html, unsafe_allow_html=True)
 
             # Auto-submit selectbox
             selected_display = st.selectbox(
