@@ -57,32 +57,79 @@ REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with da
 # Rows not yet appended to Google Sheets (flushed via admin flush-pending job / tooling)
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
 
-# Confetti snippet (check-in celebration)
+# Confetti snippet (check-in celebration). Runs in Streamlit html component: use parent document.
+# Loads library once in parent; fires burst as soon as confetti is available (next run after check-in).
 CHECKIN_CONFETTI_HTML = """
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 <script>
-    var existingCanvas = parent.document.getElementById('confetti-canvas');
-    if (existingCanvas) { existingCanvas.remove(); }
-    var canvas = parent.document.createElement('canvas');
-    canvas.id = 'confetti-canvas';
-    canvas.style.position = 'fixed';
-    canvas.style.top = '0';
-    canvas.style.left = '0';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.pointerEvents = 'none';
-    canvas.style.zIndex = '9999';
-    parent.document.body.appendChild(canvas);
-    var myConfetti = confetti.create(canvas, { resize: true });
-    myConfetti({
-        particleCount: 150,
-        spread: 100,
-        origin: { x: 0.5, y: 0.5 },
-        colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
-    });
-    setTimeout(function() { myConfetti.reset(); canvas.remove(); }, 3000);
+(function () {
+    var doc = parent.document;
+    var win = parent;
+    function burst() {
+        if (typeof win.confetti !== 'function') return;
+        var existing = doc.getElementById('confetti-canvas');
+        if (existing) { existing.remove(); }
+        var canvas = doc.createElement('canvas');
+        canvas.id = 'confetti-canvas';
+        canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';
+        doc.body.appendChild(canvas);
+        var myConfetti = win.confetti.create(canvas, { resize: true });
+        myConfetti({
+            particleCount: 110,
+            spread: 92,
+            startVelocity: 38,
+            origin: { x: 0.5, y: 0.45 },
+            colors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff']
+        });
+        setTimeout(function() { try { myConfetti.reset(); } catch(e) {} canvas.remove(); }, 2400);
+    }
+    if (typeof win.confetti === 'function') {
+        burst();
+        return;
+    }
+    var existing = doc.querySelector('script[data-nwst-confetti="1"]');
+    if (existing) {
+        existing.addEventListener('load', burst, { once: true });
+        return;
+    }
+    var s = doc.createElement('script');
+    s.setAttribute('data-nwst-confetti', '1');
+    s.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js';
+    s.onload = burst;
+    doc.head.appendChild(s);
+})();
 </script>
 """
+
+# After st.rerun(), show confetti on the fresh run (otherwise the iframe is destroyed before the burst runs).
+SESSION_PENDING_CHECKIN_CONFETTI = "_pending_checkin_confetti"
+
+
+def _checkin_indeterminate_bar_html(primary: str, keyframe_name: str) -> str:
+    """Slim animated bar for use inside components.html (shows motion during blocking I/O)."""
+    return f"""
+    <div style="width:100%;height:6px;background:rgba(0,0,0,0.1);border-radius:4px;overflow:hidden;margin:0;">
+      <div style="height:100%;width:38%;background:{primary};border-radius:4px;opacity:0.95;animation:{keyframe_name} 1.1s ease-in-out infinite;"></div>
+    </div>
+    <style>@keyframes {keyframe_name}{{0%{{transform:translateX(-130%)}}100%{{transform:translateX(380%)}}}}</style>
+    """
+
+
+def _loading_bar_with_progress(page_colors_dict, caption: str, *, keyframe_name: str) -> tuple:
+    """Indeterminate strip + Streamlit progress. Returns (container_empty, progress_bar)."""
+    primary = page_colors_dict.get("primary", "#22c55e")
+    wrap = st.empty()
+    with wrap.container():
+        components.html(
+            _checkin_indeterminate_bar_html(primary, keyframe_name),
+            height=32,
+        )
+        try:
+            bar = st.progress(0, text=caption)
+        except TypeError:
+            st.caption(caption)
+            bar = st.progress(0)
+    return wrap, bar
+
 
 def get_today_myt_date():
     """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
@@ -1794,9 +1841,32 @@ all_option_values = list(options.values())[0]
 
 def render_check_in_form(tab_name, form_key, page_label="Check In"):
     """Render the check-in form for a specific tab"""
-    # Get list of people who have already checked in today (MYT) for this specific tab
-    with st.spinner("Checking today's attendance..."):
+    if st.session_state.pop(SESSION_PENDING_CHECKIN_CONFETTI, None) == form_key:
+        components.html(CHECKIN_CONFETTI_HTML, height=0)
+
+    if st.session_state.get('show_undo_success'):
+        st.info(f"↩️ {st.session_state['show_undo_success']}")
+        st.session_state['show_undo_success'] = None
+
+    show_success = st.session_state.get('show_checkin_success')
+    if show_success and show_success.get('form_key') == form_key:
+        name_only = show_success.get('name', '').split(" - ")[0] if show_success.get('name') else ''
+        st.success(f"✅ {name_only} checked in!")
+        st.session_state['show_checkin_success'] = None
+
+    _fetch_wrap, _fetch_bar = _loading_bar_with_progress(
+        page_colors,
+        "Loading today's attendance…",
+        keyframe_name="nwst-roster-load",
+    )
+    try:
         checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
+        try:
+            _fetch_bar.progress(1.0)
+        except Exception:
+            pass
+    finally:
+        _fetch_wrap.empty()
 
     # Keep all options but track which are already checked in
     available_options = [opt for opt in all_option_values if opt not in checked_in_today]
@@ -1871,19 +1941,6 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             """, height=60)
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
-
-        # Show undo banner if just undone
-        if 'show_undo_success' in st.session_state and st.session_state['show_undo_success']:
-            st.info(f"↩️ {st.session_state['show_undo_success']}")
-            st.session_state['show_undo_success'] = None
-
-        # Show success banner ABOVE the selectbox (but undo button will be below)
-        show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
-        if show_success:
-            success_info = st.session_state['show_checkin_success']
-            name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
-            st.success(f"✅ {name_only} checked in!")
-            st.session_state['show_checkin_success'] = None
 
         # Check if there are any available options
         if not available_options:
@@ -2013,7 +2070,19 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         "option_type": option_type
                     }
 
-                    success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+                    _save_wrap, _save_bar = _loading_bar_with_progress(
+                        page_colors,
+                        "Checking you in…",
+                        keyframe_name="nwst-checkin-save",
+                    )
+                    try:
+                        success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+                        try:
+                            _save_bar.progress(1.0)
+                        except Exception:
+                            pass
+                    finally:
+                        _save_wrap.empty()
 
                     if success:
                         # Store last check-in for potential undo
@@ -2028,14 +2097,15 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         st.session_state.last_refresh_time = get_now_myt()
 
                         name_only = original_name.split(" - ")[0] if " - " in original_name else original_name
-                        components.html(CHECKIN_CONFETTI_HTML, height=0)
+                        st.session_state[SESSION_PENDING_CHECKIN_CONFETTI] = form_key
                         toast_fn = getattr(st, "toast", None)
                         if toast_fn:
                             toast_fn(f"Checked in: {name_only}", icon="✅")
 
                         st.session_state['show_checkin_success'] = {
                             'name': original_name,
-                            'message': message
+                            'message': message,
+                            'form_key': form_key,
                         }
                         st.session_state[f'{form_key}_reset_selectbox'] = True
                         st.session_state['last_processed_checkin'] = None
@@ -2103,9 +2173,32 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         st.warning(f"No members found for {selected_ministry} ministry.")
         return set()
 
-    # Get list of people who have already checked in today for ministry attendance
-    with st.spinner("Checking today's attendance..."):
+    if st.session_state.pop(SESSION_PENDING_CHECKIN_CONFETTI, None) == form_key:
+        components.html(CHECKIN_CONFETTI_HTML, height=0)
+
+    if st.session_state.get('show_undo_success'):
+        st.info(f"↩️ {st.session_state['show_undo_success']}")
+        st.session_state['show_undo_success'] = None
+
+    show_success = st.session_state.get('show_checkin_success')
+    if show_success and show_success.get('form_key') == form_key:
+        name_only = show_success.get('name', '').split(" - ")[0] if show_success.get('name') else ''
+        st.success(f"✅ {name_only} checked in!")
+        st.session_state['show_checkin_success'] = None
+
+    _fetch_wrap_m, _fetch_bar_m = _loading_bar_with_progress(
+        page_colors,
+        "Loading today's attendance…",
+        keyframe_name="nwst-roster-load-m",
+    )
+    try:
         checked_in_today = get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME)
+        try:
+            _fetch_bar_m.progress(1.0)
+        except Exception:
+            pass
+    finally:
+        _fetch_wrap_m.empty()
 
     # Keep all options but track which are already checked in
     available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
@@ -2179,19 +2272,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             """, height=60)
         else:
             st.markdown('<p style="font-size: 1rem; margin-bottom: 1rem; text-align: center;">Select a name from the dropdown below to check in.</p>', unsafe_allow_html=True)
-
-        # Show undo banner if just undone
-        if 'show_undo_success' in st.session_state and st.session_state['show_undo_success']:
-            st.info(f"↩️ {st.session_state['show_undo_success']}")
-            st.session_state['show_undo_success'] = None
-
-        # Show success banner ABOVE the selectbox (but undo button will be below)
-        show_success = 'show_checkin_success' in st.session_state and st.session_state['show_checkin_success']
-        if show_success:
-            success_info = st.session_state['show_checkin_success']
-            name_only = success_info.get('name', '').split(" - ")[0] if success_info.get('name') else ''
-            st.success(f"✅ {name_only} checked in!")
-            st.session_state['show_checkin_success'] = None
 
         # Check if there are any available options
         if not available_options:
@@ -2315,7 +2395,19 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         "option_type": "Name"
                     }
 
-                    success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+                    _save_wrap_m, _save_bar_m = _loading_bar_with_progress(
+                        page_colors,
+                        "Checking you in…",
+                        keyframe_name="nwst-checkin-save-m",
+                    )
+                    try:
+                        success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+                        try:
+                            _save_bar_m.progress(1.0)
+                        except Exception:
+                            pass
+                    finally:
+                        _save_wrap_m.empty()
 
                     if success:
                         # Store last check-in for potential undo
@@ -2331,14 +2423,15 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         st.session_state.last_refresh_time = get_now_myt()
 
                         name_only = original_name.split(" - ")[0] if " - " in original_name else original_name
-                        components.html(CHECKIN_CONFETTI_HTML, height=0)
+                        st.session_state[SESSION_PENDING_CHECKIN_CONFETTI] = form_key
                         toast_fn = getattr(st, "toast", None)
                         if toast_fn:
                             toast_fn(f"Checked in: {name_only}", icon="✅")
 
                         st.session_state['show_checkin_success'] = {
                             'name': original_name,
-                            'message': message
+                            'message': message,
+                            'form_key': form_key,
                         }
                         st.session_state[f'{form_key}_reset_selectbox'] = True
                         st.session_state['last_processed_ministry_checkin'] = None
