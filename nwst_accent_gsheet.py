@@ -1,4 +1,6 @@
-"""Optional accent overrides from the shared CHECK IN spreadsheet (ATTENDANCE_SHEET_ID).
+"""Read the **Theme Override** tab on the CHECK IN spreadsheet (ATTENDANCE_SHEET_ID).
+
+Used only from ``refresh_theme_override_shared_cache`` (Upstash snapshot); normal page loads read Redis.
 
 Add a tab named **Theme Override** with a header row, e.g.:
 
