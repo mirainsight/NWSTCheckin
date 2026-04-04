@@ -117,6 +117,36 @@ def clear_redis_cache_for_today(tab_name=None):
         pass
 
 
+def _refresh_theme_override_redis_after_resync():
+    """CHECK IN trigger: after Update names, snapshot Theme Override into shared Upstash (same key NWST uses)."""
+    if not (SHEET_ID or "").strip():
+        return
+    redis_client = get_redis_client()
+    if not redis_client:
+        return
+    client = get_gsheet_client()
+    if not client:
+        return
+    p = Path(__file__).resolve().parent
+    mod = None
+    for _ in range(15):
+        cfg = p / "nwst_accent_config.py"
+        if cfg.is_file():
+            spec = importlib.util.spec_from_file_location("_nwst_accent_cfg_refresh", cfg)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            break
+        if p.parent == p:
+            break
+        p = p.parent
+    if mod is None:
+        return
+    try:
+        mod.refresh_theme_override_shared_cache(redis_client, client, SHEET_ID)
+    except Exception:
+        pass
+
+
 def perform_hard_sheet_resync(mode="congregation"):
     """Clear Redis + Streamlit caches so the app re-fetches from Google Sheets.
 
@@ -146,6 +176,7 @@ def perform_hard_sheet_resync(mode="congregation"):
                 redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
             except Exception:
                 pass
+        _refresh_theme_override_redis_after_resync()
         return
 
     # congregation (default)
@@ -160,6 +191,7 @@ def perform_hard_sheet_resync(mode="congregation"):
             redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
         except Exception:
             pass
+    _refresh_theme_override_redis_after_resync()
 
 
 def render_update_names_sheet_popover(sync_mode, confirm_button_key):
@@ -606,7 +638,7 @@ _nwst_accent_cfg_mod = None
 
 
 def _accent_overrides_from_project_config():
-    """Load nwst_accent_config.py from parent PROJECTS folder (shared with NWST Health)."""
+    """Load nwst_accent_config.py from this folder or an ancestor (next to nwst_accent_*.py)."""
     global _nwst_accent_cfg_mod
     if _nwst_accent_cfg_mod is None:
         p = Path(__file__).resolve().parent
@@ -626,33 +658,24 @@ def _accent_overrides_from_project_config():
     return _nwst_accent_cfg_mod.get_accent_override_by_date()
 
 
-@st.cache_data(ttl=120)
-def _theme_overrides_from_gsheet_cached(sheet_id: str):
-    """Rows from tab Theme Override on ATTENDANCE_SHEET_ID (cached ~2 min)."""
-    if not (sheet_id or "").strip():
-        return {}
-    client = get_gsheet_client()
-    if not client:
-        return {}
-    p = Path(__file__).resolve().parent
-    for _ in range(15):
-        gpath = p / "nwst_accent_gsheet.py"
-        if gpath.is_file():
-            spec = importlib.util.spec_from_file_location("_nwst_accent_gsheet", gpath)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod.fetch_accent_overrides_from_gsheet(client, sheet_id)
-        if p.parent == p:
-            break
-        p = p.parent
+def _theme_overrides_from_redis():
+    """Theme Override rows from Upstash (refreshed on Update names / NWST sheet sync)."""
+    redis_client = get_redis_client()
+    if not _nwst_accent_cfg_mod:
+        _accent_overrides_from_project_config()
+    if _nwst_accent_cfg_mod:
+        try:
+            return _nwst_accent_cfg_mod.read_theme_override_from_redis(redis_client)
+        except Exception:
+            return {}
     return {}
 
 
 def resolve_theme_override_row_for_today():
-    """Today's row from JSON + Theme Override sheet: optional primary hex and/or banner filename."""
+    """Today's row from JSON + Theme Override (Redis snapshot): optional primary hex and/or banner."""
     today = get_today_myt_date()
     from_file = _accent_overrides_from_project_config()
-    from_sheet = _theme_overrides_from_gsheet_cached(SHEET_ID) if SHEET_ID else {}
+    from_sheet = _theme_overrides_from_redis()
     if _nwst_accent_cfg_mod:
         merged = _nwst_accent_cfg_mod.merge_theme_override_maps(from_file, from_sheet)
     else:
