@@ -14,8 +14,6 @@ import pandas as pd
 import plotly.express as px
 import hashlib
 import colorsys
-import qrcode
-from io import BytesIO
 
 # Upstash Redis for caching (reduces Google Sheets API calls)
 try:
@@ -56,7 +54,7 @@ REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date a
 REDIS_HISTORICAL_KEY_PREFIX = "attendance:historical:"  # For historical date queries
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with date
-# Rows not yet appended to Google Sheets (flushed on Update names → Sync)
+# Rows not yet appended to Google Sheets (flushed via admin flush-pending job / tooling)
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
 
 # Confetti snippet (check-in celebration)
@@ -200,7 +198,7 @@ def perform_hard_sheet_resync(mode="congregation"):
                 if rc.lrange(pk, 0, 0):
                     st.error(
                         "Google Sheets is not connected, but there are check-ins waiting to be written. "
-                        "Fix credentials, then use **Update names** again."
+                        "Fix credentials, then try again."
                     )
                     return
     else:
@@ -245,23 +243,6 @@ def perform_hard_sheet_resync(mode="congregation"):
         except Exception:
             pass
     _refresh_theme_override_redis_after_resync()
-
-
-def render_update_names_sheet_popover(sync_mode, confirm_button_key):
-    """Popover next to I'm New / toolbar: flush pending check-ins to Sheets, then full resync.
-
-    sync_mode: \"congregation\" | \"ministry\"
-    confirm_button_key: unique st.button key (Streamlit requirement).
-    """
-    with st.popover("Update names", use_container_width=True):
-        st.caption(
-            "If newcomer's name is missing, or you edited the roster, use this."
-            "\n\nCheck-ins are saved to Upstash first; **Sync** writes them to Google Sheets and reloads roster data."
-            "\n\nTap **once**, wait until it finishes, then check again. It's slower than **Refresh** — don't keep tapping."
-        )
-        if st.button("Sync with Google Sheets", type="primary", key=confirm_button_key):
-            perform_hard_sheet_resync(sync_mode)
-            st.rerun()
 
 
 def get_gsheet_client():
@@ -358,10 +339,12 @@ def flush_pending_attendance_for_tabs(client, tab_names):
         return False, "Google Sheets client or ATTENDANCE_SHEET_ID not available."
     redis_client = get_redis_client()
     if not redis_client:
-        return True, ""
+        return True, "Upstash not configured — there is no pending queue (check-ins write straight to the sheet)."
     today_myt = get_today_myt_date()
     try:
         spreadsheet = client.open_by_key(SHEET_ID)
+        total_rows = 0
+        parts = []
         for tab_name in tab_names:
             pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
             raw_items = redis_client.lrange(pk, 0, -1)
@@ -375,7 +358,12 @@ def flush_pending_attendance_for_tabs(client, tab_names):
             sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
             sh.append_rows(rows)
             redis_client.delete(pk)
-        return True, ""
+            n = len(rows)
+            total_rows += n
+            parts.append(f"{tab_name}: {n}")
+        if total_rows == 0:
+            return True, f"No pending rows for {today_myt} (queues empty or already flushed)."
+        return True, f"Wrote {total_rows} pending row(s) to Google Sheets — " + "; ".join(parts)
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
             return False, "API quota exceeded. Try again in a moment."
@@ -1103,9 +1091,8 @@ def get_newcomers_count(_client, sheet_id, refresh_key=0):
     Returns: tuple (count, list_of_newcomers)
         where list_of_newcomers is a list of dicts with 'name' and 'cell' keys
 
-    Uses Upstash Redis caching - only pulls from gsheet when:
-    - I'm New button clicked twice, or
-    - Newcomer Form Filled button pressed (which clears the cache)
+    Uses Upstash Redis caching — see ``REDIS_CACHE_TTL``; **Refresh** in the app clears the newcomers key
+    so counts update after new form responses.
     """
     today_myt = get_today_myt_date()
     redis_key = f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}"
@@ -1273,7 +1260,8 @@ def get_attendance_data_for_date(_client, sheet_id, target_date, tab_name=ATTEND
         return {}, [], []
 
 def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NAME):
-    """Queue check-ins in Upstash first; rows are appended to Google Sheets on **Update names → Sync**.
+    """Queue check-ins in Upstash first; rows are appended to Google Sheets when pending queues are flushed
+    (admin **flush pending** job / tooling).
 
     If Redis is unavailable, falls back to appending directly to the sheet (legacy behaviour).
     Supports batch check-ins."""
@@ -1585,25 +1573,6 @@ st.markdown(f"""
         background-color: {page_colors['primary']} !important;
         color: {page_colors['background']} !important;
         transform: scale(1.02) !important;
-    }}
-
-    /* Update names popover trigger only (secondary); inner primary confirm keeps normal primary styles */
-    [data-testid="stPopover"] button[kind="secondary"] {{
-        background-color: {page_colors['primary']} !important;
-        color: {page_colors['background']} !important;
-        border: 2px solid {page_colors['primary']} !important;
-        border-radius: 0px !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-    }}
-    [data-testid="stPopover"] button[kind="secondary"]:hover {{
-        background-color: {page_colors['light']} !important;
-        border-color: {page_colors['light']} !important;
-        color: {page_colors['background']} !important;
-    }}
-    [data-testid="stPopover"] button[kind="secondary"]:focus-visible {{
-        box-shadow: 0 0 0 2px {page_colors['background']}, 0 0 0 4px {page_colors['primary']} !important;
     }}
 
     /* Primary buttons (Check In, Close) */
@@ -1983,7 +1952,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Click <strong>Update names</strong></span>
+                    <span>Newcomer name not appearing? Tap <strong>Refresh</strong> after the roster is updated.</span>
                 </div>
             </div>
             """
@@ -2289,7 +2258,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Click <strong>Update names</strong></span>
+                    <span>Newcomer name not appearing? Tap <strong>Refresh</strong> after the roster is updated.</span>
                 </div>
             </div>
             """
@@ -2936,327 +2905,45 @@ def render_ministry_dashboard(selected_ministry):
 
 
 def render_qr_section():
-    """Render the I'm New QR code section with newcomer form workflow"""
+    """Toolbar above check-in: refresh roster cache."""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_refresh, col_qr_new, col_qr_update_names, col_qr_new_right = st.columns([1, 1, 1, 3])
+    col_qr_refresh, _col_trailing = st.columns([1, 4])
     with col_qr_refresh:
         if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", use_container_width=True):
             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
             st.session_state.last_refresh_time = get_now_myt()
             get_today_attendance_data.clear()
             get_options_from_sheet.clear()
+            get_newcomers_count.clear()
+            redis_client = get_redis_client()
+            if redis_client:
+                try:
+                    today_myt = get_today_myt_date()
+                    redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                except Exception:
+                    pass
             st.rerun()
-    with col_qr_new:
-        if st.button("I'm New!", type="secondary", use_container_width=True, key="new_btn"):
-            if st.session_state.get('show_qr_modal', False):
-                # Modal is already open - perform hard refresh (same as Newcomer Form Filled)
-                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                st.session_state.last_refresh_time = get_now_myt()
-                st.session_state.show_newcomers_count = True
-                get_newcomers_count.clear()
-                # Clear local Streamlit caches
-                get_today_attendance_data.clear()
-                get_options_from_sheet.clear()
-                # Clear Redis cache for options AND attendance data AND newcomers
-                redis_client = get_redis_client()
-                if redis_client:
-                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
-                        client, [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]
-                    )
-                    if not ok_flush:
-                        st.error(f"Could not save pending check-ins: {err_flush}")
-                        st.stop()
-                    try:
-                        redis_client.delete(REDIS_OPTIONS_KEY)
-                        # Also clear attendance data cache
-                        today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
-                        # Clear newcomers cache to force fresh pull from gsheet
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                    except Exception:
-                        pass
-                st.session_state.show_qr_modal = False
-            else:
-                # Open the modal
-                st.session_state.show_qr_modal = True
-            st.rerun()
-
-    with col_qr_update_names:
-        render_update_names_sheet_popover("congregation", "hard_sync_qr_congregation")
-
-    # Show QR code in modal/spotlight mode
-    if st.session_state.get('show_qr_modal', False):
-        # Generate QR code
-        feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(feedback_url)
-        qr.make(fit=True)
-        qr_img = qr.make_image(fill_color="black", back_color="white")
-
-        # Convert to base64 for embedding in HTML
-        buffer = BytesIO()
-        qr_img.save(buffer, format="PNG")
-        import base64
-        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-        # Modal overlay with QR code
-        components.html(f"""
-        <style>
-            .modal-overlay {{
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
-                background: rgba(0, 0, 0, 0.85);
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 9999;
-                backdrop-filter: blur(5px);
-            }}
-            .modal-content {{
-                background: #1a1a1a;
-                padding: 2rem;
-                border-radius: 16px;
-                text-align: center;
-                max-width: 350px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-            }}
-            .qr-image {{
-                width: 250px;
-                height: 250px;
-                border-radius: 8px;
-            }}
-            .modal-title {{
-                color: #fff;
-                font-size: 1.3rem;
-                margin-bottom: 1rem;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }}
-            .modal-subtitle {{
-                color: #888;
-                font-size: 0.9rem;
-                margin-top: 1rem;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }}
-            .link-btn {{
-                color: #4da6ff;
-                text-decoration: none;
-                font-size: 0.95rem;
-            }}
-            .link-btn:hover {{
-                text-decoration: underline;
-            }}
-        </style>
-        <div class="modal-overlay" id="qrModal">
-            <div class="modal-content">
-                <div class="modal-title">Welcome! Scan to fill out the form</div>
-                <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
-                <div class="modal-subtitle">
-                    <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
-                </div>
-            </div>
-        </div>
-        """, height=500)
-
-        # Button: Newcomer Form Filled (centered)
-        col_spacer1, col_filled, col_spacer2 = st.columns([1, 2, 1])
-        with col_filled:
-            if st.button("Newcomer Form Filled", type="secondary", use_container_width=True, key="newcomer_filled"):
-                # Hard refresh - clear all caches and reload from Google Sheets
-                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                st.session_state.last_refresh_time = get_now_myt()
-                st.session_state.show_newcomers_count = True
-                get_newcomers_count.clear()
-                # Clear local Streamlit caches
-                get_today_attendance_data.clear()
-                get_options_from_sheet.clear()
-                # Clear Redis cache for options AND attendance data AND newcomers
-                redis_client = get_redis_client()
-                if redis_client:
-                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
-                        client, [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME]
-                    )
-                    if not ok_flush:
-                        st.error(f"Could not save pending check-ins: {err_flush}")
-                        st.stop()
-                    try:
-                        redis_client.delete(REDIS_OPTIONS_KEY)
-                        # Also clear attendance data cache
-                        today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
-                        # Clear newcomers cache to force fresh pull from gsheet
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                    except Exception:
-                        pass
-                st.session_state.show_qr_modal = False
-                st.rerun()
 
 
 def render_ministry_qr_section(selected_ministry):
-    """Render the I'm New QR code section for ministry check-in with hard refresh"""
+    """Toolbar above ministry check-in: refresh roster cache."""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_refresh, col_qr_new, col_qr_update_names, col_qr_new_right = st.columns([1, 1, 1, 3])
+    col_qr_refresh, _col_trailing = st.columns([1, 4])
     with col_qr_refresh:
         if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{selected_ministry}", use_container_width=True):
             st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
             st.session_state.last_refresh_time = get_now_myt()
             get_today_attendance_data.clear()
             get_ministry_options_from_sheet.clear()
+            get_newcomers_count.clear()
+            redis_client = get_redis_client()
+            if redis_client:
+                try:
+                    today_myt = get_today_myt_date()
+                    redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                except Exception:
+                    pass
             st.rerun()
-    with col_qr_new:
-        if st.button("I'm New!", type="secondary", use_container_width=True, key=f"ministry_new_btn_{selected_ministry}"):
-            if st.session_state.get('show_ministry_qr_modal', False):
-                # Modal is already open - perform hard refresh
-                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                st.session_state.last_refresh_time = get_now_myt()
-                st.session_state.show_newcomers_count = True
-                get_newcomers_count.clear()
-                # Clear local Streamlit caches
-                get_today_attendance_data.clear()
-                get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options AND attendance data AND newcomers
-                redis_client = get_redis_client()
-                if redis_client:
-                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
-                        client, [MINISTRY_ATTENDANCE_TAB_NAME]
-                    )
-                    if not ok_flush:
-                        st.error(f"Could not save pending check-ins: {err_flush}")
-                        st.stop()
-                    try:
-                        for ministry in MINISTRY_LIST:
-                            redis_client.delete(f"attendance:ministry_options:{ministry}")
-                        redis_client.delete("attendance:ministry_options:all")
-                        # Also clear ministry attendance data cache
-                        today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
-                        # Clear newcomers cache to force fresh pull from gsheet
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                    except Exception:
-                        pass
-                st.session_state.show_ministry_qr_modal = False
-            else:
-                # Open the modal
-                st.session_state.show_ministry_qr_modal = True
-            st.rerun()
-
-    with col_qr_update_names:
-        render_update_names_sheet_popover("ministry", f"hard_sync_qr_ministry_{selected_ministry}")
-
-    # Show QR code in modal/spotlight mode
-    if st.session_state.get('show_ministry_qr_modal', False):
-        # Generate QR code
-        feedback_url = "https://forms.gle/yEX1kh24LPV6PVm77"
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(feedback_url)
-        qr.make(fit=True)
-        qr_img = qr.make_image(fill_color="black", back_color="white")
-
-        # Convert to base64 for embedding in HTML
-        buffer = BytesIO()
-        qr_img.save(buffer, format="PNG")
-        import base64
-        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-        # Modal overlay with QR code
-        components.html(f"""
-        <style>
-            .modal-overlay {{
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
-                background: rgba(0, 0, 0, 0.85);
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 9999;
-                backdrop-filter: blur(5px);
-            }}
-            .modal-content {{
-                background: #1a1a1a;
-                padding: 2rem;
-                border-radius: 16px;
-                text-align: center;
-                max-width: 350px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-            }}
-            .qr-image {{
-                width: 250px;
-                height: 250px;
-                border-radius: 8px;
-            }}
-            .modal-title {{
-                color: #fff;
-                font-size: 1.3rem;
-                margin-bottom: 1rem;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }}
-            .modal-subtitle {{
-                color: #888;
-                font-size: 0.9rem;
-                margin-top: 1rem;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            }}
-            .link-btn {{
-                color: #4da6ff;
-                text-decoration: none;
-                font-size: 0.95rem;
-            }}
-            .link-btn:hover {{
-                text-decoration: underline;
-            }}
-        </style>
-        <div class="modal-overlay" id="ministryQrModal">
-            <div class="modal-content">
-                <div class="modal-title">Welcome! Scan to fill out the form</div>
-                <img src="data:image/png;base64,{qr_base64}" class="qr-image" alt="QR Code"/>
-                <div class="modal-subtitle">
-                    <a href="{feedback_url}" target="_blank" class="link-btn">Or click here</a>
-                </div>
-            </div>
-        </div>
-        """, height=500)
-
-        # Button: Newcomer Form Filled (centered)
-        col_spacer1, col_filled, col_spacer2 = st.columns([1, 2, 1])
-        with col_filled:
-            if st.button("Newcomer Form Filled", type="secondary", use_container_width=True, key=f"ministry_newcomer_filled_{selected_ministry}"):
-                # Hard refresh - clear all caches and reload from Google Sheets
-                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                st.session_state.last_refresh_time = get_now_myt()
-                st.session_state.show_newcomers_count = True
-                get_newcomers_count.clear()
-                # Clear local Streamlit caches
-                get_today_attendance_data.clear()
-                get_ministry_options_from_sheet.clear()
-                # Clear Redis cache for ministry options AND attendance data AND newcomers
-                redis_client = get_redis_client()
-                if redis_client:
-                    ok_flush, err_flush = flush_pending_attendance_for_tabs(
-                        client, [MINISTRY_ATTENDANCE_TAB_NAME]
-                    )
-                    if not ok_flush:
-                        st.error(f"Could not save pending check-ins: {err_flush}")
-                        st.stop()
-                    try:
-                        for ministry in MINISTRY_LIST:
-                            redis_client.delete(f"attendance:ministry_options:{ministry}")
-                        redis_client.delete("attendance:ministry_options:all")
-                        # Also clear ministry attendance data cache
-                        today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
-                        # Clear newcomers cache to force fresh pull from gsheet
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                    except Exception:
-                        pass
-                st.session_state.show_ministry_qr_modal = False
-                st.rerun()
 
 
 def render_recent_checkins_table(tab_name):
@@ -3327,10 +3014,9 @@ def render_dashboard(tab_name, group_by_zone=False):
     If group_by_zone=True, groups by Zone instead of Cell Group."""
     st.markdown("---")
 
-    # NWST congregation: Refresh / I'm New / Update names live in render_qr_section.
-    # Leaders: same order — Refresh left, middle column reserved (no I'm New), Update names third.
+    # Leaders (group_by_zone): Refresh toolbar above the zone dashboard.
     if group_by_zone:
-        col_refresh, _col_im_new_spacer, col_update_names, _col_trailing = st.columns([0.95, 0.95, 1.05, 1.45])
+        col_refresh, _col_trailing = st.columns([1, 4])
         with col_refresh:
             if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", use_container_width=True):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
@@ -3338,12 +3024,15 @@ def render_dashboard(tab_name, group_by_zone=False):
                 get_today_attendance_data.clear()
                 get_options_from_sheet.clear()
                 get_cell_to_zone_mapping.clear()
+                get_newcomers_count.clear()
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                    except Exception:
+                        pass
                 st.rerun()
-        with col_update_names:
-            render_update_names_sheet_popover(
-                "congregation",
-                f"hard_sync_leaders_toolbar_{tab_name}",
-            )
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
