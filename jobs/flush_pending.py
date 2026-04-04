@@ -12,7 +12,7 @@ Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_r
   python jobs/flush_pending.py --pending-only
   python jobs/flush_pending.py --tabs attendance leaders --pending-only
 
-**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — page **Click me to update**, orange CTA, progress bar, run log resets every button press.
+**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — same NWST fonts/colors as ``attendance_app``, weekly accent, run log resets each press.
 
 Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
@@ -84,6 +84,50 @@ def _load_nwst_accent_cfg():
 def get_today_myt_date() -> str:
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt).strftime("%Y-%m-%d")
+
+
+def _weekly_accent_pair() -> tuple[str, str]:
+    """Primary / light hex for UI — same Saturday-locked seed as ``attendance_app.generate_colors_for_date``."""
+    import colorsys
+    import hashlib
+    import random
+
+    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
+    days_since_saturday = (today.weekday() - 5) % 7
+    last_saturday = today - timedelta(days=days_since_saturday)
+    date_str = last_saturday.strftime("%Y-%m-%d")
+    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
+    random.seed(seed)
+    hue = random.random()
+    saturation = random.uniform(0.7, 1.0)
+    lightness = random.uniform(0.45, 0.65)
+    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
+    primary = "#{:02x}{:02x}{:02x}".format(
+        int(rgb[0] * 255),
+        int(rgb[1] * 255),
+        int(rgb[2] * 255),
+    )
+    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
+    light = "#{:02x}{:02x}{:02x}".format(
+        int(rgb_light[0] * 255),
+        int(rgb_light[1] * 255),
+        int(rgb_light[2] * 255),
+    )
+    return primary, light
+
+
+def _nwst_page_colors() -> dict:
+    """NWST check-in page palette (``attendance_app`` dark branch, without Theme Override tab)."""
+    primary, light = _weekly_accent_pair()
+    return {
+        "primary": primary,
+        "light": light,
+        "background": "#000000",
+        "text": "#ffffff",
+        "text_muted": "#999999",
+        "card_bg": "#0a0a0a",
+        "border": primary,
+    }
 
 
 def _log_ts() -> str:
@@ -522,64 +566,100 @@ def run_streamlit_app() -> None:
         initial_sidebar_state="collapsed",
     )
 
+    pc = _nwst_page_colors()
     st.markdown(
-        """
+        f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,500;0,9..40,700;1,9..40,500&display=swap');
-.stApp {
-  background: linear-gradient(165deg, #0c0f14 0%, #161b26 45%, #0a0d12 100%) !important;
-}
-h1 {
-  font-family: 'DM Sans', system-ui, sans-serif !important;
-  color: #f0f3f6 !important;
-  text-align: center !important;
-  font-weight: 700 !important;
-  font-size: 1.75rem !important;
-  letter-spacing: -0.03em !important;
-  margin-bottom: 0.5rem !important;
-}
-.sync-sub {
-  text-align: center;
-  color: #8b949e;
-  font-size: 0.92rem;
-  max-width: 26rem;
-  margin: 0 auto 1.25rem auto;
-  line-height: 1.45;
-  font-family: 'DM Sans', system-ui, sans-serif;
-}
-div[data-testid="stMainBlockContainer"] button[kind="primary"] {
-  background: linear-gradient(145deg, #ff9f45 0%, #e85d04 42%, #c2410c 100%) !important;
-  color: #fff !important;
-  border: none !important;
-  border-radius: 16px !important;
-  font-size: 1.22rem !important;
-  font-weight: 700 !important;
-  padding: 1.05rem 1.35rem !important;
-  box-shadow:
-    0 12px 36px rgba(232, 93, 4, 0.48),
-    0 0 0 1px rgba(255, 255, 255, 0.12) inset !important;
-  font-family: 'DM Sans', system-ui, sans-serif !important;
-  letter-spacing: 0.02em !important;
-  transition: transform 0.14s ease, box-shadow 0.14s ease !important;
-}
-div[data-testid="stMainBlockContainer"] button[kind="primary"]:hover {
-  transform: translateY(-3px) scale(1.02) !important;
-  box-shadow: 0 16px 44px rgba(232, 93, 4, 0.58) !important;
-}
-.stProgress > div > div > div > div {
-  border-radius: 8px !important;
-  background: linear-gradient(90deg, #e85d04, #fbbf24) !important;
-}
-.log-caption {
-  color: #8b949e !important;
-  font-size: 0.82rem !important;
-  margin-top: 1.25rem !important;
-  margin-bottom: 0.35rem !important;
-  font-family: 'DM Sans', system-ui, sans-serif !important;
-}
-pre code {
-  font-size: 0.78rem !important;
-}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;700&family=Outfit:wght@400;500;600&display=swap');
+    .stApp {{
+        background-color: {pc["background"]} !important;
+    }}
+    html, body, [data-testid="stAppViewContainer"] {{
+        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    }}
+    h1 {{
+        font-family: 'Outfit', sans-serif !important;
+        color: {pc["text"]} !important;
+        text-align: center !important;
+        font-weight: 600 !important;
+        font-size: 1.65rem !important;
+        letter-spacing: 0.02em !important;
+        margin-bottom: 0.5rem !important;
+    }}
+    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div, .stMarkdown li {{
+        color: {pc["text"]} !important;
+    }}
+    .sync-sub {{
+        text-align: center;
+        color: {pc["text_muted"]} !important;
+        font-size: 0.92rem;
+        max-width: 26rem;
+        margin: 0 auto 1.25rem auto;
+        line-height: 1.45;
+        font-family: 'Outfit', sans-serif !important;
+    }}
+    .sync-sub strong {{
+        color: {pc["text"]} !important;
+    }}
+    .log-caption {{
+        color: {pc["text_muted"]} !important;
+        font-size: 0.82rem !important;
+        margin-top: 1.25rem !important;
+        margin-bottom: 0.35rem !important;
+        font-family: 'Outfit', sans-serif !important;
+    }}
+    [data-testid="stVerticalBlock"] {{
+        gap: 0.35rem !important;
+    }}
+    .element-container {{
+        margin-top: 0rem !important;
+        margin-bottom: 0rem !important;
+    }}
+    /* Match attendance_app NWST buttons (Inter, square corners, daily accent) */
+    div[data-testid="stMainBlockContainer"] .stButton > button {{
+        background-color: transparent !important;
+        color: {pc["primary"]} !important;
+        border: 2px solid {pc["primary"]} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        transition: all 0.2s ease !important;
+    }}
+    div[data-testid="stMainBlockContainer"] .stButton > button:hover {{
+        background-color: {pc["primary"]} !important;
+        color: {pc["background"]} !important;
+        transform: scale(1.02) !important;
+    }}
+    div[data-testid="stMainBlockContainer"] .stButton > button[kind="primary"] {{
+        background-color: {pc["primary"]} !important;
+        color: {pc["background"]} !important;
+        border: 2px solid {pc["primary"]} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+        font-size: 1.08rem !important;
+        min-height: 3.35rem !important;
+        padding-top: 0.85rem !important;
+        padding-bottom: 0.85rem !important;
+    }}
+    div[data-testid="stMainBlockContainer"] .stButton > button[kind="primary"]:hover {{
+        background-color: {pc["light"]} !important;
+        border-color: {pc["light"]} !important;
+        color: {pc["background"]} !important;
+    }}
+    .stProgress > div > div > div > div {{
+        border-radius: 0px !important;
+        background-color: {pc["primary"]} !important;
+    }}
+    [data-testid="stCode"] {{
+        border: 2px solid {pc["primary"]} !important;
+        border-radius: 0px !important;
+    }}
+    pre code {{
+        font-size: 0.78rem !important;
+    }}
 </style>
 """,
         unsafe_allow_html=True,
