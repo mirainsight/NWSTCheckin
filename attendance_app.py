@@ -1959,7 +1959,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Tap <strong>Refresh</strong> after the roster is updated.</span>
+                    <span>Click <strong>Refresh</strong> to update!</span>
                 </div>
             </div>
             """
@@ -2269,7 +2269,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     letter-spacing: 0.03em;
                 ">
                     <span style="font-size: 1.15em; line-height: 1;">❓❗</span>
-                    <span>Newcomer name not appearing? Tap <strong>Refresh</strong> after the roster is updated.</span>
+                    <span>Click <strong>Refresh</strong> to update!</span>
                 </div>
             </div>
             """
