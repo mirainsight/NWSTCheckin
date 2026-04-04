@@ -694,7 +694,6 @@ def main_cli(argv: list[str] | None = None) -> int:
 
 def run_streamlit_app() -> None:
     import streamlit as st
-    import streamlit.components.v1 as components
 
     st.set_page_config(
         page_title="Church Check-In — Flush pending",
@@ -776,35 +775,6 @@ def run_streamlit_app() -> None:
             ">{hero_label}</div>
         </div>
         """,
-            unsafe_allow_html=True,
-        )
-        components.html(
-            """
-            <div style="
-                background: rgba(0, 0, 0, 0.6);
-                padding: 0.75rem 1rem;
-                border-radius: 6px;
-                margin-bottom: 0.5rem;
-            ">
-                <p style="
-                    font-size: 1rem;
-                    margin: 0;
-                    color: #ffffff;
-                    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-                    text-align: center;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">Append queued Upstash check-ins to Google Sheets for <strong>today (MYT)</strong> — same secrets as the main check-in app. Add <code>?page=leaders</code> in the URL for the light theme.</p>
-            </div>
-            """,
-            height=95,
-        )
-    else:
-        st.markdown(
-            f'<p class="instruction-text" style="font-size:1rem;text-align:center;margin-bottom:0.75rem;">'
-            f"Append queued <strong>Upstash</strong> check-ins to <strong>Google Sheets</strong> for "
-            f"<strong>today (MYT)</strong> — Attendance, Leaders Attendance, and Ministry Attendance. "
-            f"Uses the same Streamlit secrets as Church Check-In. "
-            f"Light theme: add <code>?page=leaders</code> to the URL.</p>",
             unsafe_allow_html=True,
         )
 
