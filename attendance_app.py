@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import html
 import importlib.util
 from pathlib import Path
 from collections import defaultdict
@@ -1821,14 +1820,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             succ = st.session_state.get('show_checkin_success')
             if succ and succ.get('form_key') == form_key:
                 name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
-                name_esc = html.escape(name_only)
-                st.markdown(
-                    f'<div style="padding:0.85rem 1rem;margin:0.75rem 0 0 0;border-radius:8px;'
-                    f'background:{page_colors["card_bg"]};border:2px solid {page_colors["primary"]};'
-                    f'color:{page_colors["text"]};font-size:1.05rem;font-weight:600;">'
-                    f'✅ {name_esc} checked in!</div>',
-                    unsafe_allow_html=True,
-                )
+                st.success(f"✅ {name_only} checked in!")
                 st.session_state['show_checkin_success'] = None
 
         selectbox_key = f"{form_key}_selectbox"
@@ -2137,14 +2129,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             succ = st.session_state.get('show_checkin_success')
             if succ and succ.get('form_key') == form_key:
                 name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
-                name_esc = html.escape(name_only)
-                st.markdown(
-                    f'<div style="padding:0.85rem 1rem;margin:0.75rem 0 0 0;border-radius:8px;'
-                    f'background:{page_colors["card_bg"]};border:2px solid {page_colors["primary"]};'
-                    f'color:{page_colors["text"]};font-size:1.05rem;font-weight:600;">'
-                    f'✅ {name_esc} checked in!</div>',
-                    unsafe_allow_html=True,
-                )
+                st.success(f"✅ {name_only} checked in!")
                 st.session_state['show_checkin_success'] = None
 
         selectbox_key = f"{form_key}_selectbox"
