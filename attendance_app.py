@@ -17,6 +17,18 @@ import colorsys
 import qrcode
 from io import BytesIO
 
+
+def st_embed_html(html: str, height: int | None = None, scrolling: bool = False):
+    """Embed HTML/JS via ``st.iframe`` (replaces deprecated ``st.components.v1.html``)."""
+    h = height if height is not None else 400
+    if h == 0:
+        h = 1
+    try:
+        st.iframe(html, height=h)
+    except TypeError:
+        components.html(html, height=h, scrolling=scrolling)
+
+
 # Upstash Redis for caching (reduces Google Sheets API calls)
 try:
     from upstash_redis import Redis
@@ -1565,6 +1577,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # GIF / banner (Theme Override filename in this folder, then BANNER_GIF_URL, then banner.gif)
+# Inlining multi‑MB GIFs as data URLs in HTML repeats ~50MB+ per rerun and breaks mobile + WebSockets.
+MAX_BANNER_EMBED_BYTES = 512 * 1024
+
 _app_dir = os.path.dirname(__file__)
 gif_url = os.getenv("BANNER_GIF_URL", "").strip()
 theme_banner_fn = daily_colors.get("banner")
@@ -1583,26 +1598,43 @@ def _banner_mime_for_path(path: str) -> str:
 
 background_gif = ""
 gif_src = ""
+banner_st_image_path = None
 if theme_banner_fn:
     _p_theme = os.path.join(_app_dir, theme_banner_fn)
     if os.path.isfile(_p_theme):
-        import base64
-        with open(_p_theme, "rb") as f:
-            _raw = base64.b64encode(f.read()).decode()
-        _mime = _banner_mime_for_path(_p_theme)
-        background_gif = f"url('data:{_mime};base64,{_raw}')"
-        gif_src = f"data:{_mime};base64,{_raw}"
-if not gif_src and gif_url:
+        try:
+            _theme_sz = os.path.getsize(_p_theme)
+        except OSError:
+            _theme_sz = 0
+        if _theme_sz > MAX_BANNER_EMBED_BYTES:
+            banner_st_image_path = _p_theme
+        else:
+            import base64
+
+            with open(_p_theme, "rb") as f:
+                _raw = base64.b64encode(f.read()).decode()
+            _mime = _banner_mime_for_path(_p_theme)
+            background_gif = f"url('data:{_mime};base64,{_raw}')"
+            gif_src = f"data:{_mime};base64,{_raw}"
+if not gif_src and not banner_st_image_path and gif_url:
     background_gif = f"url('{gif_url}')"
     gif_src = gif_url
-if not gif_src:
+if not gif_src and not banner_st_image_path:
     _default = os.path.join(_app_dir, "banner.gif")
     if os.path.isfile(_default):
-        import base64
-        with open(_default, "rb") as f:
-            _raw = base64.b64encode(f.read()).decode()
-        background_gif = f"url('data:image/gif;base64,{_raw}')"
-        gif_src = f"data:image/gif;base64,{_raw}"
+        try:
+            _def_sz = os.path.getsize(_default)
+        except OSError:
+            _def_sz = 0
+        if _def_sz > MAX_BANNER_EMBED_BYTES:
+            banner_st_image_path = _default
+        else:
+            import base64
+
+            with open(_default, "rb") as f:
+                _raw = base64.b64encode(f.read()).decode()
+            background_gif = f"url('data:image/gif;base64,{_raw}')"
+            gif_src = f"data:image/gif;base64,{_raw}"
 
 # Initialize Google Sheets client
 client = get_gsheet_client()
@@ -1669,7 +1701,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     available_options = [opt for opt in all_option_values if opt not in checked_in_today]
     checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
 
-    # Wrap form section with GIF background
+    # Wrap form section with GIF background (large local files use st.image — not data URLs)
     if background_gif and gif_src:
         st.markdown(f"""
         <div style="
@@ -1709,13 +1741,43 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             ">{page_label}</div>
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
+    elif banner_st_image_path:
+        st.markdown(f"""
+        <div style="
+            position: relative;
+            padding: 2rem;
+            margin: 0;
+            border-radius: 8px;
+            border: 2px solid {page_colors['primary']};
+            min-height: 250px;
+            overflow: hidden;
+            background: {page_colors['card_bg']};
+        ">
+            <div style="
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+                padding: 0.4rem 1rem;
+                font-family: 'Inter', sans-serif;
+                font-weight: 800;
+                font-size: 0.85rem;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+                z-index: 2;
+            ">{page_label}</div>
+            <div style="position: relative; z-index: 1;">
+        """, unsafe_allow_html=True)
 
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        if banner_st_image_path:
+            st.image(banner_st_image_path, use_container_width=True)
         # Show instruction text
-        if background_gif:
-            components.html("""
+        if background_gif and gif_src:
+            st_embed_html("""
             <div style="
                 background: rgba(0, 0, 0, 0.6);
                 padding: 0.75rem 1rem;
@@ -1748,7 +1810,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             st.success(f"✅ {name_only} checked in!")
 
             # Fire confetti
-            components.html("""
+            st_embed_html("""
             <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
             <script>
                 // Remove any existing confetti canvas first
@@ -1865,7 +1927,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             )
 
             # Add JavaScript to gray out checked-in options in the dropdown
-            components.html(f"""
+            st_embed_html(f"""
             <script>
                 // Function to style checked-in options (those starting with ✓)
                 function styleCheckedInOptions() {{
@@ -1957,7 +2019,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                             st.error(undo_message)
 
     # Close background GIF container if it was opened
-    if background_gif:
+    if (background_gif and gif_src) or banner_st_image_path:
         st.markdown("</div></div>", unsafe_allow_html=True)
     else:
         # Show placeholder if no GIF
@@ -2002,7 +2064,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
     # Keep all options but track which are already checked in
     available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
 
-    # Wrap form section with GIF background
+    # Wrap form section with GIF background (large local files use st.image — not data URLs)
     if background_gif and gif_src:
         st.markdown(f"""
         <div style="
@@ -2042,13 +2104,43 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             ">{page_label}</div>
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
+    elif banner_st_image_path:
+        st.markdown(f"""
+        <div style="
+            position: relative;
+            padding: 2rem;
+            margin: 0;
+            border-radius: 8px;
+            border: 2px solid {page_colors['primary']};
+            min-height: 250px;
+            overflow: hidden;
+            background: {page_colors['card_bg']};
+        ">
+            <div style="
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: {page_colors['primary']};
+                color: {page_colors['background']};
+                padding: 0.4rem 1rem;
+                font-family: 'Inter', sans-serif;
+                font-weight: 800;
+                font-size: 0.85rem;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+                z-index: 2;
+            ">{page_label}</div>
+            <div style="position: relative; z-index: 1;">
+        """, unsafe_allow_html=True)
 
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        if banner_st_image_path:
+            st.image(banner_st_image_path, use_container_width=True)
         # Show instruction text
-        if background_gif:
-            components.html("""
+        if background_gif and gif_src:
+            st_embed_html("""
             <div style="
                 background: rgba(0, 0, 0, 0.6);
                 padding: 0.75rem 1rem;
@@ -2081,7 +2173,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             st.success(f"✅ {name_only} checked in!")
 
             # Fire confetti
-            components.html("""
+            st_embed_html("""
             <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
             <script>
                 // Remove any existing confetti canvas first
@@ -2193,7 +2285,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             )
 
             # Add JavaScript to gray out checked-in options
-            components.html(f"""
+            st_embed_html(f"""
             <script>
                 function styleCheckedInOptions() {{
                     const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
@@ -2281,7 +2373,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                             st.error(undo_message)
 
     # Close background GIF container if it was opened
-    if background_gif:
+    if (background_gif and gif_src) or banner_st_image_path:
         st.markdown("</div></div>", unsafe_allow_html=True)
     else:
         st.markdown(f"""
@@ -2717,7 +2809,7 @@ def render_ministry_dashboard(selected_ministry):
         # Calculate height and render
         num_depts = len(all_members_by_dept)
         estimated_height = 150 + (num_depts * 80)
-        components.html(ministry_breakdown_html, height=estimated_height, scrolling=True)
+        st_embed_html(ministry_breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Empty state
         st.markdown(f"""
@@ -2846,7 +2938,7 @@ def render_ministry_dashboard(selected_ministry):
 
             num_depts_empty = len(all_members_by_dept)
             estimated_height_empty = 150 + (num_depts_empty * 80)
-            components.html(empty_ministry_html, height=estimated_height_empty, scrolling=True)
+            st_embed_html(empty_ministry_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_qr_section():
@@ -2901,7 +2993,7 @@ def render_qr_section():
         qr_base64 = base64.b64encode(buffer.getvalue()).decode()
 
         # Modal overlay with QR code
-        components.html(f"""
+        st_embed_html(f"""
         <style>
             .modal-overlay {{
                 position: fixed;
@@ -3043,7 +3135,7 @@ def render_ministry_qr_section(selected_ministry):
         qr_base64 = base64.b64encode(buffer.getvalue()).decode()
 
         # Modal overlay with QR code
-        components.html(f"""
+        st_embed_html(f"""
         <style>
             .modal-overlay {{
                 position: fixed;
@@ -3564,7 +3656,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         else:
             searchable_groups = [("group", g) for g in all_cell_groups_search]
 
-        # Build collapsible breakdown HTML - must be in single components.html() for JS to work
+        # Build collapsible breakdown HTML - must be in single st_embed_html() for JS to work
         breakdown_html = f"""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
@@ -3949,7 +4041,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Calculate height based on content
         num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height = 150 + (num_items * 60)  # Base height + per-item height
-        components.html(breakdown_html, height=estimated_height, scrolling=True)
+        st_embed_html(breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -4291,7 +4383,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Calculate height and render
             num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_empty = 150 + (num_items_empty * 60)
-            components.html(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
+            st_embed_html(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
@@ -4999,7 +5091,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         # Calculate height and render
         num_items_hist = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height_hist = 150 + (num_items_hist * 60)
-        components.html(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
+        st_embed_html(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
     else:
         # No check-ins - show empty state and all pending members greyed out
         st.markdown(f"""
@@ -5345,7 +5437,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             # Calculate height and render
             num_items_hist_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_hist_empty = 150 + (num_items_hist_empty * 60)
-            components.html(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
+            st_embed_html(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
 
 
 
