@@ -12,7 +12,7 @@ Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_r
   python jobs/flush_pending.py --pending-only
   python jobs/flush_pending.py --tabs attendance leaders --pending-only
 
-**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — log clears on each run.
+**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — page **Click me to update**, orange CTA, progress bar, run log resets every button press.
 
 Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
@@ -21,13 +21,9 @@ Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .strea
 from __future__ import annotations
 
 import argparse
-import base64
-import colorsys
-import hashlib
 import importlib.util
 import json
 import os
-import random
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -83,325 +79,6 @@ def _load_nwst_accent_cfg():
     spec.loader.exec_module(mod)
     _nwst_accent_cfg_mod = mod
     return mod
-
-
-def _redis_client_for_theme():
-    """Upstash client for Theme Override snapshot (no logging)."""
-    if Redis is None:
-        return None
-    url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
-    token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
-    if not url or not token:
-        try:
-            import streamlit as st
-
-            url = str(st.secrets.get("UPSTASH_REDIS_REST_URL", "") or "").strip()
-            token = str(st.secrets.get("UPSTASH_REDIS_REST_TOKEN", "") or "").strip()
-        except Exception:
-            pass
-    if not url or not token:
-        return None
-    try:
-        return Redis(url=url, token=token)
-    except Exception:
-        return None
-
-
-def _theme_overrides_from_redis_flush() -> dict:
-    mod = _load_nwst_accent_cfg()
-    r = _redis_client_for_theme()
-    if not mod or not r:
-        return {}
-    try:
-        return mod.read_theme_override_from_redis(r)
-    except Exception:
-        return {}
-
-
-def _accent_overrides_from_json() -> dict:
-    mod = _load_nwst_accent_cfg()
-    if not mod:
-        return {}
-    return mod.get_accent_override_by_date()
-
-
-def _normalize_primary_hex(hex_str: str | None) -> str | None:
-    h = (hex_str or "").strip()
-    if not h:
-        return None
-    if not h.startswith("#"):
-        h = "#" + h
-    if len(h) != 7:
-        return None
-    try:
-        int(h[1:], 16)
-    except ValueError:
-        return None
-    return h.lower()
-
-
-def _theme_from_primary_hex(primary_hex: str) -> dict:
-    p = _normalize_primary_hex(primary_hex)
-    if not p:
-        raise ValueError("Invalid primary hex")
-    r = int(p[1:3], 16) / 255.0
-    g = int(p[3:5], 16) / 255.0
-    b = int(p[5:7], 16) / 255.0
-    h, light, sat = colorsys.rgb_to_hls(r, g, b)
-    rgb_light = colorsys.hls_to_rgb(h, min(light + 0.2, 0.9), sat)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": p,
-        "light": light_color,
-        "background": "#000000",
-        "accent": p,
-    }
-
-
-def _generate_colors_for_date(date_str: str) -> dict:
-    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
-    random.seed(seed)
-    hue = random.random()
-    saturation = random.uniform(0.7, 1.0)
-    lightness = random.uniform(0.45, 0.65)
-    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    primary_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb[0] * 255),
-        int(rgb[1] * 255),
-        int(rgb[2] * 255),
-    )
-    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": primary_color,
-        "light": light_color,
-        "background": "#000000",
-        "accent": primary_color,
-    }
-
-
-def _resolve_theme_override_row_for_today(from_sheet: dict | None = None) -> dict:
-    mod = _load_nwst_accent_cfg()
-    from_file = _accent_overrides_from_json()
-    if from_sheet is None:
-        from_sheet = _theme_overrides_from_redis_flush()
-    if not from_sheet:
-        return {}
-    if mod:
-        row = mod.resolve_latest_cached_theme_row(from_file, from_sheet)
-    else:
-        latest = max(from_sheet.keys())
-        merged = {
-            k: {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
-            for k in set(from_file) | set(from_sheet)
-            if {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
-        }
-        row = dict(merged.get(latest) or {})
-    today = get_today_myt_date()
-    if not row.get("primary"):
-        env_d = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_DATE", "").strip()
-        env_h = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_HEX", "").strip()
-        if env_d == today and env_h:
-            row["primary"] = env_h.strip()
-        else:
-            try:
-                import streamlit as st
-
-                sd = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_DATE", "")).strip()
-                sh = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_HEX", "")).strip()
-                if sd == today and sh:
-                    row["primary"] = sh.strip()
-            except Exception:
-                pass
-    return row
-
-
-def generate_daily_colors_for_flush_ui() -> dict:
-    """Match attendance_app.generate_daily_colors (weekly palette + Theme Override)."""
-    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
-    days_since_saturday = (today.weekday() - 5) % 7
-    last_saturday = today - timedelta(days=days_since_saturday)
-    from_sheet = _theme_overrides_from_redis_flush()
-    row = _resolve_theme_override_row_for_today(from_sheet=from_sheet)
-    hex_override = row.get("primary")
-    base = None
-    if hex_override:
-        pn = _normalize_primary_hex(hex_override)
-        if pn:
-            base = _theme_from_primary_hex(pn)
-    if base is None:
-        base = _generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
-    b_raw = row.get("banner")
-    mod = _load_nwst_accent_cfg()
-    if b_raw and mod:
-        safe = mod.sanitize_banner_filename(b_raw)
-        if safe:
-            base = {**base, "banner": safe}
-    if not from_sheet and mod:
-        safe = mod.sanitize_banner_filename("banner.gif")
-        if safe:
-            base = {**base, "banner": safe}
-    return base
-
-
-def _banner_mime_for_path(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower()
-    return {
-        ".gif": "image/gif",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-    }.get(ext, "image/gif")
-
-
-def resolve_banner_gif_src(daily_colors: dict) -> tuple[str, str]:
-    """Same resolution order as attendance_app (theme file, BANNER_GIF_URL, banner.gif)."""
-    app_dir = str(_CHECK_IN_ROOT)
-    gif_url = os.getenv("BANNER_GIF_URL", "").strip()
-    theme_banner_fn = daily_colors.get("banner")
-    background_gif = ""
-    gif_src = ""
-    if theme_banner_fn:
-        p = os.path.join(app_dir, theme_banner_fn)
-        if os.path.isfile(p):
-            with open(p, "rb") as f:
-                raw = base64.b64encode(f.read()).decode()
-            mime = _banner_mime_for_path(p)
-            background_gif = f"url('data:{mime};base64,{raw}')"
-            gif_src = f"data:{mime};base64,{raw}"
-    if not gif_src and gif_url:
-        background_gif = f"url('{gif_url}')"
-        gif_src = gif_url
-    if not gif_src:
-        default_p = os.path.join(app_dir, "banner.gif")
-        if os.path.isfile(default_p):
-            with open(default_p, "rb") as f:
-                raw = base64.b64encode(f.read()).decode()
-            background_gif = f"url('data:image/gif;base64,{raw}')"
-            gif_src = f"data:image/gif;base64,{raw}"
-    return background_gif, gif_src
-
-
-def _flush_page_css(page_colors: dict, *, is_leaders_page: bool) -> str:
-    """Mirrors attendance_app injected styles (Outfit, buttons, multiselect)."""
-    leaders_extra = ""
-    if is_leaders_page:
-        leaders_extra = """
-    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown div {
-        color: #000000 !important;
-    }
-    .instruction-text {
-        color: #ffffff !important;
-    }
-    h1, h2, h3, h4, h5, h6 {
-        color: #000000 !important;
-    }
-    .stRadio label {
-        color: #000000 !important;
-    }
-    [data-testid="stSidebar"] {
-        background-color: #f0f0f0 !important;
-    }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span {
-        color: #000000 !important;
-    }
-    .stMultiSelect label, .stSelectbox label, .stTextInput label {
-        color: #000000 !important;
-    }
-"""
-    nwst_text = ""
-    if not is_leaders_page:
-        nwst_text = """
-    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li {
-        color: #ffffff !important;
-    }
-    h1, h2, h3, h4, h5, h6 {
-        color: #ffffff !important;
-    }
-    .stMultiSelect label, .stSelectbox label, .stTextInput label, label[data-testid="stWidgetLabel"] {
-        color: #e0e0e0 !important;
-    }
-    [data-testid="stExpander"] summary, [data-testid="stExpander"] summary p {
-        color: #ffffff !important;
-    }
-"""
-    return f"""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap');
-    .instruction-text {{
-        color: #ffffff !important;
-    }}
-    .stApp {{
-        background-color: {page_colors['background']} !important;
-    }}
-    html, body, [data-testid="stAppViewContainer"] {{
-        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-    }}
-    .element-container {{
-        margin-top: 0rem !important;
-        margin-bottom: 0rem !important;
-        padding-top: 0rem !important;
-        padding-bottom: 0rem !important;
-    }}
-    [data-testid="stVerticalBlock"] {{
-        gap: 0rem !important;
-    }}
-    [data-testid="stVerticalBlock"] > [style*="flex-direction: column"] {{
-        gap: 0rem !important;
-    }}
-    .stMarkdown {{
-        margin-top: 0rem !important;
-        margin-bottom: 0rem !important;
-        padding-top: 0rem !important;
-        padding-bottom: 0rem !important;
-    }}
-    [data-testid="column"] {{
-        padding-top: 0rem !important;
-    }}
-    .stButton > button {{
-        background-color: transparent !important;
-        color: {page_colors['primary']} !important;
-        border: 2px solid {page_colors['primary']} !important;
-        border-radius: 0px !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-        transition: all 0.2s ease !important;
-    }}
-    .stButton > button:hover {{
-        background-color: {page_colors['primary']} !important;
-        color: {page_colors['background']} !important;
-        transform: scale(1.02) !important;
-    }}
-    .stButton > button[kind="primary"] {{
-        background-color: {page_colors['primary']} !important;
-        color: {page_colors['background']} !important;
-        border: 2px solid {page_colors['primary']} !important;
-    }}
-    .stButton > button[kind="primary"]:hover {{
-        background-color: {page_colors['light']} !important;
-        border-color: {page_colors['light']} !important;
-    }}
-    .stMultiSelect [data-baseweb="tag"] {{
-        background-color: {page_colors['primary']} !important;
-        color: {page_colors['background']} !important;
-    }}
-    .stMultiSelect [data-baseweb="select"] > div {{
-        border-color: {page_colors['primary']} !important;
-    }}
-    {leaders_extra}
-    {nwst_text}
-</style>
-"""
 
 
 def get_today_myt_date() -> str:
@@ -719,11 +396,22 @@ def _refresh_theme_override_shared(
         _emit(f"Theme Override refresh failed: {e}", log_lines, err=True)
 
 
+def _progress_set(bar, value: float, text: str) -> None:
+    """Streamlit progress bar; ``text=`` is supported in newer Streamlit versions."""
+    if bar is None:
+        return
+    try:
+        bar.progress(value, text=text)
+    except TypeError:
+        bar.progress(value)
+
+
 def run_full_sheet_resync(
     client,
     sheet_id: str,
     pending_tab_names: list[str],
     log_lines: list[str] | None,
+    progress_bar=None,
 ) -> tuple[bool, str]:
     """Flush selected pending queues, then full Redis cache clear + theme snapshot (see module doc)."""
     if not client or not sheet_id.strip():
@@ -731,20 +419,27 @@ def run_full_sheet_resync(
         _emit(msg, log_lines, err=True)
         return False, msg
 
+    _progress_set(progress_bar, 0.08, "Writing pending check-ins to Google Sheets…")
     ok_flush, flush_summary = flush_pending_attendance_for_tabs(
         client, sheet_id, pending_tab_names, log_lines=log_lines
     )
     if not ok_flush:
+        _progress_set(progress_bar, 1.0, "Stopped — error flushing pending rows.")
         return False, flush_summary
+
+    _progress_set(progress_bar, 0.38, "Pending queues processed.")
 
     today_myt = get_today_myt_date()
     redis_client = _redis_client(log_lines)
     if not redis_client:
         extra = " Upstash not configured — skipped Redis cache clear and Theme Override refresh."
         _emit(extra.strip(), log_lines)
+        _progress_set(progress_bar, 1.0, "Done (no Upstash).")
         return True, flush_summary + extra
 
+    _progress_set(progress_bar, 0.45, "Clearing Upstash caches (options, attendance, ministry)…")
     _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
+    _progress_set(progress_bar, 0.72, "Refreshing Theme Override snapshot…")
     _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
     _emit(
         "Full resync finished. Upstash mirrors are cleared; the main app reads Sheets on the next cache miss.",
@@ -754,6 +449,7 @@ def run_full_sheet_resync(
         "Tip: Refresh the Church Check-in browser tab if lists still look stale (Streamlit caches ~30–60s).",
         log_lines,
     )
+    _progress_set(progress_bar, 1.0, "All done.")
     return True, flush_summary
 
 
@@ -820,139 +516,133 @@ def run_streamlit_app() -> None:
     import streamlit as st
 
     st.set_page_config(
-        page_title="Church Check-In — Full sheet sync",
-        page_icon="⛪",
-        layout="wide",
+        page_title="Click me to update",
+        page_icon="🔄",
+        layout="centered",
         initial_sidebar_state="collapsed",
     )
-    st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
 
-    daily_colors = generate_daily_colors_for_flush_ui()
-    early_page = st.query_params.get("page", "nwst")
-    is_leaders_page = early_page == "leaders"
-    if is_leaders_page:
-        page_colors = {
-            "primary": daily_colors["primary"],
-            "light": daily_colors["light"],
-            "background": "#ffffff",
-            "text": "#000000",
-            "text_muted": "#666666",
-            "card_bg": "#f5f5f5",
-            "border": daily_colors["primary"],
-        }
-    else:
-        page_colors = {
-            "primary": daily_colors["primary"],
-            "light": daily_colors["light"],
-            "background": "#000000",
-            "text": "#ffffff",
-            "text_muted": "#999999",
-            "card_bg": "#0a0a0a",
-            "border": daily_colors["primary"],
-        }
+    st.markdown(
+        """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,500;0,9..40,700;1,9..40,500&display=swap');
+.stApp {
+  background: linear-gradient(165deg, #0c0f14 0%, #161b26 45%, #0a0d12 100%) !important;
+}
+h1 {
+  font-family: 'DM Sans', system-ui, sans-serif !important;
+  color: #f0f3f6 !important;
+  text-align: center !important;
+  font-weight: 700 !important;
+  font-size: 1.75rem !important;
+  letter-spacing: -0.03em !important;
+  margin-bottom: 0.5rem !important;
+}
+.sync-sub {
+  text-align: center;
+  color: #8b949e;
+  font-size: 0.92rem;
+  max-width: 26rem;
+  margin: 0 auto 1.25rem auto;
+  line-height: 1.45;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+div[data-testid="stMainBlockContainer"] button[kind="primary"] {
+  background: linear-gradient(145deg, #ff9f45 0%, #e85d04 42%, #c2410c 100%) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 16px !important;
+  font-size: 1.22rem !important;
+  font-weight: 700 !important;
+  padding: 1.05rem 1.35rem !important;
+  box-shadow:
+    0 12px 36px rgba(232, 93, 4, 0.48),
+    0 0 0 1px rgba(255, 255, 255, 0.12) inset !important;
+  font-family: 'DM Sans', system-ui, sans-serif !important;
+  letter-spacing: 0.02em !important;
+  transition: transform 0.14s ease, box-shadow 0.14s ease !important;
+}
+div[data-testid="stMainBlockContainer"] button[kind="primary"]:hover {
+  transform: translateY(-3px) scale(1.02) !important;
+  box-shadow: 0 16px 44px rgba(232, 93, 4, 0.58) !important;
+}
+.stProgress > div > div > div > div {
+  border-radius: 8px !important;
+  background: linear-gradient(90deg, #e85d04, #fbbf24) !important;
+}
+.log-caption {
+  color: #8b949e !important;
+  font-size: 0.82rem !important;
+  margin-top: 1.25rem !important;
+  margin-bottom: 0.35rem !important;
+  font-family: 'DM Sans', system-ui, sans-serif !important;
+}
+pre code {
+  font-size: 0.78rem !important;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown(_flush_page_css(page_colors, is_leaders_page=is_leaders_page), unsafe_allow_html=True)
-
-    background_gif, gif_src = resolve_banner_gif_src(daily_colors)
-    hero_label = "Full sheet sync"
+    st.title("Click me to update")
+    st.markdown(
+        '<p class="sync-sub">Push queued check-ins to Google Sheets, wipe Upstash roster caches, '
+        "refresh theme. <strong>Run log</strong> below resets every time you tap the button — then refresh "
+        "Church Check-in.</p>",
+        unsafe_allow_html=True,
+    )
 
     if SESSION_LOG_KEY not in st.session_state:
         st.session_state[SESSION_LOG_KEY] = []
 
-    if background_gif and gif_src:
-        st.markdown(
-            f"""
-        <div style="
-            position: relative;
-            padding: 1.5rem 1.5rem 1rem 1.5rem;
-            margin: 0 0 0.75rem 0;
-            border-radius: 8px;
-            border: 2px solid {page_colors['primary']};
-            min-height: 180px;
-            overflow: hidden;
-        ">
-            <img src="{gif_src}"
-                 alt=""
-                 style="
-                     position: absolute;
-                     top: 0;
-                     left: 0;
-                     width: 100%;
-                     height: 100%;
-                     object-fit: cover;
-                     z-index: 0;
-                     opacity: 0.8;
-                 " />
-            <div style="
-                position: absolute;
-                top: 10px;
-                left: 10px;
-                background: {page_colors['primary']};
-                color: {page_colors['background']};
-                padding: 0.4rem 1rem;
-                font-family: 'Inter', sans-serif;
-                font-weight: 800;
-                font-size: 0.85rem;
-                letter-spacing: 1px;
-                text-transform: uppercase;
-                z-index: 2;
-            ">{hero_label}</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+    progress_slot = st.empty()
+    clicked = st.button(
+        "🔄  Click me to update",
+        type="primary",
+        use_container_width=True,
+        key="flush_run",
+        help="Full sync: all pending rows → Sheets, then clear options / attendance / ministry / newcomers caches "
+        "+ Theme Override in Upstash.",
+    )
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        tab_choice = st.multiselect(
-            "Pending rows to append first",
-            options=["attendance", "leaders", "ministry", "all"],
-            default=["all"],
-            help="Which **Upstash pending lists** to append to Sheets today (MYT). After that, **all** roster "
-            "caches are cleared (options, zones, attendance snapshots, ministry options, newcomers) and "
-            "Theme Override is refreshed — same as a full resync in the main app.",
-        )
-        if not tab_choice:
-            st.warning("Select at least one tab.")
-            tab_choice = ["all"]
+    if clicked:
+        run_log: list[str] = []
+        bar = progress_slot.progress(0)
+        _progress_set(bar, 0.0, "Starting…")
 
-        if st.button("Run full sync now", type="primary", use_container_width=True, key="flush_run"):
-            run_log: list[str] = []
-            sheet_id = _resolve_sheet_id(run_log)
-            if not sheet_id:
+        sheet_id = _resolve_sheet_id(run_log)
+        if not sheet_id:
+            st.session_state[SESSION_LOG_KEY] = run_log
+            st.error("ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
+        else:
+            client = _gsheet_client(run_log)
+            if not client:
                 st.session_state[SESSION_LOG_KEY] = run_log
-                st.error("⚠️ ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
+                st.error("Could not connect to Google Sheets — see log below.")
             else:
-                with st.spinner("Running full sheet sync…"):
-                    client = _gsheet_client(run_log)
-                    if not client:
-                        st.session_state[SESSION_LOG_KEY] = run_log
-                        st.error("Could not build Google Sheets client — see session log below.")
-                    else:
-                        tab_names = _tab_names_from_multiselect(tab_choice)
-                        ok, summary = run_full_sheet_resync(
-                            client, sheet_id, tab_names, log_lines=run_log
-                        )
-                        st.session_state[SESSION_LOG_KEY] = run_log
-                        if ok:
-                            st.success(summary)
-                            toast = getattr(st, "toast", None)
-                            if toast:
-                                toast("Full sync completed", icon="✅")
-                        else:
-                            st.error(summary or "Sync failed.")
-            st.rerun()
+                ok, summary = run_full_sheet_resync(
+                    client,
+                    sheet_id,
+                    list(ALL_PENDING_TABS),
+                    log_lines=run_log,
+                    progress_bar=bar,
+                )
+                st.session_state[SESSION_LOG_KEY] = run_log
+                if ok:
+                    st.success(summary)
+                    toast = getattr(st, "toast", None)
+                    if toast:
+                        toast("Update complete — refresh Church Check-in if lists look stale.", icon="🔄")
+                else:
+                    st.error(summary or "Update failed.")
+        st.rerun()
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Clear on-screen log", key="flush_clear_log"):
-                st.session_state[SESSION_LOG_KEY] = []
-                st.rerun()
-        with col_b:
-            st.caption(f"{len(st.session_state[SESSION_LOG_KEY])} line(s) in session log")
-
-        with st.expander("Session log", expanded=True):
-            st.code("\n".join(st.session_state[SESSION_LOG_KEY]) or "(empty)", language="text")
+    st.markdown('<p class="log-caption">Run log — cleared on each update</p>', unsafe_allow_html=True)
+    st.code(
+        "\n".join(st.session_state[SESSION_LOG_KEY]) or "(empty — press the button above)",
+        language="text",
+    )
 
 
 def _inside_streamlit_script_run() -> bool:
