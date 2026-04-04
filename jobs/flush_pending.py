@@ -363,8 +363,6 @@ def _gsheet_client(log_lines: list[str] | None = None):
     creds = None
 
     creds = _credentials_from_streamlit_secrets_runtime(scope)
-    if creds and log_lines is not None:
-        _emit("Using Google credentials from Streamlit secrets (gcp_service_account).", log_lines)
 
     json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
     if creds is None and json_blob:
@@ -528,10 +526,6 @@ def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[
         for ministry in MINISTRY_LIST:
             redis_client.delete(f"attendance:ministry_options:{ministry}")
         redis_client.delete("attendance:ministry_options:all")
-        _emit(
-            "Cleared Redis: options, zone map, today’s attendance cache (3 tabs), newcomers, ministry option keys.",
-            log_lines,
-        )
     except Exception as e:
         _emit(f"Redis cache clear partial failure: {e}", log_lines, err=True)
 
@@ -550,7 +544,6 @@ def _refresh_theme_override_shared(
         return
     try:
         mod.refresh_theme_override_shared_cache(redis_client, gsheet_client, sheet_id)
-        _emit("Theme Override snapshot refreshed in Upstash.", log_lines)
     except Exception as e:
         _emit(f"Theme Override refresh failed: {e}", log_lines, err=True)
 
@@ -600,14 +593,6 @@ def run_full_sheet_resync(
     _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
     _progress_set(progress_bar, 0.72, "Refreshing Theme Override snapshot…")
     _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
-    _emit(
-        "Full resync finished. Upstash mirrors are cleared; the main app reads Sheets on the next cache miss.",
-        log_lines,
-    )
-    _emit(
-        "Tip: Refresh the Church Check-in browser tab if lists still look stale (Streamlit caches ~30–60s).",
-        log_lines,
-    )
     _progress_set(progress_bar, 1.0, "All done.")
     return True, flush_summary
 
@@ -832,7 +817,7 @@ def run_streamlit_app() -> None:
                     st.error(summary or "Update failed.")
         st.rerun()
 
-    st.markdown('<p class="log-caption">Run log — cleared on each update</p>', unsafe_allow_html=True)
+    st.markdown('<p class="log-caption">Run log</p>', unsafe_allow_html=True)
     st.code(
         "\n".join(st.session_state[SESSION_LOG_KEY]) or "(empty — press the button above)",
         language="text",
