@@ -11,14 +11,13 @@ Env (same as the app):
   UPSTASH_REDIS_REST_TOKEN
 
 Google credentials (first match wins):
-  - GCP_SERVICE_ACCOUNT_JSON — full service-account JSON as a single string (good for CI / env-based hosts)
-  - CHECK IN/credentials.json
-  - ./credentials.json from current working directory
-  - GOOGLE_APPLICATION_CREDENTIALS — path to a .json key file
+  - GCP_SERVICE_ACCOUNT_JSON — env var with the full JSON string
+  - .streamlit/secrets.toml — table [gcp_service_account] (same shapes as local Streamlit / attendance_app)
+  - CHECK IN/credentials.json, cwd credentials.json, or GOOGLE_APPLICATION_CREDENTIALS
 
-Note: Streamlit Community Cloud keeps [gcp_service_account] in st.secrets only — it is not on disk and
-not in os.environ. This script cannot read st.secrets. Use credentials.json / env on the machine that runs
-this script, or rely on the app's **Update names → Sync** to flush from the Streamlit process.
+Streamlit Cloud stores secrets in the dashboard only (usually no secrets.toml in the container). This script
+cannot see those unless you also provide a key file or GCP_SERVICE_ACCOUNT_JSON where the job runs—otherwise
+use **Update names → Sync** in the app.
 """
 from __future__ import annotations
 
@@ -60,6 +59,57 @@ def get_today_myt_date() -> str:
     return datetime.now(myt).strftime("%Y-%m-%d")
 
 
+def _tomllib_load(path: Path) -> dict:
+    data = path.read_bytes()
+    try:
+        import tomllib
+
+        return tomllib.loads(data.decode("utf-8"))
+    except ImportError:
+        try:
+            import tomli as tomllib_alt
+
+            return tomllib_alt.loads(data.decode("utf-8"))
+        except ImportError:
+            raise RuntimeError("Install Python 3.11+ or `pip install tomli` to read .streamlit/secrets.toml")
+
+
+def _credentials_from_streamlit_secrets_toml(scope: list[str]):
+    """Load [gcp_service_account] from the same TOML file Streamlit uses locally."""
+    candidates = []
+    env_path = os.getenv("STREAMLIT_SECRETS_FILE", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    for base in (_CHECK_IN_ROOT, _CHECK_IN_ROOT.parent, Path.cwd()):
+        candidates.append(base / ".streamlit" / "secrets.toml")
+
+    seen = set()
+    for path in candidates:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.is_file():
+            continue
+        try:
+            data = _tomllib_load(path)
+        except Exception as e:
+            print(f"[flush_pending] Could not read {path}: {e}", file=sys.stderr)
+            continue
+        gsa = data.get("gcp_service_account")
+        if not isinstance(gsa, dict):
+            continue
+        try:
+            return Credentials.from_service_account_info(gsa, scopes=scope)
+        except Exception as e:
+            print(f"[flush_pending] Invalid gcp_service_account in {path}: {e}", file=sys.stderr)
+            continue
+    return None
+
+
 def _redis_client():
     if Redis is None:
         return None
@@ -91,6 +141,12 @@ def _gsheet_client():
             return None
 
     if creds is None:
+        try:
+            creds = _credentials_from_streamlit_secrets_toml(scope)
+        except RuntimeError as e:
+            print(f"[flush_pending] {e}", file=sys.stderr)
+
+    if creds is None:
         paths_to_try = [
             _CHECK_IN_ROOT / "credentials.json",
             Path.cwd() / "credentials.json",
@@ -111,10 +167,10 @@ def _gsheet_client():
     if creds is None:
         print(
             "[flush_pending] No Google credentials. Use one of:\n"
-            "  - GCP_SERVICE_ACCOUNT_JSON (entire service account JSON string)\n"
-            "  - credentials.json in CHECK IN/ or cwd\n"
-            "  - GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json\n"
-            "Streamlit [gcp_service_account] in secrets.toml is only visible inside Streamlit, not to this script.",
+            "  - .streamlit/secrets.toml with [gcp_service_account] (local dev; same table as attendance_app)\n"
+            "  - GCP_SERVICE_ACCOUNT_JSON env var (entire JSON string; use on CI or hosts with env secrets)\n"
+            "  - credentials.json in CHECK IN/ or cwd, or GOOGLE_APPLICATION_CREDENTIALS\n"
+            "On Streamlit Cloud, dashboard secrets are not a file: use Sync in the app, or set GCP_SERVICE_ACCOUNT_JSON / a key file in that environment if your host supports it.",
             file=sys.stderr,
         )
         return None
