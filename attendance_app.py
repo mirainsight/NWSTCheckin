@@ -2314,38 +2314,6 @@ def render_ministry_dashboard(selected_ministry):
     """Render the dashboard for ministry attendance, grouped by department."""
     st.markdown("---")
 
-    # Show last refresh time prominently with refresh button
-    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-
-    # Last refresh + Refresh (Update names lives beside I'm New on the ministry check-in page)
-    col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
-    with col_time:
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
-            <span style="
-                background: {page_colors['primary']}20;
-                color: {page_colors['primary']};
-                padding: 0.5rem 1rem;
-                border-radius: 4px;
-                font-family: 'Inter', sans-serif;
-                font-size: 0.85rem;
-                font-weight: 600;
-                border: 1px solid {page_colors['primary']}40;
-            ">
-                Last refresh: {last_refresh_str}
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-    with col_refresh:
-        if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{selected_ministry}", use_container_width=True):
-            # Increment refresh counter to bust Streamlit cache
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            # Clear Streamlit caches to force Upstash read
-            get_today_attendance_data.clear()
-            get_ministry_options_from_sheet.clear()
-            st.rerun()
-
     # Get today's attendance data for ministry tab
     with st.spinner("Loading dashboard data..."):
         refresh_key = st.session_state.get('refresh_counter', 0)
@@ -2867,9 +2835,14 @@ def render_ministry_dashboard(selected_ministry):
 def render_qr_section():
     """Render the I'm New QR code section with newcomer form workflow"""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_new_left, col_qr_new, col_qr_new_right = st.columns([1, 1, 4])
-    with col_qr_new_left:
-        render_update_names_sheet_popover("congregation", "hard_sync_qr_congregation")
+    col_qr_refresh, col_qr_new, col_qr_update_names, col_qr_new_right = st.columns([1, 1, 1, 3])
+    with col_qr_refresh:
+        if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", use_container_width=True):
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            get_today_attendance_data.clear()
+            get_options_from_sheet.clear()
+            st.rerun()
     with col_qr_new:
         if st.button("I'm New!", type="secondary", use_container_width=True, key="new_btn"):
             if st.session_state.get('show_qr_modal', False):
@@ -2899,6 +2872,9 @@ def render_qr_section():
                 # Open the modal
                 st.session_state.show_qr_modal = True
             st.rerun()
+
+    with col_qr_update_names:
+        render_update_names_sheet_popover("congregation", "hard_sync_qr_congregation")
 
     # Show QR code in modal/spotlight mode
     if st.session_state.get('show_qr_modal', False):
@@ -3008,9 +2984,14 @@ def render_qr_section():
 def render_ministry_qr_section(selected_ministry):
     """Render the I'm New QR code section for ministry check-in with hard refresh"""
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_new_left, col_qr_new, col_qr_new_right = st.columns([1, 1, 4])
-    with col_qr_new_left:
-        render_update_names_sheet_popover("ministry", f"hard_sync_qr_ministry_{selected_ministry}")
+    col_qr_refresh, col_qr_new, col_qr_update_names, col_qr_new_right = st.columns([1, 1, 1, 3])
+    with col_qr_refresh:
+        if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{selected_ministry}", use_container_width=True):
+            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+            st.session_state.last_refresh_time = get_now_myt()
+            get_today_attendance_data.clear()
+            get_ministry_options_from_sheet.clear()
+            st.rerun()
     with col_qr_new:
         if st.button("I'm New!", type="secondary", use_container_width=True, key=f"ministry_new_btn_{selected_ministry}"):
             if st.session_state.get('show_ministry_qr_modal', False):
@@ -3041,6 +3022,9 @@ def render_ministry_qr_section(selected_ministry):
                 # Open the modal
                 st.session_state.show_ministry_qr_modal = True
             st.rerun()
+
+    with col_qr_update_names:
+        render_update_names_sheet_popover("ministry", f"hard_sync_qr_ministry_{selected_ministry}")
 
     # Show QR code in modal/spotlight mode
     if st.session_state.get('show_ministry_qr_modal', False):
@@ -3154,18 +3138,33 @@ def render_recent_checkins_table(tab_name):
     refresh_key = st.session_state.get('refresh_counter', 0)
     _, _, recent_checkins = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
 
-    if not recent_checkins:
-        return
+    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
 
     st.markdown("---")
     st.markdown(f"""
-    <div style="margin-bottom: 0.5rem;">
+    <div style="margin-bottom: 0.5rem; display: flex; align-items: center; justify-content: space-between;
+                flex-wrap: wrap; gap: 0.5rem;">
         <span style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1rem;
                      color: {page_colors['primary']}; text-transform: uppercase; letter-spacing: 1px;">
             Recent Check-Ins
         </span>
+        <span style="
+            background: {page_colors['primary']}20;
+            color: {page_colors['primary']};
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid {page_colors['primary']}40;
+        ">
+            Last refresh: {last_refresh_str}
+        </span>
     </div>
     """, unsafe_allow_html=True)
+
+    if not recent_checkins:
+        return
 
     # Create dataframe for the table
     table_data = []
@@ -3201,47 +3200,23 @@ def render_dashboard(tab_name, group_by_zone=False):
     If group_by_zone=True, groups by Zone instead of Cell Group."""
     st.markdown("---")
 
-    # Show last refresh time prominently with refresh button
-    last_refresh_str = st.session_state.last_refresh_time.strftime("%H:%M:%S")
-
-    # Update names beside I'm New on NWST only; Leaders has no QR row — keep control in toolbar here
+    # NWST congregation: Refresh / I'm New / Update names live in render_qr_section.
+    # Leaders: same order — Refresh left, middle column reserved (no I'm New), Update names third.
     if group_by_zone:
-        col_update_names, col_time, col_refresh, col_right = st.columns([1.05, 1.85, 0.95, 1.45])
+        col_refresh, _col_im_new_spacer, col_update_names, _col_trailing = st.columns([0.95, 0.95, 1.05, 1.45])
+        with col_refresh:
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", use_container_width=True):
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                get_today_attendance_data.clear()
+                get_options_from_sheet.clear()
+                get_cell_to_zone_mapping.clear()
+                st.rerun()
         with col_update_names:
             render_update_names_sheet_popover(
                 "congregation",
                 f"hard_sync_leaders_toolbar_{tab_name}",
             )
-    else:
-        col_left, col_time, col_refresh, col_right = st.columns([1.5, 2, 1, 1.5])
-    with col_time:
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: flex-end; height: 100%; padding-top: 0.3rem;">
-            <span style="
-                background: {page_colors['primary']}20;
-                color: {page_colors['primary']};
-                padding: 0.5rem 1rem;
-                border-radius: 4px;
-                font-family: 'Inter', sans-serif;
-                font-size: 0.85rem;
-                font-weight: 600;
-                border: 1px solid {page_colors['primary']}40;
-            ">
-                Last refresh: {last_refresh_str}
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-    with col_refresh:
-        if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", use_container_width=True):
-            # Increment refresh counter to bust Streamlit cache
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            # Clear Streamlit caches to force Upstash read
-            get_today_attendance_data.clear()
-            get_options_from_sheet.clear()
-            if group_by_zone:
-                get_cell_to_zone_mapping.clear()
-            st.rerun()
 
     # Get today's attendance data for the specific tab
     with st.spinner("Loading dashboard data..."):
