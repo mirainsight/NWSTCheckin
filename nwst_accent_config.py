@@ -1,12 +1,12 @@
 """Accent overrides shared by CHECK IN and NWST Health.
 
-1) Optional Google Sheet tab **Theme Override** on the CHECK IN workbook
-   (same spreadsheet as ATTENDANCE_SHEET_ID — the one both apps already use for
-   Options / Key Values / Analytics). See nwst_accent_gsheet.py for columns.
+1) **Theme Override** tab on the CHECK IN workbook — snapshot in **Upstash** (see nwst_accent_redis.py).
+   Refreshed from **either** app: CHECK IN **Update names** (`attendance_app.perform_hard_sheet_resync`)
+   **or** NWST Health **Sync from Google Sheets**. Same key; not pulled on every page view.
 
 2) Sibling file nwst_accent_overrides.json — re-read each resolve (Rerun picks up edits).
 
-Sheet rows override JSON for the same date (per field). Env/secrets still apply for hex after both.
+Redis Theme rows override JSON for the same date (per field). Env/secrets still apply for hex after both.
 
 Banner values must be filenames only (e.g. banner.gif); place files in the app root folder
 ( CHECK IN / or NWST HEALTH / next to the Streamlit app)."""
@@ -16,7 +16,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
+
+# Sibling imports (nwst_accent_redis / nwst_accent_gsheet) when loaded via importlib and
+# the Streamlit entrypoint is not this directory (e.g. app under .streamlit/).
+_CFG_DIR = str(Path(__file__).resolve().parent)
+if _CFG_DIR not in sys.path:
+    sys.path.insert(0, _CFG_DIR)
 
 _JSON = Path(__file__).resolve().parent / "nwst_accent_overrides.json"
 _DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -93,3 +100,42 @@ def get_accent_override_by_date() -> dict[str, dict[str, str]]:
         if entry:
             out[k] = entry
     return out
+
+
+def read_theme_override_from_redis(redis_client: object) -> dict[str, dict[str, str]]:
+    from nwst_accent_redis import theme_overrides_from_redis
+
+    return theme_overrides_from_redis(redis_client)
+
+
+def refresh_theme_override_shared_cache(
+    redis_client: object,
+    gsheet_client: object,
+    checkin_sheet_id: str,
+) -> None:
+    """Pull Theme Override from the CHECK IN workbook into Upstash (one snapshot for all apps).
+
+    **Call from either sync path** (different files / UI buttons; same outcome):
+
+    - ``PROJECTS/CHECK IN/attendance_app.py`` — end of ``perform_hard_sheet_resync`` (Update names).
+    - ``PROJECTS/NWST HEALTH/.streamlit/app.py`` — after successful **Sync from Google Sheets** on CG Health.
+    """
+    if not redis_client or not gsheet_client:
+        return
+    sid = (checkin_sheet_id or "").strip()
+    if not sid:
+        return
+    from nwst_accent_gsheet import fetch_accent_overrides_from_gsheet
+    from nwst_accent_redis import store_theme_overrides_in_redis
+
+    try:
+        data = fetch_accent_overrides_from_gsheet(gsheet_client, sid)
+    except Exception:
+        return
+    if not isinstance(data, dict):
+        data = {}
+    store_theme_overrides_in_redis(redis_client, data)
+
+
+# Backward-compatible name
+refresh_theme_override_cache = refresh_theme_override_shared_cache
