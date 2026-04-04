@@ -11,9 +11,14 @@ Env (same as the app):
   UPSTASH_REDIS_REST_TOKEN
 
 Google credentials (first match wins):
-  - CHECK IN/credentials.json (next to this repo folder)
+  - GCP_SERVICE_ACCOUNT_JSON — full service-account JSON as a single string (good for CI / env-based hosts)
+  - CHECK IN/credentials.json
   - ./credentials.json from current working directory
-  - Path in GOOGLE_APPLICATION_CREDENTIALS
+  - GOOGLE_APPLICATION_CREDENTIALS — path to a .json key file
+
+Note: Streamlit Community Cloud keeps [gcp_service_account] in st.secrets only — it is not on disk and
+not in os.environ. This script cannot read st.secrets. Use credentials.json / env on the machine that runs
+this script, or rely on the app's **Update names → Sync** to flush from the Streamlit process.
 """
 from __future__ import annotations
 
@@ -75,27 +80,41 @@ def _gsheet_client():
         "https://www.googleapis.com/auth/drive",
     ]
     creds = None
-    paths_to_try = [
-        _CHECK_IN_ROOT / "credentials.json",
-        Path.cwd() / "credentials.json",
-    ]
-    gac = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    if gac:
-        paths_to_try.append(Path(gac).expanduser())
 
-    for p in paths_to_try:
-        if p.is_file():
-            try:
-                creds = Credentials.from_service_account_file(str(p), scopes=scope)
-                break
-            except Exception as e:
-                print(f"[flush_pending] Could not load {p}: {e}", file=sys.stderr)
-                return None
+    json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
+    if json_blob:
+        try:
+            info = json.loads(json_blob)
+            creds = Credentials.from_service_account_info(info, scopes=scope)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            print(f"[flush_pending] GCP_SERVICE_ACCOUNT_JSON is invalid: {e}", file=sys.stderr)
+            return None
+
+    if creds is None:
+        paths_to_try = [
+            _CHECK_IN_ROOT / "credentials.json",
+            Path.cwd() / "credentials.json",
+        ]
+        gac = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+        if gac:
+            paths_to_try.append(Path(gac).expanduser())
+
+        for p in paths_to_try:
+            if p.is_file():
+                try:
+                    creds = Credentials.from_service_account_file(str(p), scopes=scope)
+                    break
+                except Exception as e:
+                    print(f"[flush_pending] Could not load {p}: {e}", file=sys.stderr)
+                    return None
 
     if creds is None:
         print(
-            "[flush_pending] No credentials: place credentials.json in CHECK IN/ "
-            "or set GOOGLE_APPLICATION_CREDENTIALS.",
+            "[flush_pending] No Google credentials. Use one of:\n"
+            "  - GCP_SERVICE_ACCOUNT_JSON (entire service account JSON string)\n"
+            "  - credentials.json in CHECK IN/ or cwd\n"
+            "  - GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json\n"
+            "Streamlit [gcp_service_account] in secrets.toml is only visible inside Streamlit, not to this script.",
             file=sys.stderr,
         )
         return None
