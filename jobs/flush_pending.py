@@ -15,9 +15,13 @@ Google credentials (first match wins):
   - .streamlit/secrets.toml — table [gcp_service_account] (same shapes as local Streamlit / attendance_app)
   - CHECK IN/credentials.json, cwd credentials.json, or GOOGLE_APPLICATION_CREDENTIALS
 
-Streamlit Cloud stores secrets in the dashboard only (usually no secrets.toml in the container). This script
-cannot see those unless you also provide a key file or GCP_SERVICE_ACCOUNT_JSON where the job runs—otherwise
-use **Update names → Sync** in the app.
+Using the same **Streamlit Secrets** as attendance_app:
+
+- **Inside** `streamlit run` (e.g. call `main()` from a button callback in your app): this file reads
+  `st.secrets["gcp_service_account"]`, `ATTENDANCE_SHEET_ID`, and Upstash keys from `st.secrets` when env vars
+  are unset—same as the UI you configured.
+- **Outside** Streamlit (`python jobs/flush_pending.py` on Cloud CI): Secrets UI is **not** loaded; use
+  `.streamlit/secrets.toml`, `credentials.json`, or env vars instead.
 """
 from __future__ import annotations
 
@@ -116,11 +120,39 @@ def _redis_client():
     url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
     token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
     if not url or not token:
+        try:
+            import streamlit as st
+
+            if not url:
+                url = (st.secrets.get("UPSTASH_REDIS_REST_URL") or "").strip()
+            if not token:
+                token = (st.secrets.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+        except Exception:
+            pass
+    if not url or not token:
         return None
     try:
         return Redis(url=url, token=token)
     except Exception as e:
         print(f"[flush_pending] Redis connection failed: {e}", file=sys.stderr)
+        return None
+
+
+def _credentials_from_streamlit_secrets_runtime(scope: list[str]):
+    """Use Secrets UI / st.secrets — only works in the same process as `streamlit run` (e.g. attendance_app)."""
+    try:
+        import streamlit as st
+    except ImportError:
+        return None
+    try:
+        if "gcp_service_account" not in st.secrets:
+            return None
+        info = dict(st.secrets["gcp_service_account"])
+        return Credentials.from_service_account_info(info, scopes=scope)
+    except (TypeError, KeyError, ValueError) as e:
+        print(f"[flush_pending] st.secrets['gcp_service_account'] unusable: {e}", file=sys.stderr)
+        return None
+    except Exception:
         return None
 
 
@@ -131,8 +163,10 @@ def _gsheet_client():
     ]
     creds = None
 
+    creds = _credentials_from_streamlit_secrets_runtime(scope)
+
     json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
-    if json_blob:
+    if creds is None and json_blob:
         try:
             info = json.loads(json_blob)
             creds = Credentials.from_service_account_info(info, scopes=scope)
@@ -166,11 +200,13 @@ def _gsheet_client():
 
     if creds is None:
         print(
-            "[flush_pending] No Google credentials. Use one of:\n"
-            "  - .streamlit/secrets.toml with [gcp_service_account] (local dev; same table as attendance_app)\n"
-            "  - GCP_SERVICE_ACCOUNT_JSON env var (entire JSON string; use on CI or hosts with env secrets)\n"
-            "  - credentials.json in CHECK IN/ or cwd, or GOOGLE_APPLICATION_CREDENTIALS\n"
-            "On Streamlit Cloud, dashboard secrets are not a file: use Sync in the app, or set GCP_SERVICE_ACCOUNT_JSON / a key file in that environment if your host supports it.",
+            "[flush_pending] No Google credentials. Tried (in order):\n"
+            "  1) st.secrets['gcp_service_account'] — only when this runs inside the same process as Streamlit\n"
+            "  2) GCP_SERVICE_ACCOUNT_JSON\n"
+            "  3) .streamlit/secrets.toml [gcp_service_account]\n"
+            "  4) credentials.json / GOOGLE_APPLICATION_CREDENTIALS\n"
+            "Plain `python jobs/flush_pending.py` on Streamlit Cloud does not load the Secrets UI; run flush from\n"
+            "the app (e.g. import and call main() from a Streamlit callback), or use files/env on the host.",
             file=sys.stderr,
         )
         return None
@@ -240,7 +276,14 @@ def main() -> int:
 
     sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "").strip()
     if not sheet_id:
-        print("[flush_pending] Set ATTENDANCE_SHEET_ID in the environment.", file=sys.stderr)
+        try:
+            import streamlit as st
+
+            sheet_id = (st.secrets.get("ATTENDANCE_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    if not sheet_id:
+        print("[flush_pending] Set ATTENDANCE_SHEET_ID in the environment or Streamlit secrets.", file=sys.stderr)
         return 1
 
     if "all" in args.tabs:
