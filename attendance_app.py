@@ -68,6 +68,26 @@ def get_now_myt():
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt)
 
+
+def _with_checkin_progress(caption: str, fn):
+    """Show a simple ``st.progress`` (themed via global CSS) while ``fn`` runs; slot cleared when done."""
+    slot = st.empty()
+    with slot.container():
+        try:
+            bar = st.progress(0, text=caption)
+        except TypeError:
+            st.caption(caption)
+            bar = st.progress(0)
+    try:
+        return fn()
+    finally:
+        try:
+            bar.progress(1.0)
+        except Exception:
+            pass
+        slot.empty()
+
+
 @st.cache_resource
 def get_redis_client():
     """Initialize Upstash Redis client - cached as resource to reuse connection"""
@@ -1496,6 +1516,9 @@ else:
         'border': daily_colors['primary']
     }
 
+# Progress bar track behind daily primary (check-in loaders)
+_checkin_progress_track = "rgba(0,0,0,0.11)" if is_leaders_page else "rgba(255,255,255,0.14)"
+
 # Add CSS to reduce Streamlit default spacing and style buttons with daily color
 st.markdown(f"""
 <style>
@@ -1530,6 +1553,17 @@ st.markdown(f"""
     }}
     [data-testid="column"] {{
         padding-top: 0rem !important;
+    }}
+
+    /* Simple st.progress: fill = primary, track = subtle contrast on page bg */
+    .stProgress > div > div > div {{
+        background-color: {_checkin_progress_track} !important;
+    }}
+    .stProgress > div > div > div > div {{
+        background-color: {page_colors['primary']} !important;
+    }}
+    .stProgress label, .stProgress [data-testid="stMarkdownContainer"] p {{
+        color: {page_colors['text']} !important;
     }}
 
     /* Style all buttons with daily color theme */
@@ -1827,8 +1861,10 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
             st.session_state[selectbox_key] = ""
 
-        with st.spinner("Loading today's attendance…"):
-            checked_in_today = get_checked_in_today(client, SHEET_ID, tab_name)
+        checked_in_today = _with_checkin_progress(
+            "Loading today's attendance…",
+            lambda: get_checked_in_today(client, SHEET_ID, tab_name),
+        )
 
         available_options = [opt for opt in all_option_values if opt not in checked_in_today]
         checked_in_options = [opt for opt in all_option_values if opt in checked_in_today]
@@ -1986,8 +2022,10 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         "option_type": option_type
                     }
 
-                    with st.spinner("Checking you in…"):
-                        success, message = save_attendance_to_sheet(client, attendance_data, tab_name)
+                    success, message = _with_checkin_progress(
+                        "Checking you in…",
+                        lambda: save_attendance_to_sheet(client, attendance_data, tab_name),
+                    )
 
                     if success:
                         # Store last check-in for potential undo
@@ -2136,8 +2174,10 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
             st.session_state[selectbox_key] = ""
 
-        with st.spinner("Loading today's attendance…"):
-            checked_in_today = get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME)
+        checked_in_today = _with_checkin_progress(
+            "Loading today's attendance…",
+            lambda: get_checked_in_today(client, SHEET_ID, MINISTRY_ATTENDANCE_TAB_NAME),
+        )
 
         available_options = [opt for opt in ministry_option_values if opt not in checked_in_today]
 
@@ -2288,8 +2328,10 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         "option_type": "Name"
                     }
 
-                    with st.spinner("Checking you in…"):
-                        success, message = save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME)
+                    success, message = _with_checkin_progress(
+                        "Checking you in…",
+                        lambda: save_attendance_to_sheet(client, attendance_data, MINISTRY_ATTENDANCE_TAB_NAME),
+                    )
 
                     if success:
                         # Store last check-in for potential undo
