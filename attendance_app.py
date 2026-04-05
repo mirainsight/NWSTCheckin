@@ -2876,48 +2876,6 @@ def render_ministry_dashboard(selected_ministry):
             components.html(empty_ministry_html, height=estimated_height_empty, scrolling=True)
 
 
-def render_qr_section():
-    """Toolbar above check-in: refresh roster cache."""
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_refresh, _col_trailing = st.columns([1, 4])
-    with col_qr_refresh:
-        if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", use_container_width=True):
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            get_today_attendance_data.clear()
-            get_options_from_sheet.clear()
-            get_newcomers_count.clear()
-            redis_client = get_redis_client()
-            if redis_client:
-                try:
-                    today_myt = get_today_myt_date()
-                    redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                except Exception:
-                    pass
-            st.rerun()
-
-
-def render_ministry_qr_section(selected_ministry):
-    """Toolbar above ministry check-in: refresh roster cache."""
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    col_qr_refresh, _col_trailing = st.columns([1, 4])
-    with col_qr_refresh:
-        if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{selected_ministry}", use_container_width=True):
-            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-            st.session_state.last_refresh_time = get_now_myt()
-            get_today_attendance_data.clear()
-            get_ministry_options_from_sheet.clear()
-            get_newcomers_count.clear()
-            redis_client = get_redis_client()
-            if redis_client:
-                try:
-                    today_myt = get_today_myt_date()
-                    redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
-                except Exception:
-                    pass
-            st.rerun()
-
-
 def render_recent_checkins_table(tab_name):
     """Render a scrollable table showing recent check-ins ordered by latest first"""
     # Get today's attendance data including recent check-ins
@@ -5473,7 +5431,26 @@ if page == "NWST Check In":
         render_historical_dashboard(ATTENDANCE_TAB_NAME, historical_date, display_colors)
     else:
         render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
-        render_qr_section()
+        # Refresh + Update Names toolbar
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        col_refresh, col_update_names, _col_trailing = st.columns([1, 1, 3])
+        with col_refresh:
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", use_container_width=True):
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                get_today_attendance_data.clear()
+                get_options_from_sheet.clear()
+                get_newcomers_count.clear()
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                    except Exception:
+                        pass
+                st.rerun()
+        with col_update_names:
+            st.link_button("Update Names", "https://clickmeee-nwst.streamlit.app/", type="secondary", use_container_width=True)
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(ATTENDANCE_TAB_NAME)
 
@@ -5528,7 +5505,26 @@ elif page == "Ministry Discipleship":
     # Show check-in form and dashboard for selected ministry
     if not viewing_historical:
         render_ministry_check_in_form(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
-        render_ministry_qr_section(st.session_state.selected_ministry)
+        # Refresh + Update Names toolbar
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        col_refresh_m, col_update_names_m, _col_trailing_m = st.columns([1, 1, 3])
+        with col_refresh_m:
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{st.session_state.selected_ministry}", use_container_width=True):
+                st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                st.session_state.last_refresh_time = get_now_myt()
+                get_today_attendance_data.clear()
+                get_ministry_options_from_sheet.clear()
+                get_newcomers_count.clear()
+                redis_client = get_redis_client()
+                if redis_client:
+                    try:
+                        today_myt = get_today_myt_date()
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                    except Exception:
+                        pass
+                st.rerun()
+        with col_update_names_m:
+            st.link_button("Update Names", "https://clickmeee-nwst.streamlit.app/", type="secondary", use_container_width=True)
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
         render_ministry_dashboard_fragment(st.session_state.selected_ministry)
     else:
