@@ -1592,12 +1592,11 @@ st.markdown(f"""
         border-radius: 0px !important;
         color: {page_colors['primary']} !important;
         text-decoration: none !important;
-        font-family: 'Source Sans Pro', sans-serif !important;
-        font-size: 14px !important;
-        font-weight: 400 !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
         background: transparent !important;
         transition: all 0.2s ease !important;
-        line-height: 1.6 !important;
     }}
     .update-names-btn:hover {{
         background-color: {page_colors['primary']} !important;
