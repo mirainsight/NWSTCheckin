@@ -5451,19 +5451,23 @@ if page == "NWST Check In":
                 st.rerun()
         with col_update_names:
             st.markdown(
-                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" style="
+                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn" style="
                     display: block;
                     text-align: center;
                     padding: 0.5rem 1rem;
-                    border: 1px solid {display_colors['primary']};
-                    border-radius: 0.5rem;
+                    border: 2px solid {display_colors['primary']};
+                    border-radius: 0px;
                     color: {display_colors['primary']};
                     text-decoration: none;
-                    font-family: 'Source Sans Pro', sans-serif;
+                    font-family: 'Inter', sans-serif;
                     font-size: 1rem;
-                    font-weight: 400;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
                     background: transparent;
-                ">Update Names</a>''',
+                    transition: all 0.2s ease;
+                " onmouseover="this.style.backgroundColor='{display_colors['primary']}'; this.style.color='{display_colors['background']}'; this.style.transform='scale(1.02)';"
+                   onmouseout="this.style.backgroundColor='transparent'; this.style.color='{display_colors['primary']}'; this.style.transform='scale(1)';"
+                >Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
@@ -5540,19 +5544,23 @@ elif page == "Ministry Discipleship":
                 st.rerun()
         with col_update_names_m:
             st.markdown(
-                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" style="
+                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn" style="
                     display: block;
                     text-align: center;
                     padding: 0.5rem 1rem;
-                    border: 1px solid {display_colors['primary']};
-                    border-radius: 0.5rem;
+                    border: 2px solid {display_colors['primary']};
+                    border-radius: 0px;
                     color: {display_colors['primary']};
                     text-decoration: none;
-                    font-family: 'Source Sans Pro', sans-serif;
+                    font-family: 'Inter', sans-serif;
                     font-size: 1rem;
-                    font-weight: 400;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
                     background: transparent;
-                ">Update Names</a>''',
+                    transition: all 0.2s ease;
+                " onmouseover="this.style.backgroundColor='{display_colors['primary']}'; this.style.color='{display_colors['background']}'; this.style.transform='scale(1.02)';"
+                   onmouseout="this.style.backgroundColor='transparent'; this.style.color='{display_colors['primary']}'; this.style.transform='scale(1)';"
+                >Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
