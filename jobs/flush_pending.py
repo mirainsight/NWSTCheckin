@@ -61,6 +61,7 @@ REDIS_OPTIONS_KEY = "attendance:options"
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"
 REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"
+REDIS_LAST_SYNC_TIMESTAMP_KEY = "attendance:last_sync_timestamp"
 # Same list as attendance_app.MINISTRY_LIST (ministry option cache keys)
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]
 SESSION_LOG_KEY = "flush_pending_session_log"
@@ -248,6 +249,33 @@ def _nwst_page_colors() -> dict:
 def _log_ts() -> str:
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _get_last_sync_timestamp() -> str | None:
+    """Retrieve last sync timestamp from Upstash Redis."""
+    rc = _redis_client(None)
+    if not rc:
+        return None
+    try:
+        val = rc.get(REDIS_LAST_SYNC_TIMESTAMP_KEY)
+        if val:
+            return val.decode() if isinstance(val, bytes) else val
+    except Exception:
+        pass
+    return None
+
+
+def _save_last_sync_timestamp() -> None:
+    """Save current MYT timestamp to Upstash Redis."""
+    rc = _redis_client(None)
+    if not rc:
+        return
+    try:
+        myt = timezone(timedelta(hours=8))
+        ts = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+        rc.set(REDIS_LAST_SYNC_TIMESTAMP_KEY, ts)
+    except Exception:
+        pass
 
 
 def _emit(
@@ -593,6 +621,7 @@ def run_full_sheet_resync(
     _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
     _progress_set(progress_bar, 0.72, "Refreshing Theme Override snapshot…")
     _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
+    _save_last_sync_timestamp()
     _progress_set(progress_bar, 1.0, "All done.")
     return True, flush_summary
 
@@ -816,6 +845,16 @@ def run_streamlit_app() -> None:
                 else:
                     st.error(summary or "Update failed.")
         st.rerun()
+
+    # Display last refreshed timestamp
+    last_sync = _get_last_sync_timestamp()
+    if last_sync:
+        st.markdown(
+            f'<p style="color: {pc["text_muted"]}; font-family: Inter, sans-serif; '
+            f'font-size: 0.85rem; text-align: center; margin: 1rem 0 0.5rem 0;">'
+            f'Last update: {last_sync} MYT</p>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown('<p class="log-caption">Run log</p>', unsafe_allow_html=True)
     st.code(
