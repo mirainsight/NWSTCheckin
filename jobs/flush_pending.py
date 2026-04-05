@@ -278,6 +278,31 @@ def _save_last_sync_timestamp() -> None:
         pass
 
 
+def _relative_time_from_timestamp(timestamp_str: str) -> str:
+    """Calculate relative time (e.g., '2 seconds ago', '5 minutes ago', '3 days ago')."""
+    try:
+        myt = timezone(timedelta(hours=8))
+        timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=myt)
+        now = datetime.now(myt)
+        diff = now - timestamp
+
+        total_seconds = int(diff.total_seconds())
+
+        if total_seconds < 60:
+            return f"{total_seconds} second{'s' if total_seconds != 1 else ''} ago"
+        elif total_seconds < 3600:
+            minutes = total_seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif total_seconds < 86400:
+            hours = total_seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        else:
+            days = total_seconds // 86400
+            return f"{days} day{'s' if days != 1 else ''} ago"
+    except Exception:
+        return ""
+
+
 def _emit(
     message: str,
     log_lines: list[str] | None,
@@ -849,10 +874,11 @@ def run_streamlit_app() -> None:
     # Display last refreshed timestamp
     last_sync = _get_last_sync_timestamp()
     if last_sync:
+        relative_time = _relative_time_from_timestamp(last_sync)
         st.markdown(
             f'<p style="color: {pc["text_muted"]}; font-family: Inter, sans-serif; '
-            f'font-size: 0.85rem; text-align: center; margin: 1rem 0 0.5rem 0;">'
-            f'Last update: {last_sync} MYT</p>',
+            f'font-size: 0.85rem; text-align: center; margin: 1rem 0 0.5rem 0; font-style: italic;">'
+            f'Last update: {last_sync} MYT ({relative_time})</p>',
             unsafe_allow_html=True,
         )
 
