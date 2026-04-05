@@ -5450,7 +5450,22 @@ if page == "NWST Check In":
                         pass
                 st.rerun()
         with col_update_names:
-            st.link_button("Update Names", "https://clickmeee-nwst.streamlit.app/", type="secondary", use_container_width=True)
+            st.markdown(
+                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" style="
+                    display: block;
+                    text-align: center;
+                    padding: 0.5rem 1rem;
+                    border: 1px solid {display_colors['primary']};
+                    border-radius: 0.5rem;
+                    color: {display_colors['primary']};
+                    text-decoration: none;
+                    font-family: 'Source Sans Pro', sans-serif;
+                    font-size: 1rem;
+                    font-weight: 400;
+                    background: transparent;
+                ">Update Names</a>''',
+                unsafe_allow_html=True
+            )
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(ATTENDANCE_TAB_NAME)
 
@@ -5524,7 +5539,22 @@ elif page == "Ministry Discipleship":
                         pass
                 st.rerun()
         with col_update_names_m:
-            st.link_button("Update Names", "https://clickmeee-nwst.streamlit.app/", type="secondary", use_container_width=True)
+            st.markdown(
+                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" style="
+                    display: block;
+                    text-align: center;
+                    padding: 0.5rem 1rem;
+                    border: 1px solid {display_colors['primary']};
+                    border-radius: 0.5rem;
+                    color: {display_colors['primary']};
+                    text-decoration: none;
+                    font-family: 'Source Sans Pro', sans-serif;
+                    font-size: 1rem;
+                    font-weight: 400;
+                    background: transparent;
+                ">Update Names</a>''',
+                unsafe_allow_html=True
+            )
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
         render_ministry_dashboard_fragment(st.session_state.selected_ministry)
     else:
