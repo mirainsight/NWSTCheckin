@@ -745,7 +745,7 @@ def run_streamlit_app() -> None:
         f"""
 <style>
     /* Same font imports as attendance_app NWST chrome (Outfit + Inter stack used across the app). */
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
     /* Baseline: kill Streamlit theme primary on this app (matches attendance_app NWST) */
@@ -762,27 +762,60 @@ def run_streamlit_app() -> None:
     .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown li {{
         font-family: 'Inter', sans-serif !important;
     }}
-    .stApp h1 {{
-        color: {pc["text"]} !important;
-        text-align: center !important;
-        font-weight: 600 !important;
-        font-size: 1.65rem !important;
-        letter-spacing: 0.02em !important;
-        margin-bottom: 0.5rem !important;
-    }}
     .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown div, .stApp .stMarkdown li {{
         color: {pc["text"]} !important;
     }}
+
+    /* Hide default Streamlit title */
+    .stApp h1 {{
+        display: none !important;
+    }}
+
+    /* Custom vibrant title styling */
+    .flush-title {{
+        text-align: center;
+        margin: 1.5rem 0 1rem 0;
+    }}
+    .flush-title-text {{
+        font-family: 'Outfit', 'Inter', -apple-system, sans-serif !important;
+        font-size: 2rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.04em !important;
+        text-transform: uppercase !important;
+        background: linear-gradient(135deg, {pc["primary"]} 0%, {pc["light"]} 50%, {pc["primary"]} 100%);
+        background-size: 200% 200%;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: gradient-shift 3s ease infinite;
+        display: inline-block;
+    }}
+    @keyframes gradient-shift {{
+        0% {{ background-position: 0% 50%; }}
+        50% {{ background-position: 100% 50%; }}
+        100% {{ background-position: 0% 50%; }}
+    }}
+    .flush-subtitle {{
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+        color: {pc["text_muted"]} !important;
+        letter-spacing: 0.05em !important;
+        margin-top: 0.25rem !important;
+    }}
+
     .log-caption {{
         color: {pc["text_muted"]} !important;
-        font-size: 0.82rem !important;
-        margin-top: 1.25rem !important;
-        margin-bottom: 0.35rem !important;
+        font-size: 0.8rem !important;
+        margin-top: 1.5rem !important;
+        margin-bottom: 0.4rem !important;
         font-family: 'Inter', sans-serif !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.1em !important;
+        font-weight: 600 !important;
     }}
 
     [data-testid="stVerticalBlock"] {{
-        gap: 0.35rem !important;
+        gap: 0.5rem !important;
     }}
     .element-container {{
         margin-top: 0rem !important;
@@ -796,19 +829,33 @@ def run_streamlit_app() -> None:
     .stApp button[data-testid="baseButton-primary"],
     .stApp .stButton > button[kind="primary"],
     .stApp .stButton > button[data-testid="baseButton-primary"] {{
-        background-color: {pc["primary"]} !important;
+        background: linear-gradient(135deg, {pc["primary"]} 0%, {pc["light"]} 100%) !important;
         color: {pc["background"]} !important;
-        border: 2px solid {pc["primary"]} !important;
+        border: none !important;
         border-radius: 0px !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-        font-size: 1.08rem !important;
-        min-height: 3.35rem !important;
-        padding-top: 0.85rem !important;
-        padding-bottom: 0.85rem !important;
-        box-shadow: none !important;
-        transition: all 0.2s ease !important;
+        font-family: 'Outfit', 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+        text-transform: uppercase !important;
+        font-size: 1rem !important;
+        min-height: 3.5rem !important;
+        padding: 1rem 2rem !important;
+        box-shadow: 0 4px 20px {pc["primary"]}40, 0 0 40px {pc["primary"]}20 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        position: relative !important;
+        overflow: hidden !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button::before,
+    .stApp .st-key-flush_run button::before,
+    .stApp button[data-testid="baseButton-primary"]::before {{
+        content: '' !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: -100% !important;
+        width: 100% !important;
+        height: 100% !important;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent) !important;
+        transition: left 0.5s ease !important;
     }}
     .stApp div[class*="st-key-flush_run"] button:hover,
     .stApp .st-key-flush_run button:hover,
@@ -816,42 +863,95 @@ def run_streamlit_app() -> None:
     .stApp button[data-testid="baseButton-primary"]:hover,
     .stApp .stButton > button[kind="primary"]:hover,
     .stApp .stButton > button[data-testid="baseButton-primary"]:hover {{
-        background-color: {pc["light"]} !important;
-        border-color: {pc["light"]} !important;
-        color: {pc["background"]} !important;
-        transform: scale(1.02) !important;
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 8px 30px {pc["primary"]}60, 0 0 60px {pc["primary"]}30 !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button:hover::before,
+    .stApp .st-key-flush_run button:hover::before,
+    .stApp button[data-testid="baseButton-primary"]:hover::before {{
+        left: 100% !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button:active,
+    .stApp .st-key-flush_run button:active,
+    .stApp button[data-testid="baseButton-primary"]:active {{
+        transform: translateY(0) scale(0.98) !important;
     }}
 
+    /* Progress bar styling */
+    .stProgress > div > div > div {{
+        background-color: rgba(255,255,255,0.1) !important;
+        border-radius: 0px !important;
+    }}
+    .stProgress > div > div > div > div {{
+        background: linear-gradient(90deg, {pc["primary"]}, {pc["light"]}) !important;
+        border-radius: 0px !important;
+        box-shadow: 0 0 10px {pc["primary"]}60 !important;
+    }}
     .stProgress [role="progressbar"] {{
         border-radius: 0px !important;
     }}
-    .stProgress > div > div > div > div,
     .stProgress div[aria-valuemax="1"] {{
         border-radius: 0px !important;
-        background-color: {pc["primary"]} !important;
     }}
 
+    /* Code/log block styling */
     [data-testid="stCode"],
     [data-testid="stCodeBlock"] {{
-        border: 2px solid {pc["primary"]} !important;
+        border: 1px solid {pc["primary"]}40 !important;
         border-radius: 0px !important;
+        background: {pc["card_bg"]} !important;
+        box-shadow: inset 0 2px 10px rgba(0,0,0,0.3) !important;
     }}
     .stApp pre, .stApp code {{
-        font-size: 0.78rem !important;
+        font-size: 0.75rem !important;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
+        color: {pc["text_muted"]} !important;
+    }}
+
+    /* Success/error message styling */
+    .stSuccess {{
+        background: linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(34,197,94,0.05) 100%) !important;
+        border-left: 3px solid #22c55e !important;
+        border-radius: 0px !important;
+    }}
+    .stError {{
+        background: linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(239,68,68,0.05) 100%) !important;
+        border-left: 3px solid #ef4444 !important;
+        border-radius: 0px !important;
+    }}
+
+    /* Last sync timestamp styling */
+    .last-sync-text {{
+        color: {pc["text_muted"]} !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.82rem !important;
+        text-align: center !important;
+        margin: 1.25rem 0 0.5rem 0 !important;
+        font-style: italic !important;
+        opacity: 0.8 !important;
     }}
 </style>
 """,
         unsafe_allow_html=True,
     )
 
-    st.title("Click me to update")
+    # Custom vibrant title with gradient animation
+    st.markdown(
+        f"""
+        <div class="flush-title">
+            <div class="flush-title-text">Sync & Update</div>
+            <div class="flush-subtitle">Flush pending check-ins to Google Sheets</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if SESSION_LOG_KEY not in st.session_state:
         st.session_state[SESSION_LOG_KEY] = []
 
     progress_slot = st.empty()
     clicked = st.button(
-        "🔄  Click me to update",
+        "⚡ SYNC NOW",
         type="primary",
         use_container_width=True,
         key="flush_run",
@@ -896,15 +996,13 @@ def run_streamlit_app() -> None:
     if last_sync:
         relative_time = _relative_time_from_timestamp(last_sync)
         st.markdown(
-            f'<p style="color: {pc["text_muted"]}; font-family: Inter, sans-serif; '
-            f'font-size: 0.85rem; text-align: center; margin: 1rem 0 0.5rem 0; font-style: italic;">'
-            f'Last update: {last_sync} MYT ({relative_time})</p>',
+            f'<p class="last-sync-text">Last update: {last_sync} MYT ({relative_time})</p>',
             unsafe_allow_html=True,
         )
 
-    st.markdown('<p class="log-caption">Run log</p>', unsafe_allow_html=True)
+    st.markdown('<p class="log-caption">📋 Activity Log</p>', unsafe_allow_html=True)
     st.code(
-        "\n".join(st.session_state[SESSION_LOG_KEY]) or "(empty — press the button above)",
+        "\n".join(st.session_state[SESSION_LOG_KEY]) or "(press sync to see activity)",
         language="text",
     )
 
