@@ -1583,6 +1583,28 @@ st.markdown(f"""
         transform: scale(1.02) !important;
     }}
 
+    /* Update Names link styled as button */
+    .update-names-btn {{
+        display: block !important;
+        text-align: center !important;
+        padding: 0.5rem 1rem !important;
+        border: 2px solid {page_colors['primary']} !important;
+        border-radius: 0px !important;
+        color: {page_colors['primary']} !important;
+        text-decoration: none !important;
+        font-family: 'Source Sans Pro', sans-serif !important;
+        font-size: 14px !important;
+        font-weight: 400 !important;
+        background: transparent !important;
+        transition: all 0.2s ease !important;
+        line-height: 1.6 !important;
+    }}
+    .update-names-btn:hover {{
+        background-color: {page_colors['primary']} !important;
+        color: {page_colors['background']} !important;
+        transform: scale(1.02) !important;
+    }}
+
     /* Primary buttons (Check In, Close) */
     .stButton > button[kind="primary"] {{
         background-color: {page_colors['primary']} !important;
@@ -5451,23 +5473,7 @@ if page == "NWST Check In":
                 st.rerun()
         with col_update_names:
             st.markdown(
-                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn" style="
-                    display: block;
-                    text-align: center;
-                    padding: 0.5rem 1rem;
-                    border: 2px solid {display_colors['primary']};
-                    border-radius: 0px;
-                    color: {display_colors['primary']};
-                    text-decoration: none;
-                    font-family: 'Inter', sans-serif;
-                    font-size: 1rem;
-                    font-weight: 600;
-                    letter-spacing: 0.5px;
-                    background: transparent;
-                    transition: all 0.2s ease;
-                " onmouseover="this.style.backgroundColor='{display_colors['primary']}'; this.style.color='{display_colors['background']}'; this.style.transform='scale(1.02)';"
-                   onmouseout="this.style.backgroundColor='transparent'; this.style.color='{display_colors['primary']}'; this.style.transform='scale(1)';"
-                >Update names</a>''',
+                '''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
@@ -5544,23 +5550,7 @@ elif page == "Ministry Discipleship":
                 st.rerun()
         with col_update_names_m:
             st.markdown(
-                f'''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn" style="
-                    display: block;
-                    text-align: center;
-                    padding: 0.5rem 1rem;
-                    border: 2px solid {display_colors['primary']};
-                    border-radius: 0px;
-                    color: {display_colors['primary']};
-                    text-decoration: none;
-                    font-family: 'Inter', sans-serif;
-                    font-size: 1rem;
-                    font-weight: 600;
-                    letter-spacing: 0.5px;
-                    background: transparent;
-                    transition: all 0.2s ease;
-                " onmouseover="this.style.backgroundColor='{display_colors['primary']}'; this.style.color='{display_colors['background']}'; this.style.transform='scale(1.02)';"
-                   onmouseout="this.style.backgroundColor='transparent'; this.style.color='{display_colors['primary']}'; this.style.transform='scale(1)';"
-                >Update names</a>''',
+                '''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
