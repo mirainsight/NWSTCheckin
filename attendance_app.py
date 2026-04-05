@@ -1593,7 +1593,7 @@ st.markdown(f"""
         color: {page_colors['primary']} !important;
         text-decoration: none !important;
         font-family: 'Inter', sans-serif !important;
-        font-weight: 600 !important;
+        font-weight: 400 !important;
         letter-spacing: 0.5px !important;
         background: transparent !important;
         transition: all 0.2s ease !important;
