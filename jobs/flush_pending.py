@@ -501,28 +501,28 @@ def flush_pending_attendance_for_tabs(
     log_lines: list[str] | None = None,
 ) -> tuple[bool, str]:
     if not client or not sheet_id.strip():
-        m = "Google Sheets client or ATTENDANCE_SHEET_ID not available."
-        _emit(m, log_lines, err=True)
+        m = "Error: Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(m, log_lines, err=True, with_ts=False)
         return False, m
 
     redis_client = _redis_client(log_lines)
     if not redis_client:
-        m = "Upstash not configured — there is no pending queue (check-ins write straight to the sheet)."
-        _emit(m, log_lines)
+        m = "No pending queue (Upstash not configured)."
+        _emit(m, log_lines, with_ts=False)
         return True, m
 
     today_myt = get_today_myt_date()
-    _emit(f"Today (MYT): {today_myt}; tabs: {', '.join(tab_names)}", log_lines)
 
     try:
+        _emit("Reading check-ins from Upstash...", log_lines, with_ts=False)
         spreadsheet = client.open_by_key(sheet_id)
         total_rows = 0
-        parts = []
+        results = []
         for tab_name in tab_names:
             pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
             raw_items = redis_client.lrange(pk, 0, -1)
             if not raw_items:
-                _emit(f"  {tab_name}: pending queue empty (skip).", log_lines)
+                results.append(f"  {tab_name}: 0 rows")
                 continue
             rows = []
             for raw in raw_items:
@@ -534,25 +534,27 @@ def flush_pending_attendance_for_tabs(
             redis_client.delete(pk)
             n = len(rows)
             total_rows += n
-            parts.append(f"{tab_name}: {n}")
-            _emit(f"  {tab_name}: appended {n} row(s), cleared Redis pending key.", log_lines)
+            results.append(f"  {tab_name}: +{n} rows")
+
+        _emit("", log_lines, with_ts=False)
+        _emit(f"Writing to Google Sheets ({today_myt}):", log_lines, with_ts=False)
+        for r in results:
+            _emit(r, log_lines, with_ts=False)
 
         if total_rows == 0:
-            summary = f"No pending rows for {today_myt} (all queues empty or already flushed)."
-            _emit(summary, log_lines)
+            summary = "no new rows"
             return True, summary
 
-        summary = f"Wrote {total_rows} pending row(s) to Google Sheets — " + "; ".join(parts)
-        _emit(summary, log_lines)
+        summary = f"+{total_rows} rows"
         return True, summary
     except gspread.exceptions.APIError as e:
-        m = "API quota exceeded. Try again in a moment." if (
+        m = "Error: API quota exceeded." if (
             "429" in str(e) or "Quota exceeded" in str(e)
-        ) else str(e)
-        _emit(m, log_lines, err=True)
+        ) else f"Error: {e}"
+        _emit(m, log_lines, err=True, with_ts=False)
         return False, m
     except Exception as e:
-        _emit(str(e), log_lines, err=True)
+        _emit(f"Error: {e}", log_lines, err=True, with_ts=False)
         return False, str(e)
 
 
@@ -567,7 +569,7 @@ def _pending_queues_nonempty(redis_client, today_myt: str, tab_names: list[str])
     return False
 
 
-def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[str] | None) -> None:
+def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[str] | None) -> bool:
     """Match congregation + ministry branches of ``perform_hard_sheet_resync`` (union of keys)."""
     try:
         redis_client.delete(REDIS_OPTIONS_KEY)
@@ -579,8 +581,10 @@ def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[
         for ministry in MINISTRY_LIST:
             redis_client.delete(f"attendance:ministry_options:{ministry}")
         redis_client.delete("attendance:ministry_options:all")
+        return True
     except Exception as e:
-        _emit(f"Redis cache clear partial failure: {e}", log_lines, err=True)
+        _emit(f"Error: Cache clear failed ({e})", log_lines, err=True, with_ts=False)
+        return False
 
 
 def _refresh_theme_override_shared(
@@ -588,17 +592,18 @@ def _refresh_theme_override_shared(
     gsheet_client,
     sheet_id: str,
     log_lines: list[str] | None,
-) -> None:
+) -> bool:
     if not (sheet_id or "").strip() or not redis_client or not gsheet_client:
-        return
+        return True
     mod = _load_nwst_accent_cfg()
     if mod is None:
-        _emit("nwst_accent_config not found; skipping Theme Override snapshot.", log_lines)
-        return
+        return True
     try:
         mod.refresh_theme_override_shared_cache(redis_client, gsheet_client, sheet_id)
+        return True
     except Exception as e:
-        _emit(f"Theme Override refresh failed: {e}", log_lines, err=True)
+        _emit(f"Error: Theme refresh failed ({e})", log_lines, err=True, with_ts=False)
+        return False
 
 
 def _progress_set(bar, value: float, text: str) -> None:
@@ -620,8 +625,8 @@ def run_full_sheet_resync(
 ) -> tuple[bool, str]:
     """Flush selected pending queues, then full Redis cache clear + theme snapshot (see module doc)."""
     if not client or not sheet_id.strip():
-        msg = "Google Sheets client or ATTENDANCE_SHEET_ID not available."
-        _emit(msg, log_lines, err=True)
+        msg = "Error: Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(msg, log_lines, err=True, with_ts=False)
         return False, msg
 
     _progress_set(progress_bar, 0.08, "Writing pending check-ins to Google Sheets…")
@@ -637,17 +642,32 @@ def run_full_sheet_resync(
     today_myt = get_today_myt_date()
     redis_client = _redis_client(log_lines)
     if not redis_client:
-        extra = " Upstash not configured — skipped Redis cache clear and Theme Override refresh."
-        _emit(extra.strip(), log_lines)
+        _emit("", log_lines, with_ts=False)
+        _emit("Done (no Upstash configured).", log_lines, with_ts=False)
         _progress_set(progress_bar, 1.0, "Done (no Upstash).")
-        return True, flush_summary + extra
+        return True, flush_summary
 
+    _emit("", log_lines, with_ts=False)
+    _emit("Clearing old data from Upstash...", log_lines, with_ts=False)
     _progress_set(progress_bar, 0.45, "Clearing Upstash caches (options, attendance, ministry)…")
-    _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
+    cache_ok = _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
+    if cache_ok:
+        _emit("  Cache cleared", log_lines, with_ts=False)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Refreshing theme...", log_lines, with_ts=False)
     _progress_set(progress_bar, 0.72, "Refreshing Theme Override snapshot…")
-    _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
+    theme_ok = _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
+    if theme_ok:
+        _emit("  Theme updated", log_lines, with_ts=False)
+
     _save_last_sync_timestamp()
     _progress_set(progress_bar, 1.0, "All done.")
+
+    # Summary line
+    _emit("", log_lines, with_ts=False)
+    _emit(f"Done: {flush_summary}.", log_lines, with_ts=False)
+
     return True, flush_summary
 
 
