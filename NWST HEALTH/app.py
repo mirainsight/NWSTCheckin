@@ -2722,7 +2722,7 @@ def get_attendance_data():
 
 
 def get_attendance_text(name, cell, attendance_stats):
-    """Attendance summary for tooltips (Name + Cell key), or name only if unknown."""
+    """Tooltip text for KPI member tiles: (attended/total rate%) with rate as integer %."""
     if not attendance_stats:
         return name
 
@@ -2734,14 +2734,27 @@ def get_attendance_text(name, cell, attendance_stats):
     else:
         key = name_stripped
 
+    def _fraction_pct(stats):
+        x = int(stats["attendance"])
+        y = int(stats["total"])
+        z = int(round(float(stats["percentage"])))
+        return f"{name} ({x}/{y} {z}%)"
+
     if key in attendance_stats:
-        stats = attendance_stats[key]
-        return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
+        return _fraction_pct(attendance_stats[key])
 
     key_lower = key.lower()
     for dict_key, stats in attendance_stats.items():
         if dict_key.lower() == key_lower:
-            return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
+            return _fraction_pct(stats)
+
+    prefix_matches = [
+        st
+        for dk, st in attendance_stats.items()
+        if str(dk).split(" - ", 1)[0].strip().lower() == name_stripped.lower()
+    ]
+    if len(prefix_matches) == 1:
+        return _fraction_pct(prefix_matches[0])
 
     return name
 
