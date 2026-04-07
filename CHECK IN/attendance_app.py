@@ -6,9 +6,13 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_CHECK_IN_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _CHECK_IN_DIR.parent
+# CHECK IN must precede repo root so `weekly_email_report` loads from this folder,
+# not a duplicate or stub at repo root (common on Streamlit Cloud / monorepos).
+for _p in (_REPO_ROOT, _CHECK_IN_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 from nwst_shared.paths import resolved_nwst_accent_config_path
 
 import streamlit as st
@@ -5190,8 +5194,12 @@ with st.sidebar:
                     st.error("Failed to send email. Check configuration.")
                     if output:
                         st.text(output)
-            except ImportError:
-                st.error("Email module not found. Please ensure weekly_email_report.py exists.")
+            except ImportError as e:
+                st.error(
+                    "Could not import weekly_email_report. "
+                    f"{e} Use CHECK IN/weekly_email_report.py (not a duplicate at repo root) "
+                    "and install dependencies (reportlab)."
+                )
             except Exception as e:
                 st.error(f"Error sending email: {str(e)}")
 
