@@ -34,7 +34,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from nwst_shared.nwst_cell_health_report import (
     attendance_fraction_for_pdf,
-    build_cell_health_pdf_member_sections,
     build_cell_health_table_rows,
     compute_member_attendance_stats,
     load_cg_combined_df,
@@ -324,22 +323,11 @@ def _build_checkin_summary(client, target_date: str | None) -> dict | None:
     }
 
 
-_PDF_MEMBER_BUCKET_LABELS: tuple[tuple[str, str], ...] = (
-    ("new", "New members"),
-    ("regular", "Regular members"),
-    ("irregular", "Irregular members"),
-    ("follow_up", "Follow up"),
-    ("red", "Red"),
-    ("graduated", "Graduated"),
-)
-
-
 def _build_report_pdf_bytes(
     rows: list[dict],
     subtitle: str,
     report_label: str,
     checkin_summary: dict | None = None,
-    member_sections: dict[str, list[str]] | None = None,
     checkin_roster: dict[str, Any] | None = None,
 ) -> tuple[bytes, str | None]:
     """Build PDF with ReportLab: weekly check-in cover, cell-health table, optional attendance KPIs."""
@@ -439,15 +427,6 @@ def _build_report_pdf_bytes(
         leading=14,
         spaceAfter=12,
     )
-    member_hdr_style = ParagraphStyle(
-        name="MemberHdr",
-        parent=styles["Normal"],
-        fontSize=9,
-        fontName="Helvetica-Bold",
-        leading=12,
-        spaceAfter=4,
-        spaceBefore=8,
-    )
     member_body_style = ParagraphStyle(
         name="MemberBody",
         parent=styles["Normal"],
@@ -538,29 +517,6 @@ def _build_report_pdf_bytes(
     )
     story.append(tbl)
     story.append(Spacer(1, 12))
-
-    if member_sections:
-        story.append(Paragraph("Cell health — members by status", sec_style))
-        story.append(
-            Paragraph(
-                escape(
-                    "Attendance (x/y) matches NWST Health KPI name hovers: x = weeks marked present (1), "
-                    "y = service columns counted from column D on the NWST Health Attendance tab."
-                ),
-                member_note_style,
-            )
-        )
-        for key, title in _PDF_MEMBER_BUCKET_LABELS:
-            names = member_sections.get(key) or []
-            if not names:
-                continue
-            story.append(Paragraph(escape(title), member_hdr_style))
-            story.append(
-                Paragraph(escape(", ".join(names)), member_body_style)
-            )
-        story.append(Spacer(1, 12))
-    else:
-        story.append(Spacer(1, 20))
 
     if checkin_summary:
         usable_w = A4[0] - 72
@@ -727,19 +683,11 @@ def _run_report(
         if attendance_sid
         else None
     )
-    raw_sections = build_cell_health_pdf_member_sections(client, sheet_ch)
-    member_sections = (
-        raw_sections
-        if raw_sections
-        and any(raw_sections.get(k) for k, _ in _PDF_MEMBER_BUCKET_LABELS)
-        else None
-    )
     pdf_bytes, err = _build_report_pdf_bytes(
         rows,
         subtitle,
         label,
         checkin_summary=checkin_summary,
-        member_sections=member_sections,
         checkin_roster=checkin_roster,
     )
     if err or not pdf_bytes:
