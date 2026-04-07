@@ -39,6 +39,7 @@ from nwst_shared.nwst_cell_health_report import (
     load_cg_combined_df,
     load_nwst_attendance_rollup_df,
     nwst_health_sheet_id,
+    resolve_cell_from_cg_combined,
 )
 
 try:
@@ -231,7 +232,9 @@ def _build_checkin_roster_for_pdf(
     Roster from Options col C vs Attendance for ``target_date``, grouped by cell (Options suffix).
 
     Each group has ``cell``, ``n_checked``, ``n_total``, and name lists for PDF styling
-    (blue checked-in, grey italic pending). Display names are member names with optional ``(x/y)``.
+    (blue checked-in, grey italic pending). Display names are ``Name (X/Y)`` when NWST Health
+    Attendance rollups match (same counts as KPI tile hover in NWST HEALTH app); cell for lookup
+    comes from the Options string or CG Combined when the roster line has no cell.
     """
     roster = _roster_option_strings_from_options(client, attendance_sid)
     if not roster:
@@ -253,7 +256,11 @@ def _build_checkin_roster_for_pdf(
         if not name_s:
             continue
         cell_s = (cell or "Unknown").strip()
-        cell_for_stats = "" if cell_s in ("", "Unknown") else cell_s
+        cell_for_stats = (
+            cell_s
+            if cell_s not in ("", "Unknown")
+            else resolve_cell_from_cg_combined(name_s, cg_df)
+        )
         frac = attendance_fraction_for_pdf(name_s, cell_for_stats, stats)
         display = f"{name_s} ({frac})" if frac else name_s
         by_cell[cell_s].append((display, opt in checked))
