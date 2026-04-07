@@ -556,10 +556,7 @@ def _build_report_pdf_bytes(
         story.append(
             _bar_table(
                 Paragraph(
-                    escape(
-                        "Legend: Blue = Checked In | Grey/Italic = Pending. "
-                        "Names from Options column C (member + cell). Counts from Attendance for this date."
-                    ),
+                    escape("Legend: Blue = Checked In | Grey/Italic = Did not come."),
                     bar_muted_style,
                 )
             )
@@ -567,15 +564,6 @@ def _build_report_pdf_bytes(
         story.append(Spacer(1, 10))
         roster_groups = (checkin_roster or {}).get("groups") if checkin_roster else None
         if roster_groups:
-            story.append(
-                Paragraph(
-                    escape(
-                        "(x/y) on a name = NWST Health Attendance rollup when it matches CG Combined "
-                        "for that member and cell."
-                    ),
-                    member_note_style,
-                )
-            )
             group_bar_green = colors.HexColor("#15803d")
             group_hdr_para_style = ParagraphStyle(
                 name="CheckinGroupHdr",
