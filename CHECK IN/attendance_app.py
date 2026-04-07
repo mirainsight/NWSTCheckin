@@ -5836,7 +5836,7 @@ if page == "NWST Check In":
                 st.rerun()
         with col_update_names:
             st.markdown(
-                '''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
+                '''<a href="https://update-names.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
@@ -5913,7 +5913,7 @@ elif page == "Ministry Discipleship":
                 st.rerun()
         with col_update_names_m:
             st.markdown(
-                '''<a href="https://clickmeee-nwst.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
+                '''<a href="https://update-names.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
         render_recent_checkins_table(MINISTRY_ATTENDANCE_TAB_NAME)
