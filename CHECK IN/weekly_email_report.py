@@ -476,10 +476,11 @@ def _build_report_pdf_bytes(
             [
                 Paragraph(escape(str(r.get("zone", ""))), td_style),
                 Paragraph(escape(str(r.get("cell", ""))), td_style),
-                Paragraph(escape(str(r.get("new_s", ""))), td_style),
-                Paragraph(escape(str(r.get("regular_s", ""))), td_style),
-                Paragraph(escape(str(r.get("irregular_s", ""))), td_style),
-                Paragraph(escape(str(r.get("follow_up_s", ""))), td_style),
+                # Bucket cells contain <b> tags for bold percentage - don't escape
+                Paragraph(str(r.get("new_s", "")), td_style),
+                Paragraph(str(r.get("regular_s", "")), td_style),
+                Paragraph(str(r.get("irregular_s", "")), td_style),
+                Paragraph(str(r.get("follow_up_s", "")), td_style),
             ]
         )
 
