@@ -37,6 +37,10 @@ from nwst_shared.nwst_daily_palette import (
     normalize_primary_hex as _normalize_primary_hex,
     theme_from_primary_hex as _theme_from_primary_hex,
 )
+from nwst_shared.nwst_cell_health_report import (
+    load_cg_combined_df,
+    nwst_health_sheet_id,
+)
 
 # CHECK IN folder (this script lives next to ``attendance_app.py``)
 _CHECK_IN_ROOT = Path(__file__).resolve().parent
@@ -69,6 +73,7 @@ REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"
 REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"
 REDIS_LAST_SYNC_TIMESTAMP_KEY = "attendance:last_sync_timestamp"
+REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"
 # Same list as attendance_app.MINISTRY_LIST (ministry option cache keys)
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]
 SESSION_LOG_KEY = "flush_pending_session_log"
@@ -546,6 +551,28 @@ def _refresh_theme_override_shared(
         return False
 
 
+def _refresh_birthdays_cache(
+    redis_client,
+    gsheet_client,
+    log_lines: list[str] | None,
+) -> bool:
+    """Refresh CG Combined birthday data into Upstash (read by attendance_app)."""
+    health_sid = (nwst_health_sheet_id() or "").strip()
+    if not health_sid or not redis_client or not gsheet_client:
+        return True
+    try:
+        df = load_cg_combined_df(gsheet_client, health_sid)
+        if df is not None and not df.empty:
+            redis_client.set(REDIS_BIRTHDAYS_KEY, df.to_json(), ex=86400)  # 24h TTL
+            _emit("  Birthday data cached", log_lines, with_ts=False)
+            return True
+        _emit("  Birthday data: empty or unavailable (skipped)", log_lines, with_ts=False)
+        return True
+    except Exception as e:
+        _emit(f"Error: Birthday cache refresh failed ({e})", log_lines, err=True, with_ts=False)
+        return False
+
+
 def _progress_set(bar, value: float, text: str) -> None:
     """Streamlit progress bar; ``text=`` is supported in newer Streamlit versions."""
     if bar is None:
@@ -596,10 +623,15 @@ def run_full_sheet_resync(
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing theme...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.72, "Refreshing Theme Override snapshot…")
+    _progress_set(progress_bar, 0.65, "Refreshing Theme Override snapshot…")
     theme_ok = _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
     if theme_ok:
         _emit("  Theme updated", log_lines, with_ts=False)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Refreshing birthdays...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.85, "Refreshing birthday data…")
+    _refresh_birthdays_cache(redis_client, client, log_lines)
 
     _save_last_sync_timestamp()
     _progress_set(progress_bar, 1.0, "All done.")
