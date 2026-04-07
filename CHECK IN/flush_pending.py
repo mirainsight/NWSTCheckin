@@ -8,11 +8,11 @@ Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_r
 3. Refresh Theme Override snapshot into Upstash (same as main app after resync).
 
 **CLI (default = full sync):**
-  cd "PROJECTS/CHECK IN" && python jobs/flush_pending.py
-  python jobs/flush_pending.py --pending-only
-  python jobs/flush_pending.py --tabs attendance leaders --pending-only
+  cd "CHECK IN" && python flush_pending.py
+  python flush_pending.py --pending-only
+  python flush_pending.py --tabs attendance leaders --pending-only
 
-**Streamlit UI:** ``streamlit run jobs/flush_pending.py`` — NWST styling matches ``attendance_app`` (Theme Override in Upstash, ``nwst_accent_overrides.json``, env/secrets ``ATTENDANCE_ACCENT_OVERRIDE_*``, Saturday fallback). Run log resets each press.
+**Streamlit UI:** ``streamlit run flush_pending.py`` — NWST styling matches ``attendance_app`` (Theme Override in Upstash, ``nwst_shared/nwst_accent_overrides.json`` at repo root, env/secrets ``ATTENDANCE_ACCENT_OVERRIDE_*``, Saturday fallback). Run log resets each press.
 
 Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
@@ -31,8 +31,13 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# CHECK IN folder (parent of jobs/)
-_CHECK_IN_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from nwst_shared.paths import resolved_nwst_accent_config_path
+
+# CHECK IN folder (this script lives next to ``attendance_app.py``)
+_CHECK_IN_ROOT = Path(__file__).resolve().parent
 if str(_CHECK_IN_ROOT.resolve()) not in sys.path:
     sys.path.insert(0, str(_CHECK_IN_ROOT.resolve()))
 
@@ -71,12 +76,12 @@ _nwst_accent_cfg_mod = None
 
 
 def _load_nwst_accent_cfg():
-    """Same accent module as attendance_app (CHECK IN root)."""
+    """Load shared accent module (``nwst_shared``)."""
     global _nwst_accent_cfg_mod
     if _nwst_accent_cfg_mod is not None:
         return _nwst_accent_cfg_mod
-    cfg = _CHECK_IN_ROOT / "nwst_accent_config.py"
-    if not cfg.is_file():
+    cfg = resolved_nwst_accent_config_path()
+    if cfg is None:
         return None
     spec = importlib.util.spec_from_file_location("_flush_pending_nwst_accent", cfg)
     mod = importlib.util.module_from_spec(spec)
