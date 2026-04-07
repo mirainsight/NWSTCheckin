@@ -1,4 +1,6 @@
-"""
+from __future__ import annotations
+
+__doc__ = """
 Cell health summary for PDF/email reports (NWST Health sheet).
 
 Zone for every row comes from the **Attendance Sheet** Key Values tab (column A = cell name, C = zone).
@@ -9,20 +11,20 @@ Uses **Historical Cell Status** (latest snapshot vs previous) when available; ot
 **CG Combined** roster + Status column (no WoW deltas — shows +0).
 """
 
-# Fixed zone for roll-up row and any cell literally named All / ALL.
-_ZONE_ALL_PSQ = "PSQ"
-
-from __future__ import annotations
-
 import os
 from datetime import date
 from typing import Any
 
 import pandas as pd
 
+# Fixed zone for roll-up row and any cell literally named All / ALL.
+_ZONE_ALL_PSQ = "PSQ"
+
 NWST_HISTORICAL_CELL_STATUS_TAB = "Historical Cell Status"
 NWST_KEY_VALUES_TAB = "Key Values"
 NWST_CG_COMBINED_TAB = "CG Combined"
+# Per-service rollup on the NWST Health spreadsheet (columns D+), same source as NWST HEALTH/app.py tooltips.
+NWST_HEALTH_ATTENDANCE_ROLLUP_TAB = "Attendance"
 _DEFAULT_NWST_HEALTH_SHEET_ID = "1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY"
 _DEFAULT_NWST_ATTENDANCE_SHEET_ID = "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
 
@@ -156,6 +158,192 @@ def load_cg_combined_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
         return pd.DataFrame(data[1:], columns=data[0])
     except Exception:
         return None
+
+
+def load_nwst_attendance_rollup_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
+    """NWST Health **Attendance** tab (rollup grid). Same tab as ``load_attendance_and_cg_dataframes`` in NWST HEALTH/app.py."""
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+        ws = spreadsheet.worksheet(NWST_HEALTH_ATTENDANCE_ROLLUP_TAB)
+        data = ws.get_all_values()
+        if not data or len(data) < 2:
+            return None
+        return pd.DataFrame(data[1:], columns=data[0])
+    except Exception:
+        return None
+
+
+def compute_member_attendance_stats(att_df: pd.DataFrame | None, cg_df: pd.DataFrame | None) -> dict[str, Any]:
+    """
+    Same keys/semantics as NWST HEALTH/app.py ``_compute_attendance_stats_from_frames``:
+    ``\"Name - Cell\"`` or ``\"Name\"`` -> ``{\"attendance\": int, \"total\": int, \"percentage\": int}``.
+    """
+    attendance_stats: dict[str, Any] = {}
+    if att_df is None or att_df.empty or cg_df is None or cg_df.empty:
+        return attendance_stats
+
+    cg_name_col, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
+    att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
+    if not att_name_col:
+        return attendance_stats
+
+    for att_name in att_df[att_name_col].unique():
+        if pd.isna(att_name) or att_name == "":
+            continue
+
+        att_name_str = str(att_name).strip()
+        member_att_data = att_df[att_df[att_name_col] == att_name]
+
+        attendance_count = 0
+        total_services = 0
+
+        for col_idx, col in enumerate(att_df.columns):
+            if col_idx >= 3:
+                total_services += 1
+                values = member_att_data[col].values
+                if len(values) > 0 and str(values[0]).strip() == "1":
+                    attendance_count += 1
+
+        cell_info = ""
+        if cg_name_col and cg_cell_col:
+            cg_match = cg_df[cg_df[cg_name_col].astype(str).str.strip().str.lower() == att_name_str.lower()]
+            if not cg_match.empty:
+                cell_info = " - " + str(cg_match[cg_cell_col].iloc[0]).strip()
+
+        if total_services > 0:
+            key = att_name_str + cell_info
+            attendance_stats[key] = {
+                "attendance": attendance_count,
+                "total": total_services,
+                "percentage": round(attendance_count / total_services * 100) if total_services > 0 else 0,
+            }
+
+    return attendance_stats
+
+
+def attendance_fraction_for_pdf(name: str, cell: str, attendance_stats: dict[str, Any]) -> str | None:
+    """Return ``x/y`` for tooltip parity with ``get_attendance_text`` (without name or percent)."""
+    if not attendance_stats:
+        return None
+
+    name_stripped = str(name).strip()
+    cell_stripped = str(cell).strip() if cell else ""
+
+    if cell_stripped:
+        key = f"{name_stripped} - {cell_stripped}"
+    else:
+        key = name_stripped
+
+    stats = None
+    if key in attendance_stats:
+        stats = attendance_stats[key]
+    else:
+        key_lower = key.lower()
+        for dict_key, st in attendance_stats.items():
+            if str(dict_key).lower() == key_lower:
+                stats = st
+                break
+
+    if not stats:
+        return None
+    return f"{stats['attendance']}/{stats['total']}"
+
+
+def _pdf_name_lines_for_bucket_df(
+    data_df: pd.DataFrame,
+    name_col: str,
+    cell_col: str | None,
+    attendance_stats: dict[str, Any],
+) -> list[str]:
+    """Sorted unique names; uppercase for parity with member-tile CSS in the app."""
+    if data_df.empty:
+        return []
+    names = sorted(data_df[name_col].astype(str).unique().tolist())
+    lines: list[str] = []
+    for name in names:
+        person_cell = ""
+        if cell_col:
+            person_row = data_df[data_df[name_col] == name]
+            if not person_row.empty:
+                person_cell = str(person_row[cell_col].iloc[0]).strip()
+        frac = attendance_fraction_for_pdf(name, person_cell, attendance_stats)
+        display = str(name).strip().upper()
+        lines.append(f"{display} ({frac})" if frac else display)
+    return lines
+
+
+def build_cell_health_pdf_member_sections(client: Any, sheet_id: str) -> dict[str, list[str]]:
+    """
+    Member lists keyed like cell-health buckets, with ``NAME (x/y)`` attendance fractions.
+
+    Uses **CG Combined** for roster/status and **Attendance** on the same NWST Health spreadsheet
+    for rollup counts — same datasource as NWST HEALTH/app.py KPI hover tooltips.
+    """
+    cg_df = load_cg_combined_df(client, sheet_id)
+    if cg_df is None or cg_df.empty:
+        return {}
+
+    cg_name_col, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
+    if not cg_name_col:
+        return {}
+
+    att_df = load_nwst_attendance_rollup_df(client, sheet_id)
+    attendance_stats = compute_member_attendance_stats(att_df, cg_df) if att_df is not None else {}
+
+    work = cg_df.copy()
+    status_columns = [col for col in work.columns if "status" in col.lower()]
+    status_col = status_columns[0] if status_columns else None
+
+    if status_col:
+        work["status_type"] = work[status_col].apply(extract_cell_sheet_status_type)
+        return {
+            "new": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "New"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+            "regular": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "Regular"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+            "irregular": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "Irregular"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+            "follow_up": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "Follow Up"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+            "red": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "Red"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+            "graduated": _pdf_name_lines_for_bucket_df(
+                work[work["status_type"] == "Graduated"], cg_name_col, cg_cell_col, attendance_stats
+            ),
+        }
+
+    total_members_fb = len(work)
+    new_count = max(1, int(total_members_fb * 0.20))
+    regular_count = max(1, int(total_members_fb * 0.40))
+    irregular_count = max(1, int(total_members_fb * 0.20))
+    follow_up_count = max(1, int(total_members_fb * 0.10))
+    red_count = max(1, int(total_members_fb * 0.05))
+    graduated_count = max(
+        0,
+        total_members_fb - new_count - regular_count - irregular_count - follow_up_count - red_count,
+    )
+
+    i0 = 0
+    i1 = new_count
+    i2 = i1 + regular_count
+    i3 = i2 + irregular_count
+    i4 = i3 + follow_up_count
+    i5 = i4 + red_count
+
+    slices = {
+        "new": work.iloc[i0:i1],
+        "regular": work.iloc[i1:i2],
+        "irregular": work.iloc[i2:i3],
+        "follow_up": work.iloc[i3:i4],
+        "red": work.iloc[i4:i5],
+        "graduated": work.iloc[i5:],
+    }
+    return {k: _pdf_name_lines_for_bucket_df(v, cg_name_col, cg_cell_col, attendance_stats) for k, v in slices.items()}
 
 
 def _resolve_cg_name_cell_columns(cg_df: pd.DataFrame) -> tuple[str | None, str | None]:
