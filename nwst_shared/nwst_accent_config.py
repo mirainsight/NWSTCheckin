@@ -1,4 +1,4 @@
-"""Accent overrides shared by CHECK IN and NWST Health (single copy: ``PROJECTS/nwst_shared/``).
+"""Accent overrides shared by CHECK IN and NWST Health (single copy: ``nwst_shared/`` at repo root).
 
 1) **Theme Override** tab on the CHECK IN workbook — snapshot in **Upstash** (see nwst_accent_redis.py).
    Refreshed from **either** app: CHECK IN **Update names** (`attendance_app.perform_hard_sheet_resync`)
@@ -10,7 +10,7 @@ Apps use the row with the **maximum date** in the Upstash snapshot; if the snaps
 ``banner.gif`` and generated colors only (no JSON/env theme for that path).
 
 Banner values must be filenames only (e.g. banner.gif); place files next to each Streamlit entrypoint
-(``PROJECTS/CHECK IN/`` or ``PROJECTS/NWST HEALTH/``)."""
+(``CHECK IN/`` or ``NWST HEALTH/`` next to this package at repo root)."""
 
 from __future__ import annotations
 
@@ -133,8 +133,8 @@ def refresh_theme_override_shared_cache(
 
     **Call from either sync path** (different files / UI buttons; same outcome):
 
-    - ``PROJECTS/CHECK IN/attendance_app.py`` — end of ``perform_hard_sheet_resync`` (Update names).
-    - ``PROJECTS/NWST HEALTH/app.py`` — after successful **Sync from Google Sheets** on CG Health.
+    - ``CHECK IN/attendance_app.py`` — end of ``perform_hard_sheet_resync`` (Update names).
+    - ``NWST HEALTH/app.py`` — after successful **Sync from Google Sheets** on CG Health.
     """
     if not redis_client or not gsheet_client:
         return
