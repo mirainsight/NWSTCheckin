@@ -6,9 +6,9 @@ import sys
 import time
 from pathlib import Path
 
-_PROJECTS_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECTS_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 from nwst_shared.paths import resolved_nwst_accent_config_path
 
 import streamlit as st
@@ -4551,7 +4551,7 @@ daily_colors = generate_daily_colors()
 # Optional banner image from Theme Override (file in NWST HEALTH folder, not .streamlit/)
 _nwst_banner = daily_colors.get("banner")
 if _nwst_banner:
-    _nwst_banner_path = Path(__file__).resolve().parent.parent / _nwst_banner
+    _nwst_banner_path = Path(__file__).resolve().parent / _nwst_banner
     if _nwst_banner_path.is_file():
         st.image(str(_nwst_banner_path), use_container_width=True)
 
