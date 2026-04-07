@@ -1137,6 +1137,47 @@ def _contrasting_gradient_rgb_stops(primary_hex: str, light_hex: str) -> tuple[t
     )
 
 
+def _relative_luminance_srgb(rc: int, gc: int, bc: int) -> float:
+    """WCAG relative luminance for sRGB 0–255 channels."""
+
+    def _lin(c: int) -> float:
+        x = c / 255.0
+        return x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+
+    R, G, B = _lin(rc), _lin(gc), _lin(bc)
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B
+
+
+def _hex_accent_readable_on_dark_card(ar: int, ag: int, ab: int) -> str:
+    """
+    Keep saturated hue for “today” / date labels but lift HLS lightness if the accent
+    is too dark to read on charcoal + translucent gradient (≈ WCAG-minded).
+    """
+    lum = _relative_luminance_srgb(ar, ag, ab)
+    if lum >= 0.58:
+        return f"#{ar:02x}{ag:02x}{ab:02x}"
+    r, g, b = ar / 255.0, ag / 255.0, ab / 255.0
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    target = 0.62
+    l = min(0.9, max(l, target - 0.15 * (1.0 - s)))
+    if lum < 0.35:
+        l = min(0.9, l + 0.18)
+    s = max(s, 0.38)
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
+
+
+def _card_body_text_hex(theme_text: str) -> str:
+    """Prefer theme body colour; fall back to light gray if theme text would be too dark on cards."""
+    t = (theme_text or "").strip()
+    if t.startswith("#") and len(t) >= 7:
+        tr, tg, tb = _hex_to_rgb_for_css(t[:7])
+        if _relative_luminance_srgb(tr, tg, tb) < 0.48:
+            return "#e8eaed"
+        return t[:7]
+    return "#e8eaed"
+
+
 def birthdays_notice_payload(
     _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
 ) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
@@ -1193,7 +1234,8 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
         return f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
 
     prim_e = html.escape(prim, quote=True)
-    text_e = html.escape(text_main, quote=True)
+    body_hex = _card_body_text_hex(text_main)
+    text_e = html.escape(body_hex, quote=True)
     light = page_colors.get("light", prim)
     r, g, b = _hex_to_rgb_for_css(prim)
     rl, gl, bl = _hex_to_rgb_for_css(light)
@@ -1222,23 +1264,24 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
                 f"linear-gradient(180deg, #26262a 0%, #18181c 100%)"
             )
 
+            txt_sh = "0 1px 3px rgba(0,0,0,0.75),0 0 1px rgba(0,0,0,0.55)"
+            sub_today_e = html.escape(_hex_accent_readable_on_dark_card(ar, ag, ab), quote=True)
+            sub_other_e = html.escape(_hex_accent_readable_on_dark_card(r, g, b), quote=True)
+
             body_parts: list[str] = []
             for dt, pairs in chunk:
                 if len(chunk) > 1:
                     sub_l = html.escape(_fmt_day(dt), quote=True)
-                    if dt == today_d:
-                        sub_col_e = html.escape(f"#{ar:02x}{ag:02x}{ab:02x}", quote=True)
-                    else:
-                        sub_col_e = prim_e
+                    sub_col_e = sub_today_e if dt == today_d else sub_other_e
                     body_parts.append(
                         f'<div style="margin-top:0.55rem;font-family:Inter,sans-serif;font-size:0.72rem;'
-                        f"font-weight:600;color:{sub_col_e};letter-spacing:0.02em;\">{sub_l}</div>"
+                        f"font-weight:600;color:{sub_col_e};letter-spacing:0.02em;text-shadow:{txt_sh};\">{sub_l}</div>"
                     )
                 for name, cell in pairs:
                     line = html.escape(f"{name} - {cell}", quote=True)
                     body_parts.append(
                         f'<div style="margin-top:0.35rem;font-family:Inter,sans-serif;font-size:0.8rem;'
-                        f"line-height:1.35;color:{text_e};\">{line}</div>"
+                        f"line-height:1.35;color:{text_e};text-shadow:{txt_sh};\">{line}</div>"
                     )
 
             n_b = sum(len(p) for _, p in chunk)
@@ -1252,10 +1295,10 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
                 f"box-shadow:0 8px 24px rgba(0,0,0,0.4),0 4px 18px rgba({ar},{ag},{ab},0.16);"
                 f'">'
                 f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.95rem;'
-                f'color:#f5f5f7;line-height:1.25;">{card_title}</div>'
+                f"color:#f5f5f7;line-height:1.25;text-shadow:{txt_sh};\">{card_title}</div>"
                 f"{''.join(body_parts)}"
                 f'<div style="margin-top:12px;font-family:Inter,sans-serif;font-size:0.74rem;'
-                f"color:rgba(220,220,225,0.9);\">🎂 {foot_n} {foot_label}</div>"
+                f"color:rgba(220,220,225,0.95);text-shadow:{txt_sh};\">🎂 {foot_n} {foot_label}</div>"
                 f"</div>"
             )
     else:
