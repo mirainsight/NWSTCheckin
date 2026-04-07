@@ -1,7 +1,7 @@
 """
 Cell health summary for PDF/email reports (NWST Health sheet).
 
-Zone for every row comes only from the **Key Values** tab (column A = cell name, C = zone).
+Zone for every row comes from the **Attendance Sheet** Key Values tab (column A = cell name, C = zone).
 Historical Cell Status may supply counts and snapshot dates but never overrides zone.
 The aggregate / cell name **All** is always shown as zone **PSQ**.
 
@@ -24,6 +24,7 @@ NWST_HISTORICAL_CELL_STATUS_TAB = "Historical Cell Status"
 NWST_KEY_VALUES_TAB = "Key Values"
 NWST_CG_COMBINED_TAB = "CG Combined"
 _DEFAULT_NWST_HEALTH_SHEET_ID = "1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY"
+_DEFAULT_NWST_ATTENDANCE_SHEET_ID = "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
 
 BUCKET_SPECS: list[tuple[str, tuple[str, ...]]] = [
     ("new", ("new",)),
@@ -39,6 +40,11 @@ BUCKET_SPECS: list[tuple[str, tuple[str, ...]]] = [
 def nwst_health_sheet_id() -> str:
     sid = (os.getenv("NWST_HEALTH_SHEET_ID") or "").strip()
     return sid or _DEFAULT_NWST_HEALTH_SHEET_ID
+
+
+def nwst_attendance_sheet_id() -> str:
+    sid = (os.getenv("NWST_ATTENDANCE_SHEET_ID") or "").strip()
+    return sid or _DEFAULT_NWST_ATTENDANCE_SHEET_ID
 
 
 def extract_cell_sheet_status_type(status_val: Any) -> str | None:
@@ -107,11 +113,12 @@ def _format_bucket_cell(pct: float, delta: int) -> str:
     return f"{round(pct)}% ({delta:+d})"
 
 
-def load_cell_zone_map(client: Any, sheet_id: str) -> dict[str, str]:
-    """Cell name (col A) → zone (col C) from Key Values only. No other columns. Empty zone = skip row."""
+def load_cell_zone_map(client: Any, _sheet_id: str) -> dict[str, str]:
+    """Cell name (col A) → zone (col C) from Attendance sheet. No other columns. Empty zone = skip row."""
     cell_to_zone: dict[str, str] = {}
     try:
-        spreadsheet = client.open_by_key(sheet_id)
+        attendance_sid = nwst_attendance_sheet_id()
+        spreadsheet = client.open_by_key(attendance_sid)
         key_values_sheet = spreadsheet.worksheet(NWST_KEY_VALUES_TAB)
         all_values = key_values_sheet.get_all_values()
         if len(all_values) > 1:
