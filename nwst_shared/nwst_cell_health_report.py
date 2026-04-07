@@ -233,29 +233,61 @@ def compute_member_attendance_stats(att_df: pd.DataFrame | None, cg_df: pd.DataF
     return attendance_stats
 
 
-def attendance_fraction_for_pdf(name: str, cell: str, attendance_stats: dict[str, Any]) -> str | None:
-    """Return ``x/y`` for tooltip parity with ``get_attendance_text`` (without name or percent)."""
+def resolve_cell_from_cg_combined(name: str, cg_df: pd.DataFrame | None) -> str:
+    """Cell group for a member from CG Combined (same basis as attendance stat keys), or ``\"\"``."""
+    if cg_df is None or cg_df.empty:
+        return ""
+    name_s = str(name).strip()
+    if not name_s:
+        return ""
+    cg_name_col, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
+    if not cg_name_col or not cg_cell_col:
+        return ""
+    cg_match = cg_df[cg_df[cg_name_col].astype(str).str.strip().str.lower() == name_s.lower()]
+    if cg_match.empty:
+        return ""
+    return str(cg_match[cg_cell_col].iloc[0]).strip()
+
+
+def _lookup_attendance_stats_entry(
+    name_stripped: str, cell_stripped: str, attendance_stats: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Resolve stats dict the same way as NWST HEALTH ``get_attendance_text`` (+ safe fallbacks)."""
     if not attendance_stats:
         return None
-
-    name_stripped = str(name).strip()
-    cell_stripped = str(cell).strip() if cell else ""
 
     if cell_stripped:
         key = f"{name_stripped} - {cell_stripped}"
     else:
         key = name_stripped
 
-    stats = None
     if key in attendance_stats:
-        stats = attendance_stats[key]
-    else:
-        key_lower = key.lower()
-        for dict_key, st in attendance_stats.items():
-            if str(dict_key).lower() == key_lower:
-                stats = st
-                break
+        return attendance_stats[key]  # type: ignore[return-value]
 
+    key_lower = key.lower()
+    for dict_key, st in attendance_stats.items():
+        if str(dict_key).lower() == key_lower:
+            return st  # type: ignore[return-value]
+
+    if not cell_stripped:
+        name_lower = name_stripped.lower()
+        prefix = name_lower + " - "
+        candidates: list[dict[str, Any]] = []
+        for dict_key, st in attendance_stats.items():
+            dk_l = str(dict_key).lower()
+            if dk_l == name_lower or dk_l.startswith(prefix):
+                candidates.append(st)
+        if len(candidates) == 1:
+            return candidates[0]
+
+    return None
+
+
+def attendance_fraction_for_pdf(name: str, cell: str, attendance_stats: dict[str, Any]) -> str | None:
+    """Return ``x/y`` for tooltip parity with ``get_attendance_text`` (without name or percent)."""
+    name_stripped = str(name).strip()
+    cell_stripped = str(cell).strip() if cell else ""
+    stats = _lookup_attendance_stats_entry(name_stripped, cell_stripped, attendance_stats)
     if not stats:
         return None
     return f"{stats['attendance']}/{stats['total']}"
