@@ -22,8 +22,10 @@ import sys
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +33,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from nwst_shared.nwst_cell_health_report import (
+    attendance_fraction_for_pdf,
+    build_cell_health_pdf_member_sections,
     build_cell_health_table_rows,
+    compute_member_attendance_stats,
+    load_cg_combined_df,
+    load_nwst_attendance_rollup_df,
     nwst_health_sheet_id,
 )
 
@@ -166,6 +173,110 @@ def _fetch_attendance_checked_in_count(client, sheet_id: str, target_date: str) 
     return len(checked_in_set)
 
 
+def _report_attendance_date_str(target_date: str | None) -> str:
+    myt = timezone(timedelta(hours=8))
+    now = datetime.now(myt)
+    return (target_date or now.strftime("%Y-%m-%d")).strip()
+
+
+def _fetch_checked_in_options_for_date(client, sheet_id: str, target_date: str) -> set[str]:
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+        attendance_sheet = spreadsheet.worksheet(_ATTENDANCE_TAB)
+    except Exception:
+        return set()
+    all_rows = attendance_sheet.get_all_values()
+    if len(all_rows) <= 1:
+        return set()
+    checked: set[str] = set()
+    for row in all_rows[1:]:
+        if len(row) < 2:
+            continue
+        ts = (row[0] or "").strip()
+        opt = (row[1] or "").strip()
+        if not ts or not opt or len(ts) < 10:
+            continue
+        if ts[:10] != target_date:
+            continue
+        checked.add(opt)
+    return checked
+
+
+def _roster_option_strings_from_options(client, sheet_id: str) -> list[str]:
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+        ws = spreadsheet.worksheet(_OPTIONS_TAB)
+    except Exception:
+        return []
+    col_c = ws.col_values(3)
+    if len(col_c) <= 1:
+        return []
+    out: list[str] = []
+    for value in col_c[1:]:
+        v = (value or "").strip()
+        if not v:
+            continue
+        name, _ = _parse_name_cell_group(v)
+        if name:
+            out.append(v)
+    return out
+
+
+def _build_checkin_roster_for_pdf(
+    client,
+    attendance_sid: str,
+    nwst_health_sid: str,
+    target_date: str,
+) -> dict[str, Any] | None:
+    """
+    Roster from Options col C vs Attendance for ``target_date``, grouped by cell (Options suffix).
+
+    Each group has ``cell``, ``n_checked``, ``n_total``, and name lists for PDF styling
+    (blue checked-in, grey italic pending). Display names are member names with optional ``(x/y)``.
+    """
+    roster = _roster_option_strings_from_options(client, attendance_sid)
+    if not roster:
+        return None
+    checked = _fetch_checked_in_options_for_date(client, attendance_sid, target_date)
+    cg_df = load_cg_combined_df(client, nwst_health_sid)
+    att_df = load_nwst_attendance_rollup_df(client, nwst_health_sid)
+    stats = (
+        compute_member_attendance_stats(att_df, cg_df)
+        if att_df is not None and cg_df is not None
+        else {}
+    )
+    by_cell: dict[str, list[tuple[str, bool]]] = defaultdict(
+        list
+    )  # (display label, is_checked)
+    for opt in roster:
+        name, cell = _parse_name_cell_group(opt)
+        name_s = (name or "").strip()
+        if not name_s:
+            continue
+        cell_s = (cell or "Unknown").strip()
+        cell_for_stats = "" if cell_s in ("", "Unknown") else cell_s
+        frac = attendance_fraction_for_pdf(name_s, cell_for_stats, stats)
+        display = f"{name_s} ({frac})" if frac else name_s
+        by_cell[cell_s].append((display, opt in checked))
+
+    groups: list[dict[str, Any]] = []
+    for cell_s in sorted(by_cell.keys(), key=lambda c: c.lower()):
+        entries = by_cell[cell_s]
+        checked_labels = sorted([d for d, ck in entries if ck], key=str.lower)
+        pending_labels = sorted([d for d, ck in entries if not ck], key=str.lower)
+        groups.append(
+            {
+                "cell": cell_s,
+                "n_checked": len(checked_labels),
+                "n_total": len(entries),
+                "checked_labels": checked_labels,
+                "pending_labels": pending_labels,
+            }
+        )
+
+    return {"groups": groups}
+
+
 def _roster_count_from_options(client, sheet_id: str) -> int:
     try:
         spreadsheet = client.open_by_key(sheet_id)
@@ -192,7 +303,7 @@ def _build_checkin_summary(client, target_date: str | None) -> dict | None:
         return None
     myt = timezone(timedelta(hours=8))
     now = datetime.now(myt)
-    date_str = target_date or now.strftime("%Y-%m-%d")
+    date_str = _report_attendance_date_str(target_date)
     try:
         display_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %d, %Y")
     except ValueError:
@@ -213,11 +324,23 @@ def _build_checkin_summary(client, target_date: str | None) -> dict | None:
     }
 
 
+_PDF_MEMBER_BUCKET_LABELS: tuple[tuple[str, str], ...] = (
+    ("new", "New members"),
+    ("regular", "Regular members"),
+    ("irregular", "Irregular members"),
+    ("follow_up", "Follow up"),
+    ("red", "Red"),
+    ("graduated", "Graduated"),
+)
+
+
 def _build_report_pdf_bytes(
     rows: list[dict],
     subtitle: str,
     report_label: str,
     checkin_summary: dict | None = None,
+    member_sections: dict[str, list[str]] | None = None,
+    checkin_roster: dict[str, Any] | None = None,
 ) -> tuple[bytes, str | None]:
     """Build PDF with ReportLab: weekly check-in cover, cell-health table, optional attendance KPIs."""
     from reportlab.lib import colors
@@ -316,6 +439,31 @@ def _build_report_pdf_bytes(
         leading=14,
         spaceAfter=12,
     )
+    member_hdr_style = ParagraphStyle(
+        name="MemberHdr",
+        parent=styles["Normal"],
+        fontSize=9,
+        fontName="Helvetica-Bold",
+        leading=12,
+        spaceAfter=4,
+        spaceBefore=8,
+    )
+    member_body_style = ParagraphStyle(
+        name="MemberBody",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#333333"),
+        spaceAfter=6,
+    )
+    member_note_style = ParagraphStyle(
+        name="MemberNote",
+        parent=styles["Normal"],
+        fontSize=7,
+        leading=10,
+        textColor=colors.HexColor("#666666"),
+        spaceAfter=10,
+    )
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -389,7 +537,30 @@ def _build_report_pdf_bytes(
         )
     )
     story.append(tbl)
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 12))
+
+    if member_sections:
+        story.append(Paragraph("Cell health — members by status", sec_style))
+        story.append(
+            Paragraph(
+                escape(
+                    "Attendance (x/y) matches NWST Health KPI name hovers: x = weeks marked present (1), "
+                    "y = service columns counted from column D on the NWST Health Attendance tab."
+                ),
+                member_note_style,
+            )
+        )
+        for key, title in _PDF_MEMBER_BUCKET_LABELS:
+            names = member_sections.get(key) or []
+            if not names:
+                continue
+            story.append(Paragraph(escape(title), member_hdr_style))
+            story.append(
+                Paragraph(escape(", ".join(names)), member_body_style)
+            )
+        story.append(Spacer(1, 12))
+    else:
+        story.append(Spacer(1, 20))
 
     if checkin_summary:
         usable_w = A4[0] - 72
@@ -429,13 +600,64 @@ def _build_report_pdf_bytes(
             _bar_table(
                 Paragraph(
                     escape(
-                        "Legend: Checked-in members counted from Attendance tab; "
-                        "roster = Options column C. Pending = not checked in for this date."
+                        "Legend: Blue = Checked In | Grey/Italic = Pending. "
+                        "Names from Options column C (member + cell). Counts from Attendance for this date."
                     ),
                     bar_muted_style,
                 )
             )
         )
+        story.append(Spacer(1, 10))
+        roster_groups = (checkin_roster or {}).get("groups") if checkin_roster else None
+        if roster_groups:
+            story.append(
+                Paragraph(
+                    escape(
+                        "(x/y) on a name = NWST Health Attendance rollup when it matches CG Combined "
+                        "for that member and cell."
+                    ),
+                    member_note_style,
+                )
+            )
+            group_bar_green = colors.HexColor("#15803d")
+            group_hdr_para_style = ParagraphStyle(
+                name="CheckinGroupHdr",
+                parent=styles["Normal"],
+                fontSize=10,
+                fontName="Helvetica-Bold",
+                leading=13,
+                spaceBefore=8,
+                spaceAfter=5,
+                textColor=colors.HexColor("#111111"),
+            )
+            for g in roster_groups:
+                cell_title = str(g.get("cell") or "Unknown")
+                n_chk = int(g.get("n_checked") or 0)
+                n_tot = int(g.get("n_total") or 0)
+                hdr_p = Paragraph(
+                    escape(f"{cell_title} ({n_chk}/{n_tot})"),
+                    group_hdr_para_style,
+                )
+                hdr_tbl = Table([[hdr_p]], colWidths=[usable_w - 6])
+                hdr_tbl.setStyle(
+                    TableStyle(
+                        [
+                            ("LINEBEFORE", (0, 0), (0, 0), 4, group_bar_green),
+                            ("LEFTPADDING", (0, 0), (0, 0), 10),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ]
+                    )
+                )
+                story.append(hdr_tbl)
+                chk = list(g.get("checked_labels") or [])
+                pend = list(g.get("pending_labels") or [])
+                parts: list[str] = []
+                for lab in chk:
+                    parts.append(f'<font color="#2563eb">{escape(lab)}</font>')
+                for lab in pend:
+                    parts.append(f'<font color="#6b7280"><i>{escape(lab)}</i></font>')
+                if parts:
+                    story.append(Paragraph(", ".join(parts), member_body_style))
         story.append(Spacer(1, 18))
 
     story.append(Paragraph(escape(report_label), title_style))
@@ -498,7 +720,28 @@ def _run_report(
         subtitle = f"{subtitle} Attendance report date: {target_date}."
     label = f"{subject_prefix} — {target_date}" if target_date else subject_prefix
     checkin_summary = _build_checkin_summary(client, target_date)
-    pdf_bytes, err = _build_report_pdf_bytes(rows, subtitle, label, checkin_summary=checkin_summary)
+    date_for_roster = _report_attendance_date_str(target_date)
+    attendance_sid = _attendance_sheet_id()
+    checkin_roster = (
+        _build_checkin_roster_for_pdf(client, attendance_sid, sheet_ch, date_for_roster)
+        if attendance_sid
+        else None
+    )
+    raw_sections = build_cell_health_pdf_member_sections(client, sheet_ch)
+    member_sections = (
+        raw_sections
+        if raw_sections
+        and any(raw_sections.get(k) for k, _ in _PDF_MEMBER_BUCKET_LABELS)
+        else None
+    )
+    pdf_bytes, err = _build_report_pdf_bytes(
+        rows,
+        subtitle,
+        label,
+        checkin_summary=checkin_summary,
+        member_sections=member_sections,
+        checkin_roster=checkin_roster,
+    )
     if err or not pdf_bytes:
         print(f"FAIL: PDF: {err or 'empty'}")
         return
