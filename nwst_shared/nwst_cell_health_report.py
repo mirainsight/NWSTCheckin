@@ -7,8 +7,12 @@ Zone for every row comes from the **Attendance Sheet** Key Values tab (column A 
 Historical Cell Status may supply counts and snapshot dates but never overrides zone.
 The aggregate / cell name **All** is always shown as zone **PSQ**.
 
-Uses **Historical Cell Status** (latest snapshot vs previous) when available; otherwise
-**CG Combined** roster + Status column (no WoW deltas — shows +0).
+**Hybrid approach** (matching app.py KPI cards):
+- Individual cell rows: from **Historical Cell Status** (with WoW deltas from snapshot comparison)
+- "All" row **percentages**: from **CG Combined** (live member counts by status)
+- "All" row **WoW deltas**: from **Historical Cell Status** (snapshot comparison)
+
+Falls back to **CG Combined** roster + Status column if Historical Cell Status unavailable.
 """
 
 import os
@@ -118,8 +122,9 @@ def _pct(n: int, denom: int) -> float:
     return 100.0 * float(n) / float(denom)
 
 
-def _format_bucket_cell(pct: float, delta: int) -> str:
-    return f"{round(pct)}% ({delta:+d})"
+def _format_bucket_cell(pct: float, count: int, delta: int) -> str:
+    """Format bucket cell as: **pct%** · count (+delta) with bold percentage for PDF."""
+    return f"<b>{round(pct)}%</b> · {count} ({delta:+d})"
 
 
 def load_cell_zone_map(client: Any, _sheet_id: str) -> dict[str, str]:
@@ -326,10 +331,10 @@ def rows_from_cg_combined(
             {
                 "zone": zone,
                 "cell": cell_s,
-                "new_s": _format_bucket_cell(r_new, 0),
-                "regular_s": _format_bucket_cell(r_reg, 0),
-                "irregular_s": _format_bucket_cell(r_irr, 0),
-                "follow_up_s": _format_bucket_cell(r_fu, 0),
+                "new_s": _format_bucket_cell(r_new, new_c, 0),
+                "regular_s": _format_bucket_cell(r_reg, reg_c, 0),
+                "irregular_s": _format_bucket_cell(r_irr, irr_c, 0),
+                "follow_up_s": _format_bucket_cell(r_fu, fu_c, 0),
                 "_sort_regular": r_reg,
                 "_sort_irregular": r_irr,
                 "_sort_follow": r_fu,
@@ -423,24 +428,28 @@ def rows_from_historical_cell_status(
     def _row_for_cell(cell_s: str, agg: dict[str, int]) -> dict[str, Any]:
         pagg = prev_map.get(cell_s) if prev_map else None
         d = _denom_total(agg)
-        r_new = _pct(agg.get("new", 0), d)
-        r_reg = _pct(agg.get("regular", 0), d)
-        r_irr = _pct(agg.get("irregular", 0), d)
-        r_fu = _pct(agg.get("follow_up", 0), d)
+        c_new = agg.get("new", 0)
+        c_reg = agg.get("regular", 0)
+        c_irr = agg.get("irregular", 0)
+        c_fu = agg.get("follow_up", 0)
+        r_new = _pct(c_new, d)
+        r_reg = _pct(c_reg, d)
+        r_irr = _pct(c_irr, d)
+        r_fu = _pct(c_fu, d)
         dn = (
-            agg.get("new", 0) - (pagg.get("new", 0) if pagg else 0),
-            agg.get("regular", 0) - (pagg.get("regular", 0) if pagg else 0),
-            agg.get("irregular", 0) - (pagg.get("irregular", 0) if pagg else 0),
-            agg.get("follow_up", 0) - (pagg.get("follow_up", 0) if pagg else 0),
+            c_new - (pagg.get("new", 0) if pagg else 0),
+            c_reg - (pagg.get("regular", 0) if pagg else 0),
+            c_irr - (pagg.get("irregular", 0) if pagg else 0),
+            c_fu - (pagg.get("follow_up", 0) if pagg else 0),
         )
         zone_h = cell_to_zone.get(cell_s.lower(), "")
         return {
             "zone": zone_h,
             "cell": cell_s,
-            "new_s": _format_bucket_cell(r_new, dn[0]),
-            "regular_s": _format_bucket_cell(r_reg, dn[1]),
-            "irregular_s": _format_bucket_cell(r_irr, dn[2]),
-            "follow_up_s": _format_bucket_cell(r_fu, dn[3]),
+            "new_s": _format_bucket_cell(r_new, c_new, dn[0]),
+            "regular_s": _format_bucket_cell(r_reg, c_reg, dn[1]),
+            "irregular_s": _format_bucket_cell(r_irr, c_irr, dn[2]),
+            "follow_up_s": _format_bucket_cell(r_fu, c_fu, dn[3]),
             "_sort_regular": r_reg,
             "_sort_irregular": r_irr,
             "_sort_follow": r_fu,
@@ -463,26 +472,30 @@ def rows_from_historical_cell_status(
                 psum[k] += int(pa.get(k, 0))
 
     d_all = _denom_total(sum_agg)
-    r_new = _pct(sum_agg.get("new", 0), d_all)
-    r_reg = _pct(sum_agg.get("regular", 0), d_all)
-    r_irr = _pct(sum_agg.get("irregular", 0), d_all)
-    r_fu = _pct(sum_agg.get("follow_up", 0), d_all)
+    c_new_all = sum_agg.get("new", 0)
+    c_reg_all = sum_agg.get("regular", 0)
+    c_irr_all = sum_agg.get("irregular", 0)
+    c_fu_all = sum_agg.get("follow_up", 0)
+    r_new = _pct(c_new_all, d_all)
+    r_reg = _pct(c_reg_all, d_all)
+    r_irr = _pct(c_irr_all, d_all)
+    r_fu = _pct(c_fu_all, d_all)
     if psum:
         dn = (
-            sum_agg.get("new", 0) - psum.get("new", 0),
-            sum_agg.get("regular", 0) - psum.get("regular", 0),
-            sum_agg.get("irregular", 0) - psum.get("irregular", 0),
-            sum_agg.get("follow_up", 0) - psum.get("follow_up", 0),
+            c_new_all - psum.get("new", 0),
+            c_reg_all - psum.get("regular", 0),
+            c_irr_all - psum.get("irregular", 0),
+            c_fu_all - psum.get("follow_up", 0),
         )
     else:
         dn = (0, 0, 0, 0)
     all_row = {
         "zone": _ZONE_ALL_PSQ,
         "cell": "All",
-        "new_s": _format_bucket_cell(r_new, dn[0]),
-        "regular_s": _format_bucket_cell(r_reg, dn[1]),
-        "irregular_s": _format_bucket_cell(r_irr, dn[2]),
-        "follow_up_s": _format_bucket_cell(r_fu, dn[3]),
+        "new_s": _format_bucket_cell(r_new, c_new_all, dn[0]),
+        "regular_s": _format_bucket_cell(r_reg, c_reg_all, dn[1]),
+        "irregular_s": _format_bucket_cell(r_irr, c_irr_all, dn[2]),
+        "follow_up_s": _format_bucket_cell(r_fu, c_fu_all, dn[3]),
         "_sort_regular": float("-inf"),
         "_sort_irregular": float("inf"),
         "_sort_follow": float("inf"),
@@ -502,6 +515,94 @@ def rows_from_historical_cell_status(
     return [all_row] + per_cell_sorted, snap_curr
 
 
+def get_all_wow_deltas_from_hist(
+    hist_df: pd.DataFrame | None,
+    target_date_str: str | None,
+) -> tuple[int, int, int, int]:
+    """
+    Get WoW deltas for the 'All' scope from Historical Cell Status.
+    Returns (delta_new, delta_regular, delta_irregular, delta_follow_up).
+    Sums all cells' counts for current vs previous snapshot.
+    """
+    if hist_df is None or hist_df.empty:
+        return (0, 0, 0, 0)
+
+    lk = _hist_col_lookup(hist_df)
+    snap_c = _hist_get_col(lk, "snapshot date", "snapshot")
+    cell_c = _hist_get_col(lk, "cell")
+    if not snap_c or not cell_c:
+        return (0, 0, 0, 0)
+
+    all_dates = _parse_snap_dates(hist_df)
+    if not all_dates:
+        return (0, 0, 0, 0)
+
+    snap_curr, snap_prev = _pick_curr_prev(all_dates, target_date_str)
+    if snap_curr is None:
+        return (0, 0, 0, 0)
+
+    scoped = hist_df.copy()
+    scoped["_d"] = pd.to_datetime(scoped[snap_c], errors="coerce").dt.date
+    curr_map = _counts_by_cell_snapshot(scoped, snap_curr, snap_c, cell_c)
+    prev_map = _counts_by_cell_snapshot(scoped, snap_prev, snap_c, cell_c) if snap_prev else None
+
+    # Sum current snapshot counts across all cells
+    sum_curr: dict[str, int] = {k: 0 for k, _ in BUCKET_SPECS}
+    for agg in curr_map.values():
+        for k in sum_curr:
+            sum_curr[k] += int(agg.get(k, 0))
+
+    # Sum previous snapshot counts across all cells
+    sum_prev: dict[str, int] = {k: 0 for k, _ in BUCKET_SPECS}
+    if prev_map:
+        for pa in prev_map.values():
+            for k in sum_prev:
+                sum_prev[k] += int(pa.get(k, 0))
+
+    return (
+        sum_curr.get("new", 0) - sum_prev.get("new", 0),
+        sum_curr.get("regular", 0) - sum_prev.get("regular", 0),
+        sum_curr.get("irregular", 0) - sum_prev.get("irregular", 0),
+        sum_curr.get("follow_up", 0) - sum_prev.get("follow_up", 0),
+    )
+
+
+def count_all_from_cg_combined(
+    cg_df: pd.DataFrame | None,
+) -> dict[str, int]:
+    """
+    Count members by status type from CG Combined (like app.py does for KPI cards).
+    Returns dict with keys: new, regular, irregular, follow_up, red, graduated.
+    """
+    counts: dict[str, int] = {
+        "new": 0,
+        "regular": 0,
+        "irregular": 0,
+        "follow_up": 0,
+        "red": 0,
+        "graduated": 0,
+    }
+    if cg_df is None or cg_df.empty:
+        return counts
+
+    status_columns = [col for col in cg_df.columns if "status" in col.lower()]
+    status_col = status_columns[0] if status_columns else None
+    if not status_col:
+        return counts
+
+    work = cg_df.copy()
+    work["_st"] = work[status_col].apply(extract_cell_sheet_status_type)
+
+    counts["new"] = len(work[work["_st"] == "New"])
+    counts["regular"] = len(work[work["_st"] == "Regular"])
+    counts["irregular"] = len(work[work["_st"] == "Irregular"])
+    counts["follow_up"] = len(work[work["_st"] == "Follow Up"])
+    counts["red"] = len(work[work["_st"] == "Red"])
+    counts["graduated"] = len(work[work["_st"] == "Graduated"])
+
+    return counts
+
+
 def build_cell_health_table_rows(
     client: Any,
     sheet_id: str,
@@ -510,18 +611,47 @@ def build_cell_health_table_rows(
     """
     Return (rows with keys zone, cell, new_s, regular_s, irregular_s, follow_up_s),
     and subtitle text (snapshot / source).
+
+    Hybrid approach (matching app.py KPI cards):
+    - Individual cell rows: from Historical Cell Status (with WoW deltas)
+    - "All" row percentages: from CG Combined (live member counts)
+    - "All" row WoW deltas: from Historical Cell Status (snapshot comparison)
     """
     cell_to_zone = load_cell_zone_map(client, sheet_id)
 
     hist = load_historical_cell_status_df(client, sheet_id)
+    cg = load_cg_combined_df(client, sheet_id)
+
     if hist is not None and not hist.empty:
         pack = rows_from_historical_cell_status(hist, cell_to_zone, target_date_str)
         rows_h, snap_d = pack
         if rows_h:
-            src = f"NWST Health — Historical Cell Status (snapshot {snap_d.isoformat() if snap_d else 'n/a'})"
-            return rows_h, src
+            # Filter out the "All" row from Historical Cell Status
+            per_cell_rows = [r for r in rows_h if r.get("cell", "").lower() != "all"]
 
-    cg = load_cg_combined_df(client, sheet_id)
+            # Build "All" row: percentages from CG Combined, WoW deltas from Historical Cell Status
+            cg_counts = count_all_from_cg_combined(cg)
+            wow_deltas = get_all_wow_deltas_from_hist(hist, target_date_str)
+
+            d_all = _denom_total({**cg_counts, "total": 0})
+            all_row = {
+                "zone": _ZONE_ALL_PSQ,
+                "cell": "All",
+                "new_s": _format_bucket_cell(_pct(cg_counts["new"], d_all), cg_counts["new"], wow_deltas[0]),
+                "regular_s": _format_bucket_cell(_pct(cg_counts["regular"], d_all), cg_counts["regular"], wow_deltas[1]),
+                "irregular_s": _format_bucket_cell(_pct(cg_counts["irregular"], d_all), cg_counts["irregular"], wow_deltas[2]),
+                "follow_up_s": _format_bucket_cell(_pct(cg_counts["follow_up"], d_all), cg_counts["follow_up"], wow_deltas[3]),
+                "_sort_regular": float("-inf"),
+                "_sort_irregular": float("inf"),
+                "_sort_follow": float("inf"),
+                "_sort_new": float("-inf"),
+            }
+
+            src = f"NWST Health — Historical Cell Status (snapshot {snap_d.isoformat() if snap_d else 'n/a'})"
+            return [all_row] + per_cell_rows, src
+
+    # Fallback: CG Combined only (no Historical Cell Status available)
+    cg = cg if cg is not None else load_cg_combined_df(client, sheet_id)
     if cg is None or cg.empty:
         return [], "NWST Health — no Historical Cell Status or CG Found"
 
@@ -567,10 +697,10 @@ def build_cell_health_table_rows(
         all_row = {
             "zone": _ZONE_ALL_PSQ,
             "cell": "All",
-            "new_s": _format_bucket_cell(_pct(all_row_inner["new"], d_all), 0),
-            "regular_s": _format_bucket_cell(_pct(all_row_inner["regular"], d_all), 0),
-            "irregular_s": _format_bucket_cell(_pct(all_row_inner["irregular"], d_all), 0),
-            "follow_up_s": _format_bucket_cell(_pct(all_row_inner["follow_up"], d_all), 0),
+            "new_s": _format_bucket_cell(_pct(all_row_inner["new"], d_all), all_row_inner["new"], 0),
+            "regular_s": _format_bucket_cell(_pct(all_row_inner["regular"], d_all), all_row_inner["regular"], 0),
+            "irregular_s": _format_bucket_cell(_pct(all_row_inner["irregular"], d_all), all_row_inner["irregular"], 0),
+            "follow_up_s": _format_bucket_cell(_pct(all_row_inner["follow_up"], d_all), all_row_inner["follow_up"], 0),
             "_sort_regular": float("-inf"),
             "_sort_irregular": float("inf"),
             "_sort_follow": float("inf"),
@@ -601,10 +731,10 @@ def build_cell_health_table_rows(
     all_row = {
         "zone": _ZONE_ALL_PSQ,
         "cell": "All",
-        "new_s": _format_bucket_cell(_pct(agg_all["new"], d_all), 0),
-        "regular_s": _format_bucket_cell(_pct(agg_all["regular"], d_all), 0),
-        "irregular_s": _format_bucket_cell(_pct(agg_all["irregular"], d_all), 0),
-        "follow_up_s": _format_bucket_cell(_pct(agg_all["follow_up"], d_all), 0),
+        "new_s": _format_bucket_cell(_pct(agg_all["new"], d_all), agg_all["new"], 0),
+        "regular_s": _format_bucket_cell(_pct(agg_all["regular"], d_all), agg_all["regular"], 0),
+        "irregular_s": _format_bucket_cell(_pct(agg_all["irregular"], d_all), agg_all["irregular"], 0),
+        "follow_up_s": _format_bucket_cell(_pct(agg_all["follow_up"], d_all), agg_all["follow_up"], 0),
         "_sort_regular": float("-inf"),
         "_sort_irregular": float("inf"),
         "_sort_follow": float("inf"),
