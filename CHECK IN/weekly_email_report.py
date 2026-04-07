@@ -1,9 +1,9 @@
 """
 Weekly PSQ email + PDF for NWST Check In.
 
-PDF is titled **Weekly Check-In Report**: NWST cell-health table first (Historical Cell Status or CG Combined),
-then NWST Check In counts from **ATTENDANCE_SHEET_ID** (same roster as the app). Cell-health always uses
-**current** NWST Health data even when the attendance section is for a historical date. Configure recipients via Streamlit secrets or env:
+PDF layouts: **full** (cell-health table then NWST Check In), **check-in only** (no cell-health table;
+still uses **ATTENDANCE_SHEET_ID**), or **cell-health only** (NWST Health table only). Cell-health always
+uses **current** NWST Health even when the attendance slice is for a historical date. Configure recipients via Streamlit secrets or env:
   WEEKLY_REPORT_TO or PSQ_EMAIL — primary To line (person A)
   WEEKLY_REPORT_CC or PSQ_CC — optional Cc (comma-separated; person B, etc.)
   NWST_CORE_TEAM_TO — optional separate To for send_to_nwst_core_team
@@ -330,14 +330,29 @@ def _build_checkin_summary(client, target_date: str | None) -> dict | None:
     }
 
 
+def _now_myt_clock_str() -> str:
+    myt = timezone(timedelta(hours=8))
+    now = datetime.now(myt)
+    h12 = now.hour % 12
+    if h12 == 0:
+        h12 = 12
+    ap = "AM" if now.hour < 12 else "PM"
+    return f"{h12}:{now.minute:02d} {ap} MYT"
+
+
 def _build_report_pdf_bytes(
     rows: list[dict],
     subtitle: str,
     report_label: str,
     checkin_summary: dict | None = None,
     checkin_roster: dict[str, Any] | None = None,
+    *,
+    include_cell_health: bool = True,
+    include_checkin_section: bool = True,
+    cover_title: str | None = None,
+    cover_meta_line: str | None = None,
 ) -> tuple[bytes, str | None]:
-    """Build PDF with ReportLab: weekly check-in cover, cell-health table, optional attendance KPIs."""
+    """Build PDF with ReportLab: cover, optional cell-health table, optional NWST Check In KPIs + roster."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
@@ -462,71 +477,77 @@ def _build_report_pdf_bytes(
     )
     story: list = []
 
-    story.append(Paragraph("Weekly Check-In Report", cover_title_style))
-    if checkin_summary:
+    title_text = cover_title or "Weekly Check-In Report"
+    story.append(Paragraph(escape(title_text), cover_title_style))
+
+    if cover_meta_line is not None:
+        story.append(Paragraph(escape(cover_meta_line), cover_meta_style))
+    elif checkin_summary:
         story.append(Paragraph(escape(checkin_summary["meta_line"]), cover_meta_style))
     else:
-        story.append(
-            Paragraph(
-                escape("Attendance summary requires ATTENDANCE_SHEET_ID — cell health table below."),
-                cover_meta_style,
+        if include_cell_health:
+            fallback = (
+                "Attendance summary requires ATTENDANCE_SHEET_ID — cell health table below."
+            )
+        else:
+            fallback = "Attendance summary requires ATTENDANCE_SHEET_ID."
+        story.append(Paragraph(escape(fallback), cover_meta_style))
+
+    if include_cell_health:
+        story.append(Paragraph("Cell health (NWST)", sec_style))
+
+        hdr = ["Zone", "Cell", "New", "Regular", "Irregular", "Follow Up"]
+        data: list[list] = [[Paragraph(escape(h), th_style) for h in hdr]]
+
+        for r in rows:
+            data.append(
+                [
+                    Paragraph(escape(str(r.get("zone", ""))), td_style),
+                    Paragraph(escape(str(r.get("cell", ""))), td_style),
+                    # Bucket cells contain <b> tags for bold percentage - don't escape
+                    Paragraph(str(r.get("new_s", "")), td_style),
+                    Paragraph(str(r.get("regular_s", "")), td_style),
+                    Paragraph(str(r.get("irregular_s", "")), td_style),
+                    Paragraph(str(r.get("follow_up_s", "")), td_style),
+                ]
+            )
+
+        if len(data) == 1:
+            data.append(
+                [
+                    Paragraph(escape("No NWST Health cell data available."), td_style),
+                    Paragraph("", td_style),
+                    Paragraph("", td_style),
+                    Paragraph("", td_style),
+                    Paragraph("", td_style),
+                    Paragraph("", td_style),
+                ]
+            )
+
+        usable_w_tbl = A4[0] - 72
+        col_widths = [usable_w_tbl * f for f in (0.12, 0.20, 0.14, 0.17, 0.17, 0.20)]
+
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+                    ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#fafafa")],
+                    ),
+                ]
             )
         )
+        story.append(tbl)
+        story.append(Spacer(1, 12))
 
-    story.append(Paragraph("Cell health (NWST)", sec_style))
-
-    hdr = ["Zone", "Cell", "New", "Regular", "Irregular", "Follow Up"]
-    data: list[list] = [[Paragraph(escape(h), th_style) for h in hdr]]
-
-    for r in rows:
-        data.append(
-            [
-                Paragraph(escape(str(r.get("zone", ""))), td_style),
-                Paragraph(escape(str(r.get("cell", ""))), td_style),
-                # Bucket cells contain <b> tags for bold percentage - don't escape
-                Paragraph(str(r.get("new_s", "")), td_style),
-                Paragraph(str(r.get("regular_s", "")), td_style),
-                Paragraph(str(r.get("irregular_s", "")), td_style),
-                Paragraph(str(r.get("follow_up_s", "")), td_style),
-            ]
-        )
-
-    if len(data) == 1:
-        data.append(
-            [
-                Paragraph(escape("No NWST Health cell data available."), td_style),
-                Paragraph("", td_style),
-                Paragraph("", td_style),
-                Paragraph("", td_style),
-                Paragraph("", td_style),
-                Paragraph("", td_style),
-            ]
-        )
-
-    usable_w = A4[0] - 72
-    col_widths = [usable_w * f for f in (0.12, 0.20, 0.14, 0.17, 0.17, 0.20)]
-
-    tbl = Table(data, colWidths=col_widths, repeatRows=1)
-    tbl.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
-                ("ALIGN", (2, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                (
-                    "ROWBACKGROUNDS",
-                    (0, 1),
-                    (-1, -1),
-                    [colors.white, colors.HexColor("#fafafa")],
-                ),
-            ]
-        )
-    )
-    story.append(tbl)
-    story.append(Spacer(1, 12))
-
-    if checkin_summary:
+    if include_checkin_section and checkin_summary:
         usable_w = A4[0] - 72
         grey = colors.HexColor("#e8e8e8")
 
@@ -663,39 +684,76 @@ def _run_report(
     recipient: str,
     cc: str | None = None,
     subject_prefix: str,
+    include_cell_health: bool = True,
+    include_checkin_section: bool = True,
+    cover_title: str | None = None,
+    cover_meta_line: str | None = None,
 ) -> None:
     client = _gspread_client()
     sheet_ch = nwst_health_sheet_id()
-    # Cell health always reflects latest NWST Health (today), even when sending for a historical attendance date.
-    rows, subtitle = build_cell_health_table_rows(client, sheet_ch, target_date_str=None)
-    if target_date:
-        subtitle = f"{subtitle} Attendance report date: {target_date}."
+    rows: list[dict] = []
+    subtitle = ""
+    if include_cell_health:
+        # Cell health always reflects latest NWST Health (today), even for a historical attendance date.
+        rows, subtitle = build_cell_health_table_rows(client, sheet_ch, target_date_str=None)
+        if target_date:
+            subtitle = f"{subtitle} Attendance report date: {target_date}."
+    else:
+        subtitle = (
+            f"Weekly check-in (no cell-health table). Attendance report date: {target_date}."
+            if target_date
+            else "Weekly check-in (no cell-health table)."
+        )
+
+    cov_meta = cover_meta_line
+    if cov_meta is None and include_cell_health and not include_checkin_section:
+        cov_meta = f"NWST Health snapshot | Generated at {_now_myt_clock_str()} MYT"
+
     label = f"{subject_prefix} — {target_date}" if target_date else subject_prefix
-    checkin_summary = _build_checkin_summary(client, target_date)
-    date_for_roster = _report_attendance_date_str(target_date)
-    attendance_sid = _attendance_sheet_id()
-    checkin_roster = (
-        _build_checkin_roster_for_pdf(client, attendance_sid, sheet_ch, date_for_roster)
-        if attendance_sid
-        else None
-    )
+
+    checkin_summary = None
+    checkin_roster = None
+    if include_checkin_section:
+        checkin_summary = _build_checkin_summary(client, target_date)
+        date_for_roster = _report_attendance_date_str(target_date)
+        attendance_sid = _attendance_sheet_id()
+        checkin_roster = (
+            _build_checkin_roster_for_pdf(client, attendance_sid, sheet_ch, date_for_roster)
+            if attendance_sid
+            else None
+        )
+
     pdf_bytes, err = _build_report_pdf_bytes(
         rows,
         subtitle,
         label,
         checkin_summary=checkin_summary,
         checkin_roster=checkin_roster,
+        include_cell_health=include_cell_health,
+        include_checkin_section=include_checkin_section,
+        cover_title=cover_title,
+        cover_meta_line=cov_meta,
     )
     if err or not pdf_bytes:
         print(f"FAIL: PDF: {err or 'empty'}")
         return
+
     safe_date = (target_date or "").replace("/", "-") or "latest"
-    fname = f"weekly_checkin_report_{safe_date}.pdf"
-    body = (
-        f"{label}\n\n{subtitle}\n\n"
-        f"PDF: Weekly Check-In Report — cell-health table first, then NWST Check In summary "
-        f"(when ATTENDANCE_SHEET_ID is set).\n"
-    )
+    if include_cell_health and not include_checkin_section:
+        fname = f"nwst_cell_health_{safe_date}.pdf"
+        body_pdf_desc = "PDF: NWST cell-health table only.\n"
+    elif not include_cell_health:
+        fname = f"weekly_checkin_{safe_date}.pdf"
+        body_pdf_desc = (
+            "PDF: NWST Check In summary and roster only (no cell-health table).\n"
+        )
+    else:
+        fname = f"weekly_checkin_report_{safe_date}.pdf"
+        body_pdf_desc = (
+            "PDF: Weekly Check-In Report — cell-health table first, then NWST Check In summary "
+            "(when ATTENDANCE_SHEET_ID is set).\n"
+        )
+    body = f"{label}\n\n{subtitle}\n\n{body_pdf_desc}"
     ok, detail = _send_pdf_email(
         pdf_bytes=pdf_bytes,
         subject=label,
@@ -705,9 +763,39 @@ def _run_report(
         attachment_name=fname,
     )
     if ok:
-        print("SUCCESS: Weekly report emailed with NWST Health PDF.")
+        if include_cell_health and not include_checkin_section:
+            print("SUCCESS: Cell health PDF emailed.")
+        elif not include_cell_health:
+            print("SUCCESS: Weekly check-in PDF emailed (no cell-health table).")
+        else:
+            print("SUCCESS: Weekly report emailed with NWST Health PDF.")
     else:
         print(f"FAIL: {detail}")
+
+
+def send_psq_weekly_checkin_only(target_date: str | None = None) -> None:
+    """Email PSQ a PDF with check-in summary and roster only (no cell-health table)."""
+    _run_report(
+        target_date=target_date,
+        recipient=_weekly_recipient(),
+        cc=_weekly_cc(),
+        subject_prefix="NWST Weekly Check-In",
+        include_cell_health=False,
+        include_checkin_section=True,
+    )
+
+
+def send_psq_cell_health_only(target_date: str | None = None) -> None:
+    """Email PSQ a PDF with the NWST cell-health table only."""
+    _run_report(
+        target_date=target_date,
+        recipient=_weekly_recipient(),
+        cc=_weekly_cc(),
+        subject_prefix="NWST Cell Health",
+        include_cell_health=True,
+        include_checkin_section=False,
+        cover_title="Current Cell Health",
+    )
 
 
 def main(target_date: str | None = None) -> None:
