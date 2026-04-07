@@ -76,6 +76,7 @@ REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"  # Will be suffixed with date a
 REDIS_HISTORICAL_KEY_PREFIX = "attendance:historical:"  # For historical date queries
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
 REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with date
+REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"  # CG Combined cached for birthday display
 # Rows not yet appended to Google Sheets (flushed via admin flush-pending job / tooling)
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
 
@@ -1039,9 +1040,23 @@ def _birthday_md_to_date_in_window(
     return md_to_date.get((month, day))
 
 
-def _cg_combined_df_for_birthdays(_client, health_sheet_id: str):
-    """No Streamlit cache: avoid caching a failed ``None`` read for minutes after fixing sheet access."""
-    return load_cg_combined_df(_client, health_sheet_id)
+@st.cache_data(ttl=300, show_spinner=False)
+def _cg_combined_df_for_birthdays(_health_sheet_id: str):
+    """
+    Load CG Combined from Upstash (populated by flush_pending sync), with Sheets fallback.
+    @st.cache_data provides 5-min local cache on top of Upstash for same-instance users.
+    """
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(REDIS_BIRTHDAYS_KEY)
+            if cached:
+                raw = cached.decode() if isinstance(cached, bytes) else cached
+                return pd.read_json(raw)
+        except Exception:
+            pass
+    # Fallback: direct Sheets read (first load before any sync, or Upstash miss)
+    return load_cg_combined_df(get_gsheet_client(), _health_sheet_id)
 
 
 def _group_birthdays_near_date(
@@ -1179,7 +1194,7 @@ def _card_body_text_hex(theme_text: str) -> str:
 
 
 def birthdays_notice_payload(
-    _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+    health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
 ) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
     """
     (status, grouped, user_hint).
@@ -1190,7 +1205,7 @@ def birthdays_notice_payload(
     sid = (health_sheet_id or "").strip()
     if not sid:
         return "no_sid", [], "Configure **NWST_HEALTH_SHEET_ID** (or rely on the built-in default) for the Health workbook."
-    cg = _cg_combined_df_for_birthdays(_client, sid)
+    cg = _cg_combined_df_for_birthdays(sid)
     if cg is None:
         return "load_failed", [], (
             "Could not read **CG Combined** from the NWST Health spreadsheet. "
@@ -1219,7 +1234,7 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID."""
     sid = (nwst_health_sheet_id() or "").strip()
     today_s = get_today_myt_date()
-    status, grouped, hint = birthdays_notice_payload(client, sid, today_s, delta_days=5)
+    status, grouped, hint = birthdays_notice_payload(sid, today_s, delta_days=5)
 
     if status in ("no_sid", "load_failed", "empty_sheet", "no_birthday_col", "no_name_col"):
         if hint:
