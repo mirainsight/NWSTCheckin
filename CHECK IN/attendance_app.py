@@ -877,14 +877,30 @@ def _valid_month_day(month: int, day: int) -> bool:
     return False
 
 
+def _month_day_from_sheets_serial(n: float) -> tuple[int, int] | None:
+    """Google Sheets / Excel-style serial (days after 1899-12-30) → (month, day)."""
+    if n != n or n < 200 or n > 800000:  # NaN or implausible
+        return None
+    base = date(1899, 12, 30)
+    try:
+        d = base + timedelta(days=int(round(n)))
+    except (OverflowError, ValueError):
+        return None
+    return (d.month, d.day)
+
+
 def _parse_birthday_month_day(val) -> tuple[int, int] | None:
-    """Parse a sheet Birthday value to (month, day). Supports D/M/Y, Y-M-D, and M/D when unambiguous."""
+    """Parse a sheet Birthday value to (month, day). Supports dates, serials, and common text formats."""
     if val is None:
         return None
     if isinstance(val, float) and pd.isna(val):
         return None
-    if isinstance(val, datetime):
+    if isinstance(val, date):
         return (val.month, val.day)
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        md = _month_day_from_sheets_serial(float(val))
+        if md:
+            return md
     if hasattr(val, "month") and hasattr(val, "day") and not isinstance(val, str):
         try:
             return (int(val.month), int(val.day))
@@ -912,9 +928,9 @@ def _parse_birthday_month_day(val) -> tuple[int, int] | None:
             month, day = b, a
         if _valid_month_day(month, day):
             return (month, day)
-        return None
     if len(nums) >= 3:
         a, b, c = nums[0], nums[1], nums[2]
+        month, day = 0, 0
         if a > 1000:
             month, day = b, c
         elif c > 1000:
@@ -924,16 +940,51 @@ def _parse_birthday_month_day(val) -> tuple[int, int] | None:
                 month, day = a, b
             else:
                 month, day = b, a
-        else:
-            return None
-        if _valid_month_day(month, day):
+        if month > 0 and _valid_month_day(month, day):
             return (month, day)
+    for fmt in (
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%b-%Y",
+        "%d-%b-%y",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return (dt.month, dt.day)
+        except ValueError:
+            continue
+    try:
+        md = _month_day_from_sheets_serial(float(s.replace(",", ".")))
+        if md:
+            return md
+    except ValueError:
+        pass
     return None
+
+
+_BIRTHDAY_HEADER_MARKERS = (
+    "birthday",
+    "birth day",
+    "date of birth",
+    "birthdate",
+    "dob",
+    "b'day",
+    "bday",
+)
 
 
 def _find_cg_birthday_column(cg_df: pd.DataFrame) -> str | None:
     for c in cg_df.columns:
-        if "birthday" in str(c).lower():
+        low = str(c).lower().strip()
+        if any(m in low for m in _BIRTHDAY_HEADER_MARKERS):
             return c
     return None
 
@@ -950,30 +1001,19 @@ def _birthday_md_to_date_in_window(
     return md_to_date.get((month, day))
 
 
-@st.cache_data(ttl=300)
 def _cg_combined_df_for_birthdays(_client, health_sheet_id: str):
+    """No Streamlit cache: avoid caching a failed ``None`` read for minutes after fixing sheet access."""
     return load_cg_combined_df(_client, health_sheet_id)
 
 
-def get_birthdays_grouped_near_date(
-    _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+def _group_birthdays_near_date(
+    cg: pd.DataFrame,
+    bcol: str,
+    ncol: str,
+    ccol: str | None,
+    center: date,
+    delta_days: int,
 ) -> list[tuple[date, list[tuple[str, str]]]]:
-    """
-    Birthdays from NWST Health **CG Combined** within center date ± delta_days (inclusive).
-    Returns [(date, [(name, cell), ...]), ...] sorted by date, names sorted within each day.
-    """
-    cg = _cg_combined_df_for_birthdays(_client, health_sheet_id)
-    if cg is None or cg.empty:
-        return []
-    bcol = _find_cg_birthday_column(cg)
-    ncol, ccol = _resolve_cg_name_cell_columns(cg)
-    if not bcol or not ncol:
-        return []
-    try:
-        center = datetime.strptime(center_myt_iso, "%Y-%m-%d").date()
-    except ValueError:
-        return []
-
     by_date: dict[date, list[tuple[str, str]]] = defaultdict(list)
     for _, row in cg.iterrows():
         md = _parse_birthday_month_day(row.get(bcol))
@@ -998,14 +1038,52 @@ def get_birthdays_grouped_near_date(
     return out
 
 
+def birthdays_notice_payload(
+    _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
+    """
+    (status, grouped, user_hint).
+
+    status: ``ok`` | ``empty_window`` | ``load_failed`` | ``empty_sheet`` | ``no_birthday_col``
+    | ``no_name_col`` | ``no_sid``
+    """
+    sid = (health_sheet_id or "").strip()
+    if not sid:
+        return "no_sid", [], "Configure **NWST_HEALTH_SHEET_ID** (or rely on the built-in default) for the Health workbook."
+    cg = _cg_combined_df_for_birthdays(_client, sid)
+    if cg is None:
+        return "load_failed", [], (
+            "Could not read **CG Combined** from the NWST Health spreadsheet. "
+            "Share that workbook with the **same Google service account** as Check In, then refresh."
+        )
+    if cg.empty:
+        return "empty_sheet", [], "CG Combined is empty—NWST Health has no roster rows to read."
+    bcol = _find_cg_birthday_column(cg)
+    ncol, ccol = _resolve_cg_name_cell_columns(cg)
+    if not bcol:
+        return "no_birthday_col", [], "Add a column whose header mentions Birthday, DOB, or Date of Birth."
+    if not ncol:
+        return "no_name_col", [], "CG Combined needs a Name column so birthdays can be listed."
+    try:
+        center = datetime.strptime(center_myt_iso, "%Y-%m-%d").date()
+    except ValueError:
+        return "empty_window", [], None
+
+    grouped = _group_birthdays_near_date(cg, bcol, ncol, ccol, center, delta_days)
+    if not grouped:
+        return "empty_window", [], None
+    return "ok", grouped, None
+
+
 def render_birthdays_notice_board(page_colors: dict) -> None:
     """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID."""
     sid = (nwst_health_sheet_id() or "").strip()
-    if not sid:
-        return
     today_s = get_today_myt_date()
-    grouped = get_birthdays_grouped_near_date(client, sid, today_s, delta_days=5)
-    if not grouped:
+    status, grouped, hint = birthdays_notice_payload(client, sid, today_s, delta_days=5)
+
+    if status in ("no_sid", "load_failed", "empty_sheet", "no_birthday_col", "no_name_col"):
+        if hint:
+            st.info(hint)
         return
 
     prim = page_colors.get("primary", "#5BC0EB")
@@ -1019,19 +1097,28 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     prim_e = html.escape(prim, quote=True)
     text_e = html.escape(text_main, quote=True)
     rows_html: list[str] = []
-    for dt, pairs in grouped:
-        label = html.escape(_fmt_day(dt), quote=True)
-        rows_html.append(
-            f'<div style="margin-top:0.65rem;">'
-            f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.8rem;'
-            f"color:{prim_e};letter-spacing:0.04em;margin-bottom:0.35rem;\">{label}</div>"
-            f'<ul style="margin:0;padding-left:1.15rem;color:{text_e};'
-            f'font-family:Inter,sans-serif;font-size:0.82rem;line-height:1.45;">'
+    if grouped:
+        for dt, pairs in grouped:
+            label = html.escape(_fmt_day(dt), quote=True)
+            rows_html.append(
+                f'<div style="margin-top:0.65rem;">'
+                f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.8rem;'
+                f"color:{prim_e};letter-spacing:0.04em;margin-bottom:0.35rem;\">{label}</div>"
+                f'<ul style="margin:0;padding-left:1.15rem;color:{text_e};'
+                f'font-family:Inter,sans-serif;font-size:0.82rem;line-height:1.45;">'
+            )
+            for name, cell in pairs:
+                line = html.escape(f"{name} - {cell}", quote=True)
+                rows_html.append(f"<li style=\"margin:0.1rem 0;\">{line}</li>")
+            rows_html.append("</ul></div>")
+    else:
+        empty_txt = html.escape(
+            "No birthdays in this ±5 day window (MYT), or Birthday cells are empty / not recognised.",
+            quote=True,
         )
-        for name, cell in pairs:
-            line = html.escape(f"{name} - {cell}", quote=True)
-            rows_html.append(f"<li style=\"margin:0.1rem 0;\">{line}</li>")
-        rows_html.append("</ul></div>")
+        rows_html.append(
+            f'<p style="margin:0.65rem 0 0 0;font-family:Inter,sans-serif;font-size:0.82rem;color:{text_e};">{empty_txt}</p>'
+        )
 
     title = html.escape("Birthdays this week", quote=True)
     sub = html.escape("Rolling ±5 days from today (MYT)", quote=True)
