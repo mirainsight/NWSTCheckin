@@ -651,6 +651,7 @@ def _send_pdf_email(
     cc_addr: str | None = None,
     body_text: str,
     attachment_name: str,
+    additional_attachments: list[tuple[bytes, str]] | None = None,
 ) -> tuple[bool, str]:
     creds = _sender_creds()
     if not creds:
@@ -668,6 +669,11 @@ def _send_pdf_email(
     att = MIMEApplication(pdf_bytes, _subtype="pdf")
     att.add_header("Content-Disposition", "attachment", filename=attachment_name)
     msg.attach(att)
+    if additional_attachments:
+        for extra_bytes, extra_name in additional_attachments:
+            att2 = MIMEApplication(extra_bytes, _subtype="pdf")
+            att2.add_header("Content-Disposition", "attachment", filename=extra_name)
+            msg.attach(att2)
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
@@ -688,6 +694,7 @@ def _run_report(
     include_checkin_section: bool = True,
     cover_title: str | None = None,
     cover_meta_line: str | None = None,
+    attach_cell_health_companion: bool = False,
 ) -> None:
     client = _gspread_client()
     sheet_ch = nwst_health_sheet_id()
@@ -710,6 +717,7 @@ def _run_report(
         cov_meta = f"NWST Health snapshot | Generated at {_now_myt_clock_str()} MYT"
 
     label = f"{subject_prefix} — {target_date}" if target_date else subject_prefix
+    safe_date = (target_date or "").replace("/", "-") or "latest"
 
     checkin_summary = None
     checkin_roster = None
@@ -738,15 +746,52 @@ def _run_report(
         print(f"FAIL: PDF: {err or 'empty'}")
         return
 
-    safe_date = (target_date or "").replace("/", "-") or "latest"
+    extra_attachments: list[tuple[bytes, str]] | None = None
+    if (
+        attach_cell_health_companion
+        and not include_cell_health
+        and include_checkin_section
+    ):
+        rows_ch, sub_ch = build_cell_health_table_rows(
+            client, sheet_ch, target_date_str=None
+        )
+        if target_date:
+            sub_ch = f"{sub_ch} Attendance report date: {target_date}."
+        cell_label = f"NWST Cell Health — {target_date}" if target_date else "NWST Cell Health"
+        cov_ch = f"NWST Health snapshot | Generated at {_now_myt_clock_str()} MYT"
+        pdf_ch, err_ch = _build_report_pdf_bytes(
+            rows_ch,
+            sub_ch,
+            cell_label,
+            checkin_summary=None,
+            checkin_roster=None,
+            include_cell_health=True,
+            include_checkin_section=False,
+            cover_title="Current Cell Health",
+            cover_meta_line=cov_ch,
+        )
+        if err_ch or not pdf_ch:
+            print(
+                f"WARN: Cell-health companion PDF not attached: {err_ch or 'empty'}"
+            )
+        else:
+            extra_attachments = [(pdf_ch, f"nwst_cell_health_{safe_date}.pdf")]
+
     if include_cell_health and not include_checkin_section:
         fname = f"nwst_cell_health_{safe_date}.pdf"
         body_pdf_desc = "PDF: NWST cell-health table only.\n"
     elif not include_cell_health:
         fname = f"weekly_checkin_{safe_date}.pdf"
-        body_pdf_desc = (
-            "PDF: NWST Check In summary and roster only (no cell-health table).\n"
-        )
+        ch_name = f"nwst_cell_health_{safe_date}.pdf"
+        if extra_attachments:
+            body_pdf_desc = (
+                f"Attachments: (1) NWST Check In summary and roster ({fname}). "
+                f"(2) NWST cell-health table ({ch_name}).\n"
+            )
+        else:
+            body_pdf_desc = (
+                "PDF: NWST Check In summary and roster only (no cell-health table).\n"
+            )
     else:
         fname = f"weekly_checkin_report_{safe_date}.pdf"
         body_pdf_desc = (
@@ -761,12 +806,20 @@ def _run_report(
         cc_addr=cc,
         body_text=body,
         attachment_name=fname,
+        additional_attachments=extra_attachments,
     )
     if ok:
         if include_cell_health and not include_checkin_section:
             print("SUCCESS: Cell health PDF emailed.")
         elif not include_cell_health:
-            print("SUCCESS: Weekly check-in PDF emailed (no cell-health table).")
+            if extra_attachments:
+                print("SUCCESS: Weekly check-in PDF + cell-health PDF emailed.")
+            elif attach_cell_health_companion:
+                print(
+                    "SUCCESS: Weekly check-in PDF emailed (cell-health companion missing; see WARN)."
+                )
+            else:
+                print("SUCCESS: Weekly check-in PDF emailed (no cell-health table).")
         else:
             print("SUCCESS: Weekly report emailed with NWST Health PDF.")
     else:
@@ -774,7 +827,7 @@ def _run_report(
 
 
 def send_psq_weekly_checkin_only(target_date: str | None = None) -> None:
-    """Email PSQ a PDF with check-in summary and roster only (no cell-health table)."""
+    """Email PSQ check-in PDF (roster + summary) plus a second attachment: cell-health table only."""
     _run_report(
         target_date=target_date,
         recipient=_weekly_recipient(),
@@ -782,6 +835,7 @@ def send_psq_weekly_checkin_only(target_date: str | None = None) -> None:
         subject_prefix="NWST Weekly Check-In",
         include_cell_health=False,
         include_checkin_section=True,
+        attach_cell_health_companion=True,
     )
 
 
