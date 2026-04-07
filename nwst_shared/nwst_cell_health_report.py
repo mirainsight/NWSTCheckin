@@ -269,7 +269,7 @@ def resolve_cell_from_cg_combined(name: str, cg_df: pd.DataFrame | None) -> str:
 def _lookup_attendance_stats_entry(
     name_stripped: str, cell_stripped: str, attendance_stats: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Resolve stats dict the same way as NWST HEALTH ``get_attendance_text`` (+ safe fallbacks)."""
+    """Resolve stats dict like NWST HEALTH ``get_attendance_text``, then name/cell fallbacks for PDF/Options."""
     if not attendance_stats:
         return None
 
@@ -286,16 +286,25 @@ def _lookup_attendance_stats_entry(
         if str(dict_key).lower() == key_lower:
             return st  # type: ignore[return-value]
 
-    if not cell_stripped:
-        name_lower = name_stripped.lower()
-        prefix = name_lower + " - "
-        candidates: list[dict[str, Any]] = []
+    # Options roster cell labels can differ slightly from CG Combined; keys always use Attendance name + CG cell.
+    name_lower = name_stripped.lower()
+    prefix = name_lower + " - "
+    by_name: list[dict[str, Any]] = []
+    for dict_key, st in attendance_stats.items():
+        dk_l = str(dict_key).lower()
+        if dk_l == name_lower or dk_l.startswith(prefix):
+            by_name.append(st)
+    if len(by_name) == 1:
+        return by_name[0]
+    if len(by_name) > 1 and cell_stripped:
+        cs_l = cell_stripped.lower().strip()
+        narrowed: list[dict[str, Any]] = []
         for dict_key, st in attendance_stats.items():
             dk_l = str(dict_key).lower()
-            if dk_l == name_lower or dk_l.startswith(prefix):
-                candidates.append(st)
-        if len(candidates) == 1:
-            return candidates[0]
+            if (dk_l == name_lower or dk_l.startswith(prefix)) and cs_l in dk_l:
+                narrowed.append(st)
+        if len(narrowed) == 1:
+            return narrowed[0]
 
     return None
 
