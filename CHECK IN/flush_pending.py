@@ -1,801 +1,995 @@
+#!/usr/bin/env python3
+"""
+Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_resync``):
+
+1. Append pending check-in rows from Upstash to Google Sheets (per selected tabs).
+2. Clear Upstash caches: options, zone mapping, today’s attendance snapshots (all three tabs),
+   ministry option keys, newcomers snapshot.
+3. Refresh Theme Override snapshot into Upstash (same as main app after resync).
+
+**CLI (default = full sync):**
+  cd "CHECK IN" && python flush_pending.py
+  python flush_pending.py --pending-only
+  python flush_pending.py --tabs attendance leaders --pending-only
+
+**Streamlit UI:** ``streamlit run flush_pending.py`` — NWST styling matches ``attendance_app`` (Theme Override in Upstash, ``nwst_shared/nwst_accent_overrides.json`` at repo root, env/secrets ``ATTENDANCE_ACCENT_OVERRIDE_*``, daily MYT palette fallback). Run log resets each press.
+
+Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
+  credentials.json, GOOGLE_APPLICATION_CREDENTIALS — see module doc in code below.
+"""
 from __future__ import annotations
 
-__doc__ = """
-Cell health summary for PDF/email reports (NWST Health sheet).
-
-Zone for every row comes from the **Attendance Sheet** Key Values tab (column A = cell name, C = zone).
-Historical Cell Status may supply counts and snapshot dates but never overrides zone.
-The aggregate / cell name **All** is always shown as zone **PSQ**.
-
-**Hybrid approach** (matching app.py KPI cards):
-- Individual cell rows: from **Historical Cell Status** (with WoW deltas from snapshot comparison)
-- "All" row **percentages**: from **CG Combined** (live member counts by status)
-- "All" row **WoW deltas**: from **Historical Cell Status** (snapshot comparison)
-
-Falls back to **CG Combined** roster + Status column if Historical Cell Status unavailable.
-"""
-
+import argparse
+import importlib.util
+import json
 import os
-from datetime import date
-from typing import Any
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-import pandas as pd
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from nwst_shared.paths import resolved_nwst_accent_config_path
+from nwst_shared.nwst_daily_palette import (
+    generate_colors_for_date as _generate_colors_for_date,
+    normalize_primary_hex as _normalize_primary_hex,
+    theme_from_primary_hex as _theme_from_primary_hex,
+)
+from nwst_shared.nwst_cell_health_report import (
+    load_cg_combined_df,
+    nwst_health_sheet_id,
+)
 
-# Fixed zone for roll-up row and any cell literally named All / ALL.
-_ZONE_ALL_PSQ = "PSQ"
+# CHECK IN folder (this script lives next to ``attendance_app.py``)
+_CHECK_IN_ROOT = Path(__file__).resolve().parent
+if str(_CHECK_IN_ROOT.resolve()) not in sys.path:
+    sys.path.insert(0, str(_CHECK_IN_ROOT.resolve()))
 
-NWST_HISTORICAL_CELL_STATUS_TAB = "Historical Cell Status"
-NWST_KEY_VALUES_TAB = "Key Values"
-NWST_CG_COMBINED_TAB = "CG Combined"
-# Per-service rollup on the NWST Health spreadsheet (columns D+), same source as NWST HEALTH/app.py tooltips.
-NWST_HEALTH_ATTENDANCE_ROLLUP_TAB = "Attendance"
-_DEFAULT_NWST_HEALTH_SHEET_ID = "1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY"
-_DEFAULT_NWST_ATTENDANCE_SHEET_ID = "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
+# Load .env from CHECK IN if python-dotenv is available
+try:
+    from dotenv import load_dotenv
 
-BUCKET_SPECS: list[tuple[str, tuple[str, ...]]] = [
-    ("new", ("new",)),
-    ("regular", ("regular",)),
-    ("irregular", ("irregular",)),
-    ("follow_up", ("follow up", "follow_up", "followup")),
-    ("red", ("red",)),
-    ("graduated", ("graduated",)),
-    ("total", ("total",)),
-]
+    load_dotenv(_CHECK_IN_ROOT / ".env")
+    load_dotenv()
+except ImportError:
+    pass
+
+import gspread
+from google.oauth2.service_account import Credentials
+
+try:
+    from upstash_redis import Redis
+except ImportError:
+    Redis = None  # type: ignore
+
+ATTENDANCE_TAB_NAME = "Attendance"
+LEADERS_ATTENDANCE_TAB_NAME = "Leaders Attendance"
+MINISTRY_ATTENDANCE_TAB_NAME = "Ministry Attendance"
+REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
+REDIS_OPTIONS_KEY = "attendance:options"
+REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
+REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"
+REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"
+REDIS_LAST_SYNC_TIMESTAMP_KEY = "attendance:last_sync_timestamp"
+REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"
+# Same list as attendance_app.MINISTRY_LIST (ministry option cache keys)
+MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]
+SESSION_LOG_KEY = "flush_pending_session_log"
+ALL_PENDING_TABS = [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME, MINISTRY_ATTENDANCE_TAB_NAME]
+
+_nwst_accent_cfg_mod = None
 
 
-def nwst_health_sheet_id() -> str:
-    sid = (os.getenv("NWST_HEALTH_SHEET_ID") or "").strip()
-    return sid or _DEFAULT_NWST_HEALTH_SHEET_ID
-
-
-def nwst_attendance_sheet_id() -> str:
-    sid = (os.getenv("NWST_ATTENDANCE_SHEET_ID") or "").strip()
-    return sid or _DEFAULT_NWST_ATTENDANCE_SHEET_ID
-
-
-def extract_cell_sheet_status_type(status_val: Any) -> str | None:
-    if status_val is None or (isinstance(status_val, float) and pd.isna(status_val)):
+def _load_nwst_accent_cfg():
+    """Load shared accent module (``nwst_shared``)."""
+    global _nwst_accent_cfg_mod
+    if _nwst_accent_cfg_mod is not None:
+        return _nwst_accent_cfg_mod
+    cfg = resolved_nwst_accent_config_path()
+    if cfg is None:
         return None
-    if not isinstance(status_val, str):
-        return None
-    s = status_val.strip()
-    if not s:
-        return None
-    low = s.lower()
-    # Prefix forms (sheet / Apps Script convention)
-    if low.startswith("regular"):
-        return "Regular"
-    if low.startswith("irregular"):
-        return "Irregular"
-    if low.startswith("new"):
-        return "New"
-    if low.startswith("follow up") or low.startswith("follow-up") or low.startswith("follow_up"):
-        return "Follow Up"
-    if low.startswith("red"):
-        return "Red"
-    if low.startswith("graduated"):
-        return "Graduated"
-    return None
+    spec = importlib.util.spec_from_file_location("_flush_pending_nwst_accent", cfg)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _nwst_accent_cfg_mod = mod
+    return mod
 
 
-def _hist_col_lookup(df: pd.DataFrame) -> dict[str, str]:
-    return {str(c).strip().lower(): c for c in df.columns}
+def get_today_myt_date() -> str:
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt).strftime("%Y-%m-%d")
 
 
-def _hist_get_col(lk: dict[str, str], *names: str) -> str | None:
-    for n in names:
-        k = n.strip().lower()
-        if k in lk:
-            return lk[k]
-    return None
-
-
-def _aggregate_counts(sub_df: pd.DataFrame, lk: dict[str, str] | None = None) -> dict[str, int]:
-    if sub_df is None or sub_df.empty:
-        return {k: 0 for k, _ in BUCKET_SPECS}
-    lk = lk or _hist_col_lookup(sub_df)
-    agg: dict[str, int] = {}
-    for canon, aliases in BUCKET_SPECS:
-        coln = None
-        for a in aliases:
-            coln = _hist_get_col(lk, a)
-            if coln:
-                break
-        agg[canon] = (
-            int(pd.to_numeric(sub_df[coln], errors="coerce").fillna(0).sum()) if coln else 0
-        )
-    return agg
-
-
-def _denom_total(agg: dict[str, int]) -> int:
-    t = agg.get("total") or 0
-    if t > 0:
-        return int(t)
-    return int(
-        sum(agg.get(k, 0) for k in ("new", "regular", "irregular", "follow_up", "red", "graduated"))
-    )
-
-
-def _pct(n: int, denom: int) -> float:
-    if denom <= 0:
-        return 0.0
-    return 100.0 * float(n) / float(denom)
-
-
-def _format_bucket_cell(pct: float, count: int, delta: int) -> str:
-    """Format bucket cell as: **pct%** · count (+delta) with bold percentage for PDF."""
-    return f"<b>{round(pct)}%</b> · {count} ({delta:+d})"
-
-
-def load_cell_zone_map(client: Any, _sheet_id: str) -> dict[str, str]:
-    """Cell name (col A) → zone (col C) from Attendance sheet. No other columns. Empty zone = skip row."""
-    cell_to_zone: dict[str, str] = {}
+def _theme_overrides_from_redis_ui() -> dict:
+    """Theme Override snapshot in Upstash — same key as ``attendance_app._theme_overrides_from_redis``."""
+    mod = _load_nwst_accent_cfg()
+    rc = _redis_client(None)
+    if not mod or not rc:
+        return {}
     try:
-        attendance_sid = nwst_attendance_sheet_id()
-        spreadsheet = client.open_by_key(attendance_sid)
-        key_values_sheet = spreadsheet.worksheet(NWST_KEY_VALUES_TAB)
-        all_values = key_values_sheet.get_all_values()
-        if len(all_values) > 1:
-            for row in all_values[1:]:
-                if len(row) >= 3:
-                    cn = row[0].strip()
-                    zn = row[2].strip()
-                    if cn and zn:
-                        cell_to_zone[cn.lower()] = zn
+        return mod.read_theme_override_from_redis(rc)
+    except Exception:
+        return {}
+
+
+def _resolve_theme_override_row_for_today_flush(from_sheet: dict | None = None) -> dict:
+    """Mirror ``attendance_app.resolve_theme_override_row_for_today`` (JSON + Redis + env + secrets)."""
+    mod = _load_nwst_accent_cfg()
+    from_file = mod.get_accent_override_by_date() if mod else {}
+    if from_sheet is None:
+        from_sheet = _theme_overrides_from_redis_ui()
+    if not from_sheet:
+        return {}
+    if mod:
+        row = mod.resolve_latest_cached_theme_row(from_file, from_sheet)
+    else:
+        latest = max(from_sheet.keys())
+        merged = {
+            k: {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
+            for k in set(from_file) | set(from_sheet)
+            if {**(from_file.get(k) or {}), **(from_sheet.get(k) or {})}
+        }
+        row = dict(merged.get(latest) or {})
+    today = get_today_myt_date()
+    if not row.get("primary"):
+        env_d = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_DATE", "").strip()
+        env_h = os.getenv("ATTENDANCE_ACCENT_OVERRIDE_HEX", "").strip()
+        if env_d == today and env_h:
+            row["primary"] = env_h.strip()
+        else:
+            try:
+                import streamlit as st
+
+                sd = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_DATE", "")).strip()
+                sh = str(st.secrets.get("ATTENDANCE_ACCENT_OVERRIDE_HEX", "")).strip()
+                if sd == today and sh:
+                    row["primary"] = sh.strip()
+            except Exception:
+                pass
+    return row
+
+
+def _generate_daily_colors_for_sync_ui() -> dict:
+    """Same rules as ``attendance_app.generate_daily_colors`` (Theme Override / JSON / daily MYT fallback / banner keys)."""
+    today_str = get_today_myt_date()
+    from_sheet = _theme_overrides_from_redis_ui()
+    row = _resolve_theme_override_row_for_today_flush(from_sheet=from_sheet)
+    hex_override = row.get("primary")
+    base: dict | None = None
+    if hex_override:
+        pn = _normalize_primary_hex(hex_override)
+        if pn:
+            base = _theme_from_primary_hex(pn)
+    if base is None:
+        base = _generate_colors_for_date(today_str)
+    b_raw = row.get("banner")
+    mod = _load_nwst_accent_cfg()
+    if b_raw and mod:
+        safe = mod.sanitize_banner_filename(b_raw)
+        if safe:
+            base = {**base, "banner": safe}
+    if not from_sheet and mod:
+        safe = mod.sanitize_banner_filename("banner.gif")
+        if safe:
+            base = {**base, "banner": safe}
+    return base
+
+
+def _nwst_page_colors() -> dict:
+    """NWST palette: primary/light from same pipeline as ``attendance_app`` (dark chrome)."""
+    base = _generate_daily_colors_for_sync_ui()
+    return {
+        "primary": base["primary"],
+        "light": base["light"],
+        "background": "#000000",
+        "text": "#ffffff",
+        "text_muted": "#999999",
+        "card_bg": "#0a0a0a",
+        "border": base["primary"],
+    }
+
+
+def _log_ts() -> str:
+    myt = timezone(timedelta(hours=8))
+    return datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _get_last_sync_timestamp() -> str | None:
+    """Retrieve last sync timestamp from Upstash Redis."""
+    rc = _redis_client(None)
+    if not rc:
+        return None
+    try:
+        val = rc.get(REDIS_LAST_SYNC_TIMESTAMP_KEY)
+        if val:
+            return val.decode() if isinstance(val, bytes) else val
     except Exception:
         pass
-    cell_to_zone["all"] = _ZONE_ALL_PSQ
-    return cell_to_zone
-
-
-def _unique_sheet_column_names(header_row: list[Any]) -> list[str]:
-    """Make header labels unique so DataFrame JSON and column access are well-defined."""
-    counts: dict[str, int] = {}
-    out: list[str] = []
-    for i, cell in enumerate(header_row):
-        base = str(cell).strip() if cell is not None else ""
-        if not base:
-            base = f"Unnamed_{i}"
-        n = counts.get(base, 0)
-        counts[base] = n + 1
-        out.append(base if n == 0 else f"{base}_{n}")
-    return out
-
-
-def load_historical_cell_status_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
-    try:
-        spreadsheet = client.open_by_key(sheet_id)
-        ws = spreadsheet.worksheet(NWST_HISTORICAL_CELL_STATUS_TAB)
-        data = ws.get_all_values()
-        if not data or len(data) < 2:
-            return None
-        cols = _unique_sheet_column_names(data[0])
-        return pd.DataFrame(data[1:], columns=cols)
-    except Exception:
-        return None
-
-
-def load_cg_combined_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
-    try:
-        spreadsheet = client.open_by_key(sheet_id)
-        ws = spreadsheet.worksheet(NWST_CG_COMBINED_TAB)
-        data = ws.get_all_values()
-        if not data or len(data) < 2:
-            return None
-        cols = _unique_sheet_column_names(data[0])
-        return pd.DataFrame(data[1:], columns=cols)
-    except Exception:
-        return None
-
-
-def load_nwst_attendance_rollup_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
-    """NWST Health **Attendance** tab (rollup grid). Same tab as ``load_attendance_and_cg_dataframes`` in NWST HEALTH/app.py."""
-    try:
-        spreadsheet = client.open_by_key(sheet_id)
-        ws = spreadsheet.worksheet(NWST_HEALTH_ATTENDANCE_ROLLUP_TAB)
-        data = ws.get_all_values()
-        if not data or len(data) < 2:
-            return None
-        cols = _unique_sheet_column_names(data[0])
-        return pd.DataFrame(data[1:], columns=cols)
-    except Exception:
-        return None
-
-
-def compute_member_attendance_stats(att_df: pd.DataFrame | None, cg_df: pd.DataFrame | None) -> dict[str, Any]:
-    """
-    Same keys/semantics as NWST HEALTH/app.py ``_compute_attendance_stats_from_frames``:
-    ``\"Name - Cell\"`` or ``\"Name\"`` -> ``{\"attendance\": int, \"total\": int, \"percentage\": int}``.
-    """
-    attendance_stats: dict[str, Any] = {}
-    if att_df is None or att_df.empty or cg_df is None or cg_df.empty:
-        return attendance_stats
-
-    cg_name_col, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
-    att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
-    if not att_name_col:
-        return attendance_stats
-
-    for att_name in att_df[att_name_col].unique():
-        if pd.isna(att_name) or att_name == "":
-            continue
-
-        att_name_str = str(att_name).strip()
-        member_att_data = att_df[att_df[att_name_col] == att_name]
-
-        attendance_count = 0
-        total_services = 0
-
-        for col_idx, col in enumerate(att_df.columns):
-            if col_idx >= 3:
-                total_services += 1
-                values = member_att_data[col].values
-                if len(values) > 0 and str(values[0]).strip() == "1":
-                    attendance_count += 1
-
-        cell_info = ""
-        if cg_name_col and cg_cell_col:
-            cg_match = cg_df[cg_df[cg_name_col].astype(str).str.strip().str.lower() == att_name_str.lower()]
-            if not cg_match.empty:
-                cell_info = " - " + str(cg_match[cg_cell_col].iloc[0]).strip()
-
-        if total_services > 0:
-            key = att_name_str + cell_info
-            attendance_stats[key] = {
-                "attendance": attendance_count,
-                "total": total_services,
-                "percentage": round(attendance_count / total_services * 100) if total_services > 0 else 0,
-            }
-
-    return attendance_stats
-
-
-def resolve_cell_from_cg_combined(name: str, cg_df: pd.DataFrame | None) -> str:
-    """Cell group for a member from CG Combined (same basis as attendance stat keys), or ``\"\"``."""
-    if cg_df is None or cg_df.empty:
-        return ""
-    name_s = str(name).strip()
-    if not name_s:
-        return ""
-    cg_name_col, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
-    if not cg_name_col or not cg_cell_col:
-        return ""
-    cg_match = cg_df[cg_df[cg_name_col].astype(str).str.strip().str.lower() == name_s.lower()]
-    if cg_match.empty:
-        return ""
-    return str(cg_match[cg_cell_col].iloc[0]).strip()
-
-
-def _lookup_attendance_stats_entry(
-    name_stripped: str, cell_stripped: str, attendance_stats: dict[str, Any]
-) -> dict[str, Any] | None:
-    """Resolve stats dict the same way as NWST HEALTH ``get_attendance_text`` (+ safe fallbacks)."""
-    if not attendance_stats:
-        return None
-
-    if cell_stripped:
-        key = f"{name_stripped} - {cell_stripped}"
-    else:
-        key = name_stripped
-
-    if key in attendance_stats:
-        return attendance_stats[key]  # type: ignore[return-value]
-
-    key_lower = key.lower()
-    for dict_key, st in attendance_stats.items():
-        if str(dict_key).lower() == key_lower:
-            return st  # type: ignore[return-value]
-
-    if not cell_stripped:
-        name_lower = name_stripped.lower()
-        prefix = name_lower + " - "
-        candidates: list[dict[str, Any]] = []
-        for dict_key, st in attendance_stats.items():
-            dk_l = str(dict_key).lower()
-            if dk_l == name_lower or dk_l.startswith(prefix):
-                candidates.append(st)
-        if len(candidates) == 1:
-            return candidates[0]
-
     return None
 
 
-def attendance_fraction_for_pdf(name: str, cell: str, attendance_stats: dict[str, Any]) -> str | None:
-    """Return ``x/y`` for tooltip parity with ``get_attendance_text`` (without name or percent)."""
-    name_stripped = str(name).strip()
-    cell_stripped = str(cell).strip() if cell else ""
-    stats = _lookup_attendance_stats_entry(name_stripped, cell_stripped, attendance_stats)
-    if not stats:
-        return None
-    return f"{stats['attendance']}/{stats['total']}"
-
-
-def _resolve_cg_name_cell_columns(cg_df: pd.DataFrame) -> tuple[str | None, str | None]:
-    cg_name_col = None
-    cg_cell_col = None
-    for col in cg_df.columns:
-        ls = col.lower().strip()
-        if ls in ("name", "member name", "member"):
-            cg_name_col = col
-        if ls in ("cell", "group"):
-            cg_cell_col = col
-    if not cg_name_col and len(cg_df.columns) > 0:
-        cg_name_col = cg_df.columns[0]
-    return cg_name_col, cg_cell_col
-
-
-def rows_from_cg_combined(
-    cg_df: pd.DataFrame, cell_to_zone: dict[str, str]
-) -> tuple[list[dict[str, Any]], date | None]:
-    """Live CG Combined mix: no historical deltas."""
-    status_columns = [col for col in cg_df.columns if "status" in col.lower()]
-    status_col = status_columns[0] if status_columns else None
-    _, cg_cell_col = _resolve_cg_name_cell_columns(cg_df)
-    if not cg_cell_col:
-        return [], None
-
-    work = cg_df.copy()
-    if status_col:
-        work["_st"] = work[status_col].apply(extract_cell_sheet_status_type)
-    else:
-        work["_st"] = None
-
-    rows_out: list[dict[str, Any]] = []
-    for cell, g in work.groupby(cg_cell_col):
-        cell_s = str(cell).strip() if cell is not None else ""
-        if not cell_s or cell_s.lower() == "all":
-            continue
-        if status_col:
-            new_c = len(g[g["_st"] == "New"])
-            reg_c = len(g[g["_st"] == "Regular"])
-            irr_c = len(g[g["_st"] == "Irregular"])
-            fu_c = len(g[g["_st"] == "Follow Up"])
-            red_c = len(g[g["_st"] == "Red"])
-            grad_c = len(g[g["_st"] == "Graduated"])
-        else:
-            n = len(g)
-            new_c = max(1, int(n * 0.20))
-            reg_c = max(1, int(n * 0.40))
-            irr_c = max(1, int(n * 0.20))
-            fu_c = max(1, int(n * 0.10))
-            red_c = max(1, int(n * 0.05))
-            grad_c = n - new_c - reg_c - irr_c - fu_c - red_c
-
-        agg = {
-            "new": new_c,
-            "regular": reg_c,
-            "irregular": irr_c,
-            "follow_up": fu_c,
-            "red": red_c,
-            "graduated": grad_c,
-            "total": 0,
-        }
-        d = _denom_total(agg)
-        zone = cell_to_zone.get(cell_s.lower(), "")
-        r_new = _pct(agg["new"], d)
-        r_reg = _pct(agg["regular"], d)
-        r_irr = _pct(agg["irregular"], d)
-        r_fu = _pct(agg["follow_up"], d)
-        rows_out.append(
-            {
-                "zone": zone,
-                "cell": cell_s,
-                "new_s": _format_bucket_cell(r_new, new_c, 0),
-                "regular_s": _format_bucket_cell(r_reg, reg_c, 0),
-                "irregular_s": _format_bucket_cell(r_irr, irr_c, 0),
-                "follow_up_s": _format_bucket_cell(r_fu, fu_c, 0),
-                "_sort_regular": r_reg,
-                "_sort_irregular": r_irr,
-                "_sort_follow": r_fu,
-                "_sort_new": r_new,
-            }
-        )
-    snap = date.today()
-    return rows_out, snap
-
-
-def _parse_snap_dates(df: pd.DataFrame) -> list[date] | None:
-    lk = _hist_col_lookup(df)
-    snap_c = _hist_get_col(lk, "snapshot date", "snapshot")
-    if not snap_c:
-        return None
-
-    parsed = pd.to_datetime(df[snap_c], errors="coerce").dropna()
-    seen: set[date] = set()
-    for ts in parsed:
-        seen.add(ts.date())
-    return sorted(seen, reverse=True) if seen else None
-
-
-def _pick_curr_prev(
-    all_desc: list[date], target_date_str: str | None
-) -> tuple[date | None, date | None]:
-    if not all_desc:
-        return None, None
-    if not target_date_str:
-        return all_desc[0], (all_desc[1] if len(all_desc) > 1 else None)
-    td = date.fromisoformat(target_date_str)
-    eligible = [d for d in all_desc if d <= td]
-    if not eligible:
-        return None, None
-    curr = eligible[0]
+def _save_last_sync_timestamp() -> None:
+    """Save current MYT timestamp to Upstash Redis."""
+    rc = _redis_client(None)
+    if not rc:
+        return
     try:
-        ix = all_desc.index(curr)
-    except ValueError:
-        ix = 0
-    prev = all_desc[ix + 1] if ix + 1 < len(all_desc) else None
-    return curr, prev
+        myt = timezone(timedelta(hours=8))
+        ts = datetime.now(myt).strftime("%Y-%m-%d %H:%M:%S")
+        rc.set(REDIS_LAST_SYNC_TIMESTAMP_KEY, ts)
+    except Exception:
+        pass
 
 
-def _counts_by_cell_snapshot(
-    df: pd.DataFrame, snap_d: date, snap_c: str, cell_c: str
-) -> dict[str, dict[str, int]]:
-    scoped = df.copy()
-    scoped["_d"] = pd.to_datetime(scoped[snap_c], errors="coerce").dt.date
-    sub = scoped[scoped["_d"] == snap_d]
-    lk = _hist_col_lookup(sub)
-    by_cell: dict[str, dict[str, int]] = {}
-    if sub.empty or not cell_c:
-        return by_cell
-    for cell, g in sub.groupby(cell_c):
-        cell_s = str(cell).strip() if cell is not None else ""
-        if not cell_s or cell_s.lower() == "all":
+def _relative_time_from_timestamp(timestamp_str: str) -> str:
+    """Calculate relative time (e.g., '2 seconds ago', '5 minutes ago', '3 days ago')."""
+    try:
+        myt = timezone(timedelta(hours=8))
+        timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=myt)
+        now = datetime.now(myt)
+        diff = now - timestamp
+
+        total_seconds = int(diff.total_seconds())
+
+        if total_seconds < 60:
+            return f"{total_seconds} second{'s' if total_seconds != 1 else ''} ago"
+        elif total_seconds < 3600:
+            minutes = total_seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif total_seconds < 86400:
+            hours = total_seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        else:
+            days = total_seconds // 86400
+            return f"{days} day{'s' if days != 1 else ''} ago"
+    except Exception:
+        return ""
+
+
+def _emit(
+    message: str,
+    log_lines: list[str] | None,
+    *,
+    err: bool = False,
+    with_ts: bool = True,
+) -> None:
+    line = f"[{_log_ts()} MYT] {message}" if with_ts else message
+    if log_lines is not None:
+        log_lines.append(line)
+    print(line, file=sys.stderr if err else sys.stdout, flush=True)
+
+
+def _tomllib_load(path: Path) -> dict:
+    data = path.read_bytes()
+    try:
+        import tomllib
+
+        return tomllib.loads(data.decode("utf-8"))
+    except ImportError:
+        try:
+            import tomli as tomllib_alt
+
+            return tomllib_alt.loads(data.decode("utf-8"))
+        except ImportError:
+            raise RuntimeError("Install Python 3.11+ or `pip install tomli` to read .streamlit/secrets.toml")
+
+
+def _credentials_from_streamlit_secrets_toml(scope: list[str]):
+    candidates = []
+    env_path = os.getenv("STREAMLIT_SECRETS_FILE", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    for base in (_CHECK_IN_ROOT, _CHECK_IN_ROOT.parent, Path.cwd()):
+        candidates.append(base / ".streamlit" / "secrets.toml")
+
+    seen = set()
+    for path in candidates:
+        try:
+            key = str(path.resolve())
+        except OSError:
             continue
-        by_cell[cell_s] = _aggregate_counts(g, lk)
-    return by_cell
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.is_file():
+            continue
+        try:
+            data = _tomllib_load(path)
+        except Exception as e:
+            _emit(f"Could not read {path}: {e}", None, err=True)
+            continue
+        gsa = data.get("gcp_service_account")
+        if not isinstance(gsa, dict):
+            continue
+        try:
+            return Credentials.from_service_account_info(gsa, scopes=scope)
+        except Exception as e:
+            _emit(f"Invalid gcp_service_account in {path}: {e}", None, err=True)
+            continue
+    return None
 
 
-def rows_from_historical_cell_status(
-    hist_df: pd.DataFrame,
-    cell_to_zone: dict[str, str],
-    target_date_str: str | None,
-) -> tuple[list[dict[str, Any]] | None, date | None]:
-    lk = _hist_col_lookup(hist_df)
-    snap_c = _hist_get_col(lk, "snapshot date", "snapshot")
-    cell_c = _hist_get_col(lk, "cell")
-    if not snap_c or not cell_c:
-        return None, None
+def _redis_client(log_lines: list[str] | None = None):
+    if Redis is None:
+        _emit("upstash_redis package not installed.", log_lines, err=True)
+        return None
+    url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
+    token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
+    if not url or not token:
+        try:
+            import streamlit as st
 
-    all_dates = _parse_snap_dates(hist_df)
-    if not all_dates:
-        return None, None
+            if not url:
+                url = (st.secrets.get("UPSTASH_REDIS_REST_URL") or "").strip()
+            if not token:
+                token = (st.secrets.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+        except Exception:
+            pass
+    if not url or not token:
+        return None
+    try:
+        return Redis(url=url, token=token)
+    except Exception as e:
+        _emit(f"Redis connection failed: {e}", log_lines, err=True)
+        return None
 
-    snap_curr, snap_prev = _pick_curr_prev(all_dates, target_date_str)
-    if snap_curr is None:
-        return None, None
 
-    scoped = hist_df.copy()
-    scoped["_d"] = pd.to_datetime(scoped[snap_c], errors="coerce").dt.date
-    curr_map = _counts_by_cell_snapshot(scoped, snap_curr, snap_c, cell_c)
-    prev_map = (
-        _counts_by_cell_snapshot(scoped, snap_prev, snap_c, cell_c) if snap_prev else None
-    )
+def _credentials_from_streamlit_secrets_runtime(scope: list[str]):
+    try:
+        import streamlit as st
+    except ImportError:
+        return None
+    try:
+        if "gcp_service_account" not in st.secrets:
+            return None
+        info = dict(st.secrets["gcp_service_account"])
+        return Credentials.from_service_account_info(info, scopes=scope)
+    except (TypeError, KeyError, ValueError) as e:
+        _emit(f"st.secrets['gcp_service_account'] unusable: {e}", None, err=True)
+        return None
+    except Exception:
+        return None
 
-    if not curr_map:
-        return None, snap_curr
 
-    def _row_for_cell(cell_s: str, agg: dict[str, int]) -> dict[str, Any]:
-        pagg = prev_map.get(cell_s) if prev_map else None
-        d = _denom_total(agg)
-        c_new = agg.get("new", 0)
-        c_reg = agg.get("regular", 0)
-        c_irr = agg.get("irregular", 0)
-        c_fu = agg.get("follow_up", 0)
-        r_new = _pct(c_new, d)
-        r_reg = _pct(c_reg, d)
-        r_irr = _pct(c_irr, d)
-        r_fu = _pct(c_fu, d)
-        dn = (
-            c_new - (pagg.get("new", 0) if pagg else 0),
-            c_reg - (pagg.get("regular", 0) if pagg else 0),
-            c_irr - (pagg.get("irregular", 0) if pagg else 0),
-            c_fu - (pagg.get("follow_up", 0) if pagg else 0),
+def _gsheet_client(log_lines: list[str] | None = None):
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = None
+
+    creds = _credentials_from_streamlit_secrets_runtime(scope)
+
+    json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
+    if creds is None and json_blob:
+        try:
+            info = json.loads(json_blob)
+            creds = Credentials.from_service_account_info(info, scopes=scope)
+            if log_lines is not None:
+                _emit("Using GCP_SERVICE_ACCOUNT_JSON from environment.", log_lines)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            _emit(f"GCP_SERVICE_ACCOUNT_JSON is invalid: {e}", log_lines, err=True)
+            return None
+
+    if creds is None:
+        try:
+            creds = _credentials_from_streamlit_secrets_toml(scope)
+            if creds and log_lines is not None:
+                _emit("Using [gcp_service_account] from .streamlit/secrets.toml.", log_lines)
+        except RuntimeError as e:
+            _emit(str(e), log_lines, err=True)
+
+    if creds is None:
+        paths_to_try = [
+            _CHECK_IN_ROOT / "credentials.json",
+            Path.cwd() / "credentials.json",
+        ]
+        gac = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+        if gac:
+            paths_to_try.append(Path(gac).expanduser())
+
+        for p in paths_to_try:
+            if p.is_file():
+                try:
+                    creds = Credentials.from_service_account_file(str(p), scopes=scope)
+                    if log_lines is not None:
+                        _emit(f"Using service account file: {p}", log_lines)
+                    break
+                except Exception as e:
+                    _emit(f"Could not load {p}: {e}", log_lines, err=True)
+                    return None
+
+    if creds is None:
+        _emit(
+            "No Google credentials. Tried: st.secrets → GCP_SERVICE_ACCOUNT_JSON → "
+            "secrets.toml → credentials.json / GOOGLE_APPLICATION_CREDENTIALS.",
+            log_lines,
+            err=True,
         )
-        zone_h = cell_to_zone.get(cell_s.lower(), "")
-        return {
-            "zone": zone_h,
-            "cell": cell_s,
-            "new_s": _format_bucket_cell(r_new, c_new, dn[0]),
-            "regular_s": _format_bucket_cell(r_reg, c_reg, dn[1]),
-            "irregular_s": _format_bucket_cell(r_irr, c_irr, dn[2]),
-            "follow_up_s": _format_bucket_cell(r_fu, c_fu, dn[3]),
-            "_sort_regular": r_reg,
-            "_sort_irregular": r_irr,
-            "_sort_follow": r_fu,
-            "_sort_new": r_new,
-        }
-
-    per_cell_rows: list[dict[str, Any]] = []
-    for cell_s, agg in curr_map.items():
-        per_cell_rows.append(_row_for_cell(cell_s, agg))
-
-    sum_agg: dict[str, int] = {k: 0 for k, _ in BUCKET_SPECS}
-    for agg in curr_map.values():
-        for k in sum_agg:
-            sum_agg[k] += int(agg.get(k, 0))
-    psum: dict[str, int] | None = None
-    if prev_map:
-        psum = {k: 0 for k, _ in BUCKET_SPECS}
-        for pa in prev_map.values():
-            for k in psum:
-                psum[k] += int(pa.get(k, 0))
-
-    d_all = _denom_total(sum_agg)
-    c_new_all = sum_agg.get("new", 0)
-    c_reg_all = sum_agg.get("regular", 0)
-    c_irr_all = sum_agg.get("irregular", 0)
-    c_fu_all = sum_agg.get("follow_up", 0)
-    r_new = _pct(c_new_all, d_all)
-    r_reg = _pct(c_reg_all, d_all)
-    r_irr = _pct(c_irr_all, d_all)
-    r_fu = _pct(c_fu_all, d_all)
-    if psum:
-        dn = (
-            c_new_all - psum.get("new", 0),
-            c_reg_all - psum.get("regular", 0),
-            c_irr_all - psum.get("irregular", 0),
-            c_fu_all - psum.get("follow_up", 0),
-        )
-    else:
-        dn = (0, 0, 0, 0)
-    all_row = {
-        "zone": _ZONE_ALL_PSQ,
-        "cell": "All",
-        "new_s": _format_bucket_cell(r_new, c_new_all, dn[0]),
-        "regular_s": _format_bucket_cell(r_reg, c_reg_all, dn[1]),
-        "irregular_s": _format_bucket_cell(r_irr, c_irr_all, dn[2]),
-        "follow_up_s": _format_bucket_cell(r_fu, c_fu_all, dn[3]),
-        "_sort_regular": float("-inf"),
-        "_sort_irregular": float("inf"),
-        "_sort_follow": float("inf"),
-        "_sort_new": float("-inf"),
-    }
-
-    per_cell_sorted = sorted(
-        per_cell_rows,
-        key=lambda r: (
-            r["_sort_regular"],
-            -r["_sort_irregular"],
-            -r["_sort_follow"],
-            r["_sort_new"],
-            str(r["cell"]).lower(),
-        ),
-    )
-    return [all_row] + per_cell_sorted, snap_curr
+        return None
+    return gspread.authorize(creds)
 
 
-def get_all_wow_deltas_from_hist(
-    hist_df: pd.DataFrame | None,
-    target_date_str: str | None,
-) -> tuple[int, int, int, int]:
-    """
-    Get WoW deltas for the 'All' scope from Historical Cell Status.
-    Returns (delta_new, delta_regular, delta_irregular, delta_follow_up).
-    Sums all cells' counts for current vs previous snapshot.
-    """
-    if hist_df is None or hist_df.empty:
-        return (0, 0, 0, 0)
-
-    lk = _hist_col_lookup(hist_df)
-    snap_c = _hist_get_col(lk, "snapshot date", "snapshot")
-    cell_c = _hist_get_col(lk, "cell")
-    if not snap_c or not cell_c:
-        return (0, 0, 0, 0)
-
-    all_dates = _parse_snap_dates(hist_df)
-    if not all_dates:
-        return (0, 0, 0, 0)
-
-    snap_curr, snap_prev = _pick_curr_prev(all_dates, target_date_str)
-    if snap_curr is None:
-        return (0, 0, 0, 0)
-
-    scoped = hist_df.copy()
-    scoped["_d"] = pd.to_datetime(scoped[snap_c], errors="coerce").dt.date
-    curr_map = _counts_by_cell_snapshot(scoped, snap_curr, snap_c, cell_c)
-    prev_map = _counts_by_cell_snapshot(scoped, snap_prev, snap_c, cell_c) if snap_prev else None
-
-    # Sum current snapshot counts across all cells
-    sum_curr: dict[str, int] = {k: 0 for k, _ in BUCKET_SPECS}
-    for agg in curr_map.values():
-        for k in sum_curr:
-            sum_curr[k] += int(agg.get(k, 0))
-
-    # Sum previous snapshot counts across all cells
-    sum_prev: dict[str, int] = {k: 0 for k, _ in BUCKET_SPECS}
-    if prev_map:
-        for pa in prev_map.values():
-            for k in sum_prev:
-                sum_prev[k] += int(pa.get(k, 0))
-
-    return (
-        sum_curr.get("new", 0) - sum_prev.get("new", 0),
-        sum_curr.get("regular", 0) - sum_prev.get("regular", 0),
-        sum_curr.get("irregular", 0) - sum_prev.get("irregular", 0),
-        sum_curr.get("follow_up", 0) - sum_prev.get("follow_up", 0),
-    )
+def _ensure_attendance_worksheet(spreadsheet, tab_name: str):
+    try:
+        sh = spreadsheet.worksheet(tab_name)
+    except gspread.exceptions.WorksheetNotFound:
+        sh = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=20)
+        sh.append_row(["Timestamp", "Option"])
+        return sh
+    hdr = sh.row_values(1)
+    if not hdr:
+        sh.append_row(["Timestamp", "Option"])
+    return sh
 
 
-def count_all_from_cg_combined(
-    cg_df: pd.DataFrame | None,
-) -> dict[str, int]:
-    """
-    Count members by status type from CG Combined (like app.py does for KPI cards).
-    Returns dict with keys: new, regular, irregular, follow_up, red, graduated.
-    """
-    counts: dict[str, int] = {
-        "new": 0,
-        "regular": 0,
-        "irregular": 0,
-        "follow_up": 0,
-        "red": 0,
-        "graduated": 0,
-    }
-    if cg_df is None or cg_df.empty:
-        return counts
+def _resolve_sheet_id(log_lines: list[str] | None = None) -> str:
+    sheet_id = os.getenv("ATTENDANCE_SHEET_ID", "").strip()
+    if not sheet_id:
+        try:
+            import streamlit as st
 
-    status_columns = [col for col in cg_df.columns if "status" in col.lower()]
-    status_col = status_columns[0] if status_columns else None
-    if not status_col:
-        return counts
-
-    work = cg_df.copy()
-    work["_st"] = work[status_col].apply(extract_cell_sheet_status_type)
-
-    counts["new"] = len(work[work["_st"] == "New"])
-    counts["regular"] = len(work[work["_st"] == "Regular"])
-    counts["irregular"] = len(work[work["_st"] == "Irregular"])
-    counts["follow_up"] = len(work[work["_st"] == "Follow Up"])
-    counts["red"] = len(work[work["_st"] == "Red"])
-    counts["graduated"] = len(work[work["_st"] == "Graduated"])
-
-    return counts
+            sheet_id = (st.secrets.get("ATTENDANCE_SHEET_ID") or "").strip()
+            if sheet_id and log_lines is not None:
+                _emit("Using ATTENDANCE_SHEET_ID from Streamlit secrets.", log_lines)
+        except Exception:
+            pass
+    return sheet_id
 
 
-def build_cell_health_table_rows(
-    client: Any,
+def flush_pending_attendance_for_tabs(
+    client,
     sheet_id: str,
-    target_date_str: str | None = None,
-) -> tuple[list[dict[str, Any]], str]:
-    """
-    Return (rows with keys zone, cell, new_s, regular_s, irregular_s, follow_up_s),
-    and subtitle text (snapshot / source).
+    tab_names: list[str],
+    log_lines: list[str] | None = None,
+) -> tuple[bool, str]:
+    if not client or not sheet_id.strip():
+        m = "Error: Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(m, log_lines, err=True, with_ts=False)
+        return False, m
 
-    Hybrid approach (matching app.py KPI cards):
-    - Individual cell rows: from Historical Cell Status (with WoW deltas)
-    - "All" row percentages: from CG Combined (live member counts)
-    - "All" row WoW deltas: from Historical Cell Status (snapshot comparison)
-    """
-    cell_to_zone = load_cell_zone_map(client, sheet_id)
+    redis_client = _redis_client(log_lines)
+    if not redis_client:
+        m = "No pending queue (Upstash not configured)."
+        _emit(m, log_lines, with_ts=False)
+        return True, m
 
-    hist = load_historical_cell_status_df(client, sheet_id)
-    cg = load_cg_combined_df(client, sheet_id)
+    today_myt = get_today_myt_date()
 
-    if hist is not None and not hist.empty:
-        pack = rows_from_historical_cell_status(hist, cell_to_zone, target_date_str)
-        rows_h, snap_d = pack
-        if rows_h:
-            # Filter out the "All" row and "Archive" cell from Historical Cell Status
-            per_cell_rows = [
-                r for r in rows_h
-                if r.get("cell", "").lower() not in ("all", "archive")
-            ]
+    try:
+        _emit("Reading check-ins from Upstash...", log_lines, with_ts=False)
+        spreadsheet = client.open_by_key(sheet_id)
+        total_rows = 0
+        results = []
+        for tab_name in tab_names:
+            pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+            raw_items = redis_client.lrange(pk, 0, -1)
+            if not raw_items:
+                results.append(f"  {tab_name}: 0 rows")
+                continue
+            rows = []
+            for raw in raw_items:
+                s = raw.decode() if isinstance(raw, bytes) else raw
+                d = json.loads(s)
+                rows.append([d["ts"], d["opt"]])
+            sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
+            sh.append_rows(rows)
+            redis_client.delete(pk)
+            n = len(rows)
+            total_rows += n
+            results.append(f"  {tab_name}: +{n} rows")
 
-            # Build "All" row: percentages from CG Combined, WoW deltas from Historical Cell Status
-            cg_counts = count_all_from_cg_combined(cg)
-            wow_deltas = get_all_wow_deltas_from_hist(hist, target_date_str)
+        _emit("", log_lines, with_ts=False)
+        _emit(f"Writing to Google Sheets ({today_myt}):", log_lines, with_ts=False)
+        for r in results:
+            _emit(r, log_lines, with_ts=False)
 
-            d_all = _denom_total({**cg_counts, "total": 0})
-            all_row = {
-                "zone": _ZONE_ALL_PSQ,
-                "cell": "All",
-                "new_s": _format_bucket_cell(_pct(cg_counts["new"], d_all), cg_counts["new"], wow_deltas[0]),
-                "regular_s": _format_bucket_cell(_pct(cg_counts["regular"], d_all), cg_counts["regular"], wow_deltas[1]),
-                "irregular_s": _format_bucket_cell(_pct(cg_counts["irregular"], d_all), cg_counts["irregular"], wow_deltas[2]),
-                "follow_up_s": _format_bucket_cell(_pct(cg_counts["follow_up"], d_all), cg_counts["follow_up"], wow_deltas[3]),
-                "_sort_regular": float("-inf"),
-                "_sort_irregular": float("inf"),
-                "_sort_follow": float("inf"),
-                "_sort_new": float("-inf"),
-            }
+        if total_rows == 0:
+            summary = "no new rows"
+            return True, summary
 
-            src = f"NWST Health — Historical Cell Status (snapshot {snap_d.isoformat() if snap_d else 'n/a'})"
-            return [all_row] + per_cell_rows, src
+        summary = f"+{total_rows} rows"
+        return True, summary
+    except gspread.exceptions.APIError as e:
+        m = "Error: API quota exceeded." if (
+            "429" in str(e) or "Quota exceeded" in str(e)
+        ) else f"Error: {e}"
+        _emit(m, log_lines, err=True, with_ts=False)
+        return False, m
+    except Exception as e:
+        _emit(f"Error: {e}", log_lines, err=True, with_ts=False)
+        return False, str(e)
 
-    # Fallback: CG Combined only (no Historical Cell Status available)
-    cg = cg if cg is not None else load_cg_combined_df(client, sheet_id)
-    if cg is None or cg.empty:
-        return [], "NWST Health — no Historical Cell Status or CG Found"
 
-    rows_c, snap_d = rows_from_cg_combined(cg, cell_to_zone)
+def _pending_queues_nonempty(redis_client, today_myt: str, tab_names: list[str]) -> bool:
+    for tab_name in tab_names:
+        pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+        try:
+            if redis_client.lrange(pk, 0, 0):
+                return True
+        except Exception:
+            continue
+    return False
 
-    status_columns = [col for col in cg.columns if "status" in col.lower()]
-    status_col = status_columns[0] if status_columns else None
-    _, cg_cell_col = _resolve_cg_name_cell_columns(cg)
-    if not cg_cell_col:
-        return [], "NWST Health — CG Combined has no cell column"
 
-    work = cg.copy()
-    if status_col:
-        work["_st"] = work[status_col].apply(extract_cell_sheet_status_type)
+def _clear_full_resync_redis_keys(redis_client, today_myt: str, log_lines: list[str] | None) -> bool:
+    """Match congregation + ministry branches of ``perform_hard_sheet_resync`` (union of keys)."""
+    try:
+        redis_client.delete(REDIS_OPTIONS_KEY)
+        redis_client.delete(REDIS_ZONE_MAPPING_KEY)
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
+        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+        for ministry in MINISTRY_LIST:
+            redis_client.delete(f"attendance:ministry_options:{ministry}")
+        redis_client.delete("attendance:ministry_options:all")
+        return True
+    except Exception as e:
+        _emit(f"Error: Cache clear failed ({e})", log_lines, err=True, with_ts=False)
+        return False
 
-    sort_key = lambda r: (
-        r["_sort_regular"],
-        -r["_sort_irregular"],
-        -r["_sort_follow"],
-        r["_sort_new"],
-        str(r["cell"]).lower(),
+
+def _refresh_theme_override_shared(
+    redis_client,
+    gsheet_client,
+    sheet_id: str,
+    log_lines: list[str] | None,
+) -> bool:
+    if not (sheet_id or "").strip() or not redis_client or not gsheet_client:
+        return True
+    mod = _load_nwst_accent_cfg()
+    if mod is None:
+        return True
+    try:
+        mod.refresh_theme_override_shared_cache(redis_client, gsheet_client, sheet_id)
+        return True
+    except Exception as e:
+        _emit(f"Error: Theme refresh failed ({e})", log_lines, err=True, with_ts=False)
+        return False
+
+
+def _refresh_birthdays_cache(
+    redis_client,
+    gsheet_client,
+    log_lines: list[str] | None,
+) -> bool:
+    """Refresh CG Combined birthday data into Upstash (read by attendance_app)."""
+    health_sid = (nwst_health_sheet_id() or "").strip()
+    if not health_sid or not redis_client or not gsheet_client:
+        return True
+    try:
+        df = load_cg_combined_df(gsheet_client, health_sid)
+        if df is not None and not df.empty:
+            redis_client.set(REDIS_BIRTHDAYS_KEY, df.to_json(), ex=86400)  # 24h TTL
+            _emit("  Birthday data cached", log_lines, with_ts=False)
+            return True
+        _emit("  Birthday data: empty or unavailable (skipped)", log_lines, with_ts=False)
+        return True
+    except Exception as e:
+        _emit(f"Error: Birthday cache refresh failed ({e})", log_lines, err=True, with_ts=False)
+        return False
+
+
+def _progress_set(bar, value: float, text: str) -> None:
+    """Streamlit progress bar; ``text=`` is supported in newer Streamlit versions."""
+    if bar is None:
+        return
+    try:
+        bar.progress(value, text=text)
+    except TypeError:
+        bar.progress(value)
+
+
+def run_full_sheet_resync(
+    client,
+    sheet_id: str,
+    pending_tab_names: list[str],
+    log_lines: list[str] | None,
+    progress_bar=None,
+) -> tuple[bool, str]:
+    """Flush selected pending queues, then full Redis cache clear + theme snapshot (see module doc)."""
+    if not client or not sheet_id.strip():
+        msg = "Error: Google Sheets client or ATTENDANCE_SHEET_ID not available."
+        _emit(msg, log_lines, err=True, with_ts=False)
+        return False, msg
+
+    _progress_set(progress_bar, 0.08, "Writing pending check-ins to Google Sheets…")
+    ok_flush, flush_summary = flush_pending_attendance_for_tabs(
+        client, sheet_id, pending_tab_names, log_lines=log_lines
+    )
+    if not ok_flush:
+        _progress_set(progress_bar, 1.0, "Stopped — error flushing pending rows.")
+        return False, flush_summary
+
+    _progress_set(progress_bar, 0.38, "Pending queues processed.")
+
+    today_myt = get_today_myt_date()
+    redis_client = _redis_client(log_lines)
+    if not redis_client:
+        _emit("", log_lines, with_ts=False)
+        _emit("Done (no Upstash configured).", log_lines, with_ts=False)
+        _progress_set(progress_bar, 1.0, "Done (no Upstash).")
+        return True, flush_summary
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Clearing old data from Upstash...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.45, "Clearing Upstash caches (options, attendance, ministry)…")
+    cache_ok = _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
+    if cache_ok:
+        _emit("  Cache cleared", log_lines, with_ts=False)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Refreshing theme...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.65, "Refreshing Theme Override snapshot…")
+    theme_ok = _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
+    if theme_ok:
+        _emit("  Theme updated", log_lines, with_ts=False)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Refreshing birthdays...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.85, "Refreshing birthday data…")
+    _refresh_birthdays_cache(redis_client, client, log_lines)
+
+    _save_last_sync_timestamp()
+    _progress_set(progress_bar, 1.0, "All done.")
+
+    # Summary line
+    _emit("", log_lines, with_ts=False)
+    _emit(f"Done: {flush_summary}.", log_lines, with_ts=False)
+
+    return True, flush_summary
+
+
+def _tab_names_from_multiselect(tab_choice: list[str]) -> list[str]:
+    if not tab_choice or "all" in tab_choice:
+        return list(ALL_PENDING_TABS)
+    mapping = {
+        "attendance": ATTENDANCE_TAB_NAME,
+        "leaders": LEADERS_ATTENDANCE_TAB_NAME,
+        "ministry": MINISTRY_ATTENDANCE_TAB_NAME,
+    }
+    return [mapping[t] for t in tab_choice if t != "all"]
+
+
+def main_cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Full sheet sync (flush pending + clear caches + theme), or pending-only."
+    )
+    parser.add_argument(
+        "--pending-only",
+        action="store_true",
+        help="Only append pending rows to Sheets; do not clear Redis caches or refresh Theme Override.",
+    )
+    parser.add_argument(
+        "--tabs",
+        nargs="*",
+        choices=["attendance", "leaders", "ministry", "all"],
+        default=["all"],
+        help="Which pending queues to flush before cache steps (default: all three sheets).",
+    )
+    args = parser.parse_args(argv)
+
+    log_lines: list[str] = []
+    sheet_id = _resolve_sheet_id(log_lines)
+    if not sheet_id:
+        _emit("Set ATTENDANCE_SHEET_ID in the environment or Streamlit secrets.", log_lines, err=True)
+        return 1
+
+    tab_names = _tab_names_from_multiselect(list(args.tabs))
+
+    client = _gsheet_client(log_lines)
+    if not client:
+        if args.pending_only:
+            return 1
+        rc = _redis_client(log_lines)
+        today_chk = get_today_myt_date()
+        if rc and _pending_queues_nonempty(rc, today_chk, tab_names):
+            _emit(
+                "Google Sheets not connected, but pending check-ins exist. Fix credentials and retry.",
+                log_lines,
+                err=True,
+            )
+        return 1
+
+    if args.pending_only:
+        ok, _msg = flush_pending_attendance_for_tabs(client, sheet_id, tab_names, log_lines=log_lines)
+    else:
+        ok, _msg = run_full_sheet_resync(client, sheet_id, tab_names, log_lines)
+
+    return 0 if ok else 1
+
+
+def run_streamlit_app() -> None:
+    import streamlit as st
+
+    st.set_page_config(
+        page_title="Click me to update",
+        page_icon="🔄",
+        layout="centered",
+        initial_sidebar_state="collapsed",
     )
 
-    if status_col:
-        all_row_inner: dict[str, int] = {
-            k: 0 for k in ("new", "regular", "irregular", "follow_up", "red", "graduated")
-        }
-        for _, row in work.iterrows():
-            stt = row.get("_st")
-            if stt == "New":
-                all_row_inner["new"] += 1
-            elif stt == "Regular":
-                all_row_inner["regular"] += 1
-            elif stt == "Irregular":
-                all_row_inner["irregular"] += 1
-            elif stt == "Follow Up":
-                all_row_inner["follow_up"] += 1
-            elif stt == "Red":
-                all_row_inner["red"] += 1
-            elif stt == "Graduated":
-                all_row_inner["graduated"] += 1
-        d_all = _denom_total({**all_row_inner, "total": 0})
-        all_row = {
-            "zone": _ZONE_ALL_PSQ,
-            "cell": "All",
-            "new_s": _format_bucket_cell(_pct(all_row_inner["new"], d_all), all_row_inner["new"], 0),
-            "regular_s": _format_bucket_cell(_pct(all_row_inner["regular"], d_all), all_row_inner["regular"], 0),
-            "irregular_s": _format_bucket_cell(_pct(all_row_inner["irregular"], d_all), all_row_inner["irregular"], 0),
-            "follow_up_s": _format_bucket_cell(_pct(all_row_inner["follow_up"], d_all), all_row_inner["follow_up"], 0),
-            "_sort_regular": float("-inf"),
-            "_sort_irregular": float("inf"),
-            "_sort_follow": float("inf"),
-            "_sort_new": float("-inf"),
-        }
-        # Filter out "Archive" cell
-        rows_filtered = [r for r in rows_c if r.get("cell", "").lower() != "archive"]
-        per_sorted = sorted(rows_filtered, key=sort_key)
-        return [all_row] + per_sorted, f"NWST Health — CG Combined (live roster, {snap_d.isoformat()})"
+    pc = _nwst_page_colors()
+    st.markdown(
+        f"""
+<style>
+    /* Same font imports as attendance_app NWST chrome (Outfit + Inter stack used across the app). */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-    agg_all: dict[str, int] = {k: 0 for k in ("new", "regular", "irregular", "follow_up", "red", "graduated")}
-    for _, g in work.groupby(cg_cell_col):
-        cell_s = str(g.iloc[0][cg_cell_col]).strip() if cg_cell_col else ""
-        if not cell_s or cell_s.lower() == "all":
-            continue
-        n = len(g)
-        nc = max(1, int(n * 0.20))
-        rc = max(1, int(n * 0.40))
-        ic = max(1, int(n * 0.20))
-        fc = max(1, int(n * 0.10))
-        redc = max(1, int(n * 0.05))
-        gc = max(0, n - nc - rc - ic - fc - redc)
-        agg_all["new"] += nc
-        agg_all["regular"] += rc
-        agg_all["irregular"] += ic
-        agg_all["follow_up"] += fc
-        agg_all["red"] += redc
-        agg_all["graduated"] += gc
-    d_all = _denom_total({**agg_all, "total": 0})
-    all_row = {
-        "zone": _ZONE_ALL_PSQ,
-        "cell": "All",
-        "new_s": _format_bucket_cell(_pct(agg_all["new"], d_all), agg_all["new"], 0),
-        "regular_s": _format_bucket_cell(_pct(agg_all["regular"], d_all), agg_all["regular"], 0),
-        "irregular_s": _format_bucket_cell(_pct(agg_all["irregular"], d_all), agg_all["irregular"], 0),
-        "follow_up_s": _format_bucket_cell(_pct(agg_all["follow_up"], d_all), agg_all["follow_up"], 0),
-        "_sort_regular": float("-inf"),
-        "_sort_irregular": float("inf"),
-        "_sort_follow": float("inf"),
-        "_sort_new": float("-inf"),
-    }
-    # Filter out "Archive" cell
-    rows_filtered = [r for r in rows_c if r.get("cell", "").lower() != "archive"]
-    per_sorted = sorted(rows_filtered, key=sort_key)
-    return [all_row] + per_sorted, f"NWST Health — CG Combined (estimated mix, {snap_d.isoformat()})"
+    /* Baseline: kill Streamlit theme primary on this app (matches attendance_app NWST) */
+    .stApp {{
+        background-color: {pc["background"]} !important;
+        font-family: 'Inter', sans-serif !important;
+        --primary-color: {pc["primary"]} !important;
+    }}
+    html, body {{
+        font-family: 'Inter', sans-serif !important;
+    }}
 
+    .stApp h1, .stApp h2, .stApp h3,
+    .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown li {{
+        font-family: 'Inter', sans-serif !important;
+    }}
+    .stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown span, .stApp .stMarkdown div, .stApp .stMarkdown li {{
+        color: {pc["text"]} !important;
+    }}
+
+    /* Hide default Streamlit title */
+    .stApp h1 {{
+        display: none !important;
+    }}
+
+    /* Custom vibrant title styling */
+    .flush-title {{
+        text-align: center;
+        margin: 1.5rem 0 1rem 0;
+    }}
+    .flush-title-text {{
+        font-family: 'Outfit', 'Inter', -apple-system, sans-serif !important;
+        font-size: 2rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.04em !important;
+        text-transform: uppercase !important;
+        background: linear-gradient(135deg, {pc["primary"]} 0%, {pc["light"]} 50%, {pc["primary"]} 100%);
+        background-size: 200% 200%;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: gradient-shift 3s ease infinite;
+        display: inline-block;
+    }}
+    @keyframes gradient-shift {{
+        0% {{ background-position: 0% 50%; }}
+        50% {{ background-position: 100% 50%; }}
+        100% {{ background-position: 0% 50%; }}
+    }}
+    .flush-subtitle {{
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+        color: {pc["text_muted"]} !important;
+        letter-spacing: 0.05em !important;
+        margin-top: 0.25rem !important;
+    }}
+
+    .log-caption {{
+        color: {pc["text_muted"]} !important;
+        font-size: 0.8rem !important;
+        margin-top: 1.5rem !important;
+        margin-bottom: 0.4rem !important;
+        font-family: 'Inter', sans-serif !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.1em !important;
+        font-weight: 600 !important;
+    }}
+
+    [data-testid="stVerticalBlock"] {{
+        gap: 0.5rem !important;
+    }}
+    .element-container {{
+        margin-top: 0rem !important;
+        margin-bottom: 0rem !important;
+    }}
+
+    /* Primary CTA: wrapper class st-key-flush_run; also baseButton-primary (Streamlit ≥1.32). */
+    .stApp div[class*="st-key-flush_run"] button,
+    .stApp .st-key-flush_run button,
+    .stApp .st-key-flush_run [data-testid="baseButton-primary"],
+    .stApp button[data-testid="baseButton-primary"],
+    .stApp .stButton > button[kind="primary"],
+    .stApp .stButton > button[data-testid="baseButton-primary"] {{
+        background: linear-gradient(135deg, {pc["primary"]} 0%, {pc["light"]} 100%) !important;
+        color: {pc["background"]} !important;
+        border: none !important;
+        border-radius: 0px !important;
+        font-family: 'Outfit', 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+        text-transform: uppercase !important;
+        font-size: 1rem !important;
+        min-height: 3.5rem !important;
+        padding: 1rem 2rem !important;
+        box-shadow: 0 4px 20px {pc["primary"]}40, 0 0 40px {pc["primary"]}20 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        position: relative !important;
+        overflow: hidden !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button::before,
+    .stApp .st-key-flush_run button::before,
+    .stApp button[data-testid="baseButton-primary"]::before {{
+        content: '' !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: -100% !important;
+        width: 100% !important;
+        height: 100% !important;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent) !important;
+        transition: left 0.5s ease !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button:hover,
+    .stApp .st-key-flush_run button:hover,
+    .stApp .st-key-flush_run [data-testid="baseButton-primary"]:hover,
+    .stApp button[data-testid="baseButton-primary"]:hover,
+    .stApp .stButton > button[kind="primary"]:hover,
+    .stApp .stButton > button[data-testid="baseButton-primary"]:hover {{
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 8px 30px {pc["primary"]}60, 0 0 60px {pc["primary"]}30 !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button:hover::before,
+    .stApp .st-key-flush_run button:hover::before,
+    .stApp button[data-testid="baseButton-primary"]:hover::before {{
+        left: 100% !important;
+    }}
+    .stApp div[class*="st-key-flush_run"] button:active,
+    .stApp .st-key-flush_run button:active,
+    .stApp button[data-testid="baseButton-primary"]:active {{
+        transform: translateY(0) scale(0.98) !important;
+    }}
+
+    /* Progress bar styling */
+    .stProgress > div > div > div {{
+        background-color: rgba(255,255,255,0.1) !important;
+        border-radius: 0px !important;
+    }}
+    .stProgress > div > div > div > div {{
+        background: linear-gradient(90deg, {pc["primary"]}, {pc["light"]}) !important;
+        border-radius: 0px !important;
+        box-shadow: 0 0 10px {pc["primary"]}60 !important;
+    }}
+    .stProgress [role="progressbar"] {{
+        border-radius: 0px !important;
+    }}
+    .stProgress div[aria-valuemax="1"] {{
+        border-radius: 0px !important;
+    }}
+
+    /* Code/log block styling */
+    [data-testid="stCode"],
+    [data-testid="stCodeBlock"] {{
+        border: 1px solid {pc["primary"]}40 !important;
+        border-radius: 0px !important;
+        background: {pc["card_bg"]} !important;
+        box-shadow: inset 0 2px 10px rgba(0,0,0,0.3) !important;
+    }}
+    .stApp pre, .stApp code {{
+        font-size: 0.75rem !important;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
+        color: {pc["text_muted"]} !important;
+    }}
+
+    /* Success/error message styling */
+    .stSuccess {{
+        background: linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(34,197,94,0.05) 100%) !important;
+        border-left: 3px solid #22c55e !important;
+        border-radius: 0px !important;
+    }}
+    .stError {{
+        background: linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(239,68,68,0.05) 100%) !important;
+        border-left: 3px solid #ef4444 !important;
+        border-radius: 0px !important;
+    }}
+
+    /* Last sync timestamp styling */
+    .last-sync-text {{
+        color: {pc["text_muted"]} !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.82rem !important;
+        text-align: center !important;
+        margin: 1.25rem 0 0.5rem 0 !important;
+        font-style: italic !important;
+        opacity: 0.8 !important;
+    }}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # Custom vibrant title with gradient animation
+    st.markdown(
+        f"""
+        <div class="flush-title">
+            <div class="flush-title-text">Sync & Update</div>
+            <div class="flush-subtitle">Flush pending check-ins to Google Sheets</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if SESSION_LOG_KEY not in st.session_state:
+        st.session_state[SESSION_LOG_KEY] = []
+
+    progress_slot = st.empty()
+    clicked = st.button(
+        "⚡ SYNC NOW",
+        type="primary",
+        use_container_width=True,
+        key="flush_run",
+        help="Full sync: all pending rows → Sheets, then clear options / attendance / ministry / newcomers caches "
+        "+ Theme Override in Upstash.",
+    )
+
+    if clicked:
+        run_log: list[str] = []
+        bar = progress_slot.progress(0)
+        _progress_set(bar, 0.0, "Starting…")
+
+        sheet_id = _resolve_sheet_id(run_log)
+        if not sheet_id:
+            st.session_state[SESSION_LOG_KEY] = run_log
+            st.error("ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
+        else:
+            client = _gsheet_client(run_log)
+            if not client:
+                st.session_state[SESSION_LOG_KEY] = run_log
+                st.error("Could not connect to Google Sheets — see log below.")
+            else:
+                ok, summary = run_full_sheet_resync(
+                    client,
+                    sheet_id,
+                    list(ALL_PENDING_TABS),
+                    log_lines=run_log,
+                    progress_bar=bar,
+                )
+                st.session_state[SESSION_LOG_KEY] = run_log
+                if ok:
+                    st.success(summary)
+                    toast = getattr(st, "toast", None)
+                    if toast:
+                        toast("Update complete — refresh Church Check-in if lists look stale.", icon="🔄")
+                else:
+                    st.error(summary or "Update failed.")
+        st.rerun()
+
+    # Display last refreshed timestamp
+    last_sync = _get_last_sync_timestamp()
+    if last_sync:
+        relative_time = _relative_time_from_timestamp(last_sync)
+        st.markdown(
+            f'<p class="last-sync-text">Last update: {last_sync} MYT ({relative_time})</p>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<p class="log-caption">📋 Activity Log</p>', unsafe_allow_html=True)
+    st.code(
+        "\n".join(st.session_state[SESSION_LOG_KEY]) or "(press sync to see activity)",
+        language="text",
+    )
+
+
+def _inside_streamlit_script_run() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
+if __name__ == "__main__":
+    if _inside_streamlit_script_run():
+        run_streamlit_app()
+    else:
+        sys.exit(main_cli())
