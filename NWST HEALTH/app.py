@@ -10,13 +10,17 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from nwst_shared.paths import resolved_nwst_accent_config_path
+from nwst_shared.nwst_daily_palette import (
+    generate_colors_for_date,
+    normalize_primary_hex as _normalize_primary_hex,
+    theme_from_primary_hex,
+)
 
 import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
 import colorsys
 import hashlib
-import random
 import gspread
 from gspread.exceptions import APIError, WorksheetNotFound
 from google.oauth2.service_account import Credentials
@@ -2248,7 +2252,7 @@ def _nwst_exclude_rate_chart_cell(cg, zone_name):
 
 
 def _nwst_weekly_contrasting_line_colors(primary_hex, n_series):
-    """Distinct line colors anchored on the hue **opposite** this week's primary (Saturday‑locked accent).
+    """Distinct line colors anchored on the hue **opposite** the current accent primary.
 
     Multiple series step around the wheel (golden‑ratio hue steps) so lines stay separable on dark UI.
     """
@@ -2722,7 +2726,7 @@ def get_attendance_data():
 
 
 def get_attendance_text(name, cell, attendance_stats):
-    """Tooltip text for KPI member tiles: (attended/total rate%) with rate as integer %."""
+    """Attendance summary for tooltips (Name + Cell key), or name only if unknown."""
     if not attendance_stats:
         return name
 
@@ -2734,27 +2738,14 @@ def get_attendance_text(name, cell, attendance_stats):
     else:
         key = name_stripped
 
-    def _fraction_pct(stats):
-        x = int(stats["attendance"])
-        y = int(stats["total"])
-        z = int(round(float(stats["percentage"])))
-        return f"{name} ({x}/{y} {z}%)"
-
     if key in attendance_stats:
-        return _fraction_pct(attendance_stats[key])
+        stats = attendance_stats[key]
+        return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
 
     key_lower = key.lower()
     for dict_key, stats in attendance_stats.items():
         if dict_key.lower() == key_lower:
-            return _fraction_pct(stats)
-
-    prefix_matches = [
-        st
-        for dk, st in attendance_stats.items()
-        if str(dk).split(" - ", 1)[0].strip().lower() == name_stripped.lower()
-    ]
-    if len(prefix_matches) == 1:
-        return _fraction_pct(prefix_matches[0])
+            return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
 
     return name
 
@@ -3675,44 +3666,6 @@ def get_today_myt_date():
     return datetime.now(myt).strftime("%Y-%m-%d")
 
 
-def _normalize_primary_hex(hex_str):
-    h = (hex_str or "").strip()
-    if not h:
-        return None
-    if not h.startswith("#"):
-        h = "#" + h
-    if len(h) != 7:
-        return None
-    try:
-        int(h[1:], 16)
-    except ValueError:
-        return None
-    return h.lower()
-
-
-def theme_from_primary_hex(primary_hex):
-    """Build the same daily_colors shape as generate_colors_for_date from a fixed primary."""
-    p = _normalize_primary_hex(primary_hex)
-    if not p:
-        raise ValueError("Invalid primary hex")
-    r = int(p[1:3], 16) / 255.0
-    g = int(p[3:5], 16) / 255.0
-    b = int(p[5:7], 16) / 255.0
-    h, light, sat = colorsys.rgb_to_hls(r, g, b)
-    rgb_light = colorsys.hls_to_rgb(h, min(light + 0.2, 0.9), sat)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": p,
-        "light": light_color,
-        "background": "#000000",
-        "accent": p,
-    }
-
-
 _nwst_accent_cfg_mod = None
 
 
@@ -3783,48 +3736,9 @@ def resolve_theme_override_row_for_today(from_sheet=None):
     return row
 
 
-def generate_colors_for_date(date_str):
-    """Generate random colors based on a specific date (consistent for that date)
-
-    Args:
-        date_str: Date string in format "YYYY-MM-DD"
-
-    Returns:
-        dict with 'primary', 'light', 'background', 'accent' colors
-    """
-    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
-    random.seed(seed)
-
-    hue = random.random()
-    saturation = random.uniform(0.7, 1.0)
-    lightness = random.uniform(0.45, 0.65)
-
-    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    primary_color = '#{:02x}{:02x}{:02x}'.format(
-        int(rgb[0] * 255),
-        int(rgb[1] * 255),
-        int(rgb[2] * 255)
-    )
-
-    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
-    light_color = '#{:02x}{:02x}{:02x}'.format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255)
-    )
-
-    return {
-        'primary': primary_color,
-        'light': light_color,
-        'background': '#000000',
-        'accent': primary_color
-    }
-
 def generate_daily_colors():
-    """Weekly Saturday-locked palette (MYT), unless Theme Override is cached in Upstash (latest sheet row)."""
-    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
-    days_since_saturday = (today.weekday() - 5) % 7
-    last_saturday = today - timedelta(days=days_since_saturday)
+    """Daily MYT generated palette unless Theme Override supplies primary/banner (Upstash / JSON / env)."""
+    today_str = get_today_myt_date()
     from_sheet = _theme_overrides_from_redis()
     row = resolve_theme_override_row_for_today(from_sheet=from_sheet)
     hex_override = row.get("primary")
@@ -3834,7 +3748,7 @@ def generate_daily_colors():
         if pn:
             base = theme_from_primary_hex(pn)
     if base is None:
-        base = generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
+        base = generate_colors_for_date(today_str)
     b_raw = row.get("banner")
     if b_raw:
         if _nwst_accent_cfg_mod is None:
