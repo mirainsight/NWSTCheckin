@@ -1161,15 +1161,20 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     prim = page_colors.get("primary", "#5BC0EB")
     bg = page_colors.get("background", "#0b1020")
     text_main = page_colors.get("text", "#e8eaed")
-    muted = page_colors.get("text_muted", "rgba(232,234,237,0.75)")
 
     def _fmt_day(d: date) -> str:
         return f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
 
     prim_e = html.escape(prim, quote=True)
     text_e = html.escape(text_main, quote=True)
+    light = page_colors.get("light", prim)
     r, g, b = _hex_to_rgb_for_css(prim)
-    card_bg = "#2c2c2e"
+    rl, gl, bl = _hex_to_rgb_for_css(light)
+    # Same angle and primary→light→primary rhythm as flush_pending.py CTAs; overlaid on dark for readability.
+    card_bg_layers = (
+        f"linear-gradient(135deg, rgba({r},{g},{b},0.48) 0%, rgba({rl},{gl},{bl},0.32) 50%, rgba({r},{g},{b},0.42) 100%), "
+        f"linear-gradient(180deg, #26262a 0%, #18181c 100%)"
+    )
     cards_html: list[str] = []
 
     if grouped:
@@ -1202,22 +1207,16 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
             cards_html.append(
                 f'<div class="nwst-bday-card" style="'
                 f"flex:0 0 auto;width:min(300px,85vw);scroll-snap-align:start;"
-                f"background:{card_bg};border-radius:18px;padding:14px 14px 12px 14px;"
-                f"border:1px solid rgba(255,255,255,0.08);box-shadow:0 8px 24px rgba(0,0,0,0.35);"
+                f"background:{card_bg_layers};border-radius:18px;padding:14px 14px 12px 14px;"
+                f"border:1px solid rgba({r},{g},{b},0.38);"
+                f"box-shadow:0 8px 24px rgba(0,0,0,0.4),0 4px 18px rgba({r},{g},{b},0.14);"
                 f'">'
-                f'<div style="display:flex;gap:12px;align-items:flex-start;">'
-                f'<div style="flex:1;min-width:0;">'
                 f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.95rem;'
                 f'color:#f5f5f7;line-height:1.25;">{card_title}</div>'
                 f"{''.join(body_parts)}"
                 f'<div style="margin-top:12px;font-family:Inter,sans-serif;font-size:0.74rem;'
-                f"color:rgba(200,200,205,0.85);\">🎂 {foot_n} {foot_label}</div>"
+                f"color:rgba(220,220,225,0.9);\">🎂 {foot_n} {foot_label}</div>"
                 f"</div>"
-                f'<div style="flex-shrink:0;width:52px;height:52px;border-radius:16px;'
-                f"border:1px solid rgba({r},{g},{b},0.45);"
-                f"background:rgba({r},{g},{b},0.18);display:flex;align-items:center;"
-                f'justify-content:center;font-size:1.35rem;line-height:1;">🎂</div>'
-                f"</div></div>"
             )
     else:
         empty_txt = html.escape(
@@ -1231,10 +1230,9 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
 
     scroll_row = "".join(cards_html)
     title = html.escape("Birthdays this week", quote=True)
-    sub = html.escape("Swipe sideways · rolling ±5 days (MYT)", quote=True)
     board = f"""
 <div class="nwst-birthday-board" style="
-    margin-bottom:1.1rem;
+    margin-bottom:2.5rem;
     padding:0.85rem 1rem 1rem 1rem;
     border-radius:12px;
     border:2px solid {prim};
@@ -1244,14 +1242,10 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
         rgba(0,0,0,0.5);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 14px rgba(0,0,0,0.35);
 ">
-  <div style="
-      display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:0.35rem;
-      border-bottom:1px dashed rgba(91,192,235,0.45);padding-bottom:0.45rem;margin-bottom:0.75rem;
-  ">
+  <div style="margin-bottom:0.75rem;">
     <span style="font-family:'Inter',sans-serif;font-weight:800;font-size:0.72rem;
                  letter-spacing:0.12em;text-transform:uppercase;color:{bg};
                  background:{prim};padding:0.25rem 0.55rem;">📌 {title}</span>
-    <span style="font-family:'Inter',sans-serif;font-size:0.68rem;color:{muted};">{sub}</span>
   </div>
   <div class="nwst-bday-scroll" style="
       display:flex;
