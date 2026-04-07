@@ -2,8 +2,15 @@ import os
 import re
 import json
 import importlib.util
+import sys
 from pathlib import Path
 from collections import defaultdict
+
+_PROJECTS_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECTS_ROOT))
+from nwst_shared.paths import resolved_nwst_accent_config_path
+
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -43,7 +50,7 @@ FORM_RESPONSES_TAB_NAME = "Form Responses 1"  # Tab name for newcomer form respo
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
 
 # One-off accent: optional tab **Theme Override** on this spreadsheet (ATTENDANCE_SHEET_ID),
-# plus ../nwst_accent_overrides.json — see PROJECTS/nwst_accent_gsheet.py.
+# plus PROJECTS/nwst_shared/nwst_accent_overrides.json — see nwst_accent_gsheet.py there.
 # Optional: ATTENDANCE_ACCENT_OVERRIDE_DATE + ATTENDANCE_ACCENT_OVERRIDE_HEX env or Streamlit secrets.
 
 # Redis cache configuration
@@ -148,20 +155,12 @@ def _refresh_theme_override_redis_after_resync():
     client = get_gsheet_client()
     if not client:
         return
-    p = Path(__file__).resolve().parent
-    mod = None
-    for _ in range(15):
-        cfg = p / "nwst_accent_config.py"
-        if cfg.is_file():
-            spec = importlib.util.spec_from_file_location("_nwst_accent_cfg_refresh", cfg)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            break
-        if p.parent == p:
-            break
-        p = p.parent
-    if mod is None:
+    cfg = resolved_nwst_accent_config_path()
+    if cfg is None:
         return
+    spec = importlib.util.spec_from_file_location("_nwst_accent_cfg_refresh", cfg)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
     try:
         mod.refresh_theme_override_shared_cache(redis_client, client, SHEET_ID)
     except Exception:
@@ -725,21 +724,15 @@ _nwst_accent_cfg_mod = None
 
 
 def _accent_overrides_from_project_config():
-    """Load nwst_accent_config.py from this folder or an ancestor (next to nwst_accent_*.py)."""
+    """Load shared ``nwst_accent_config.py`` (see ``nwst_shared.paths``)."""
     global _nwst_accent_cfg_mod
     if _nwst_accent_cfg_mod is None:
-        p = Path(__file__).resolve().parent
-        for _ in range(15):
-            cfg = p / "nwst_accent_config.py"
-            if cfg.is_file():
-                spec = importlib.util.spec_from_file_location("_nwst_accent_cfg", cfg)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                _nwst_accent_cfg_mod = mod
-                break
-            if p.parent == p:
-                break
-            p = p.parent
+        cfg = resolved_nwst_accent_config_path()
+        if cfg is not None:
+            spec = importlib.util.spec_from_file_location("_nwst_accent_cfg", cfg)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _nwst_accent_cfg_mod = mod
     if _nwst_accent_cfg_mod is None:
         return {}
     return _nwst_accent_cfg_mod.get_accent_override_by_date()
@@ -5199,56 +5192,6 @@ with st.sidebar:
                 st.error("Email module not found. Please ensure weekly_email_report.py exists.")
             except Exception as e:
                 st.error(f"Error sending email: {str(e)}")
-
-    st.markdown("---")
-
-    # Send to NWST Core Team Button
-    if st.button("📤 Send to NWST Core Team", type="secondary", use_container_width=True, key="send_nwst_core_btn"):
-        st.session_state.show_nwst_core_confirm = True
-
-    # NWST Core Team confirmation dialog
-    if st.session_state.get('show_nwst_core_confirm', False):
-        st.warning("Send attendance report to NWST Core Team?")
-        col_yes_nwst, col_no_nwst = st.columns(2)
-        with col_yes_nwst:
-            if st.button("Yes, Send", type="primary", key="confirm_send_nwst"):
-                st.session_state.show_nwst_core_confirm = False
-                st.session_state.sending_nwst_core = True
-                st.rerun()
-        with col_no_nwst:
-            if st.button("Cancel", key="cancel_send_nwst"):
-                st.session_state.show_nwst_core_confirm = False
-                st.rerun()
-
-    # Handle NWST Core Team email sending
-    if st.session_state.get('sending_nwst_core', False):
-        st.session_state.sending_nwst_core = False
-        # Determine which date to send - use historical date if viewing historical, otherwise None (today)
-        report_date = st.session_state.get('historical_date') if st.session_state.get('viewing_historical', False) else None
-        with st.spinner(f"Sending to NWST Core Team{' for ' + report_date if report_date else ''}..."):
-            try:
-                from weekly_email_report import send_to_nwst_core_team
-                # Redirect stdout to capture output
-                import io
-                import sys
-                old_stdout = sys.stdout
-                sys.stdout = io.StringIO()
-
-                send_to_nwst_core_team(target_date=report_date)
-
-                output = sys.stdout.getvalue()
-                sys.stdout = old_stdout
-
-                if "SUCCESS" in output:
-                    st.success(f"Report sent to NWST Core Team!{' (Date: ' + report_date + ')' if report_date else ''}")
-                else:
-                    st.error("Failed to send. Check configuration.")
-                    if output:
-                        st.text(output)
-            except ImportError:
-                st.error("NWST Core Team email function not found. Please add send_to_nwst_core_team() to weekly_email_report.py")
-            except Exception as e:
-                st.error(f"Error sending: {str(e)}")
 
     st.markdown("---")
 
