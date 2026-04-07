@@ -12,7 +12,7 @@ Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_r
   python flush_pending.py --pending-only
   python flush_pending.py --tabs attendance leaders --pending-only
 
-**Streamlit UI:** ``streamlit run flush_pending.py`` — NWST styling matches ``attendance_app`` (Theme Override in Upstash, ``nwst_shared/nwst_accent_overrides.json`` at repo root, env/secrets ``ATTENDANCE_ACCENT_OVERRIDE_*``, Saturday fallback). Run log resets each press.
+**Streamlit UI:** ``streamlit run flush_pending.py`` — NWST styling matches ``attendance_app`` (Theme Override in Upstash, ``nwst_shared/nwst_accent_overrides.json`` at repo root, env/secrets ``ATTENDANCE_ACCENT_OVERRIDE_*``, daily MYT palette fallback). Run log resets each press.
 
 Env: ATTENDANCE_SHEET_ID, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .streamlit/secrets.toml,
@@ -21,12 +21,9 @@ Google auth: st.secrets (when using Streamlit), GCP_SERVICE_ACCOUNT_JSON, .strea
 from __future__ import annotations
 
 import argparse
-import colorsys
-import hashlib
 import importlib.util
 import json
 import os
-import random
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +32,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from nwst_shared.paths import resolved_nwst_accent_config_path
+from nwst_shared.nwst_daily_palette import (
+    generate_colors_for_date as _generate_colors_for_date,
+    normalize_primary_hex as _normalize_primary_hex,
+    theme_from_primary_hex as _theme_from_primary_hex,
+)
 
 # CHECK IN folder (this script lives next to ``attendance_app.py``)
 _CHECK_IN_ROOT = Path(__file__).resolve().parent
@@ -95,71 +97,6 @@ def get_today_myt_date() -> str:
     return datetime.now(myt).strftime("%Y-%m-%d")
 
 
-def _generate_colors_for_date(date_str: str) -> dict:
-    """Same as ``attendance_app.generate_colors_for_date`` (seeded by YYYY-MM-DD)."""
-    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
-    random.seed(seed)
-    hue = random.random()
-    saturation = random.uniform(0.7, 1.0)
-    lightness = random.uniform(0.45, 0.65)
-    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    primary_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb[0] * 255),
-        int(rgb[1] * 255),
-        int(rgb[2] * 255),
-    )
-    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": primary_color,
-        "light": light_color,
-        "background": "#000000",
-        "accent": primary_color,
-    }
-
-
-def _normalize_primary_hex(hex_str: str | None) -> str | None:
-    h = (hex_str or "").strip()
-    if not h:
-        return None
-    if not h.startswith("#"):
-        h = "#" + h
-    if len(h) != 7:
-        return None
-    try:
-        int(h[1:], 16)
-    except ValueError:
-        return None
-    return h.lower()
-
-
-def _theme_from_primary_hex(primary_hex: str) -> dict:
-    """Same shape as ``attendance_app.theme_from_primary_hex``."""
-    p = _normalize_primary_hex(primary_hex)
-    if not p:
-        raise ValueError("Invalid primary hex")
-    r = int(p[1:3], 16) / 255.0
-    g = int(p[3:5], 16) / 255.0
-    b = int(p[5:7], 16) / 255.0
-    h, light, sat = colorsys.rgb_to_hls(r, g, b)
-    rgb_light = colorsys.hls_to_rgb(h, min(light + 0.2, 0.9), sat)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": p,
-        "light": light_color,
-        "background": "#000000",
-        "accent": p,
-    }
-
-
 def _theme_overrides_from_redis_ui() -> dict:
     """Theme Override snapshot in Upstash — same key as ``attendance_app._theme_overrides_from_redis``."""
     mod = _load_nwst_accent_cfg()
@@ -210,10 +147,8 @@ def _resolve_theme_override_row_for_today_flush(from_sheet: dict | None = None) 
 
 
 def _generate_daily_colors_for_sync_ui() -> dict:
-    """Same rules as ``attendance_app.generate_daily_colors`` (Theme Override / JSON / Saturday fallback / banner keys)."""
-    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
-    days_since_saturday = (today.weekday() - 5) % 7
-    last_saturday = today - timedelta(days=days_since_saturday)
+    """Same rules as ``attendance_app.generate_daily_colors`` (Theme Override / JSON / daily MYT fallback / banner keys)."""
+    today_str = get_today_myt_date()
     from_sheet = _theme_overrides_from_redis_ui()
     row = _resolve_theme_override_row_for_today_flush(from_sheet=from_sheet)
     hex_override = row.get("primary")
@@ -223,7 +158,7 @@ def _generate_daily_colors_for_sync_ui() -> dict:
         if pn:
             base = _theme_from_primary_hex(pn)
     if base is None:
-        base = _generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
+        base = _generate_colors_for_date(today_str)
     b_raw = row.get("banner")
     mod = _load_nwst_accent_cfg()
     if b_raw and mod:
