@@ -50,19 +50,26 @@ def nwst_attendance_sheet_id() -> str:
 
 
 def extract_cell_sheet_status_type(status_val: Any) -> str | None:
+    if status_val is None or (isinstance(status_val, float) and pd.isna(status_val)):
+        return None
     if not isinstance(status_val, str):
         return None
-    if status_val.startswith("Regular:"):
+    s = status_val.strip()
+    if not s:
+        return None
+    low = s.lower()
+    # Prefix forms (sheet / Apps Script convention)
+    if low.startswith("regular"):
         return "Regular"
-    if status_val.startswith("Irregular:"):
+    if low.startswith("irregular"):
         return "Irregular"
-    if status_val.startswith("New"):
+    if low.startswith("new"):
         return "New"
-    if status_val.startswith("Follow Up:"):
+    if low.startswith("follow up") or low.startswith("follow-up") or low.startswith("follow_up"):
         return "Follow Up"
-    if status_val.startswith("Red:"):
+    if low.startswith("red"):
         return "Red"
-    if status_val.startswith("Graduated:"):
+    if low.startswith("graduated"):
         return "Graduated"
     return None
 
@@ -296,7 +303,7 @@ def build_cell_health_pdf_member_sections(client: Any, sheet_id: str) -> dict[st
 
     if status_col:
         work["status_type"] = work[status_col].apply(extract_cell_sheet_status_type)
-        return {
+        sections = {
             "new": _pdf_name_lines_for_bucket_df(
                 work[work["status_type"] == "New"], cg_name_col, cg_cell_col, attendance_stats
             ),
@@ -316,6 +323,8 @@ def build_cell_health_pdf_member_sections(client: Any, sheet_id: str) -> dict[st
                 work[work["status_type"] == "Graduated"], cg_name_col, cg_cell_col, attendance_stats
             ),
         }
+        if any(sections.get(k) for k, _ in BUCKET_SPECS if k != "total"):
+            return sections
 
     total_members_fb = len(work)
     new_count = max(1, int(total_members_fb * 0.20))
