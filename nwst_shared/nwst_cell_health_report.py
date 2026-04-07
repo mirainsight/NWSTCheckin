@@ -1,9 +1,16 @@
 """
 Cell health summary for PDF/email reports (NWST Health sheet).
 
+Zone for every row comes only from the **Key Values** tab (column A = cell name, C = zone).
+Historical Cell Status may supply counts and snapshot dates but never overrides zone.
+The aggregate / cell name **All** is always shown as zone **PSQ**.
+
 Uses **Historical Cell Status** (latest snapshot vs previous) when available; otherwise
 **CG Combined** roster + Status column (no WoW deltas — shows +0).
 """
+
+# Fixed zone for roll-up row and any cell literally named All / ALL.
+_ZONE_ALL_PSQ = "PSQ"
 
 from __future__ import annotations
 
@@ -101,21 +108,22 @@ def _format_bucket_cell(pct: float, delta: int) -> str:
 
 
 def load_cell_zone_map(client: Any, sheet_id: str) -> dict[str, str]:
+    """Cell name (col A) → zone (col C) from Key Values only. No other columns. Empty zone = skip row."""
+    cell_to_zone: dict[str, str] = {}
     try:
         spreadsheet = client.open_by_key(sheet_id)
         key_values_sheet = spreadsheet.worksheet(NWST_KEY_VALUES_TAB)
+        all_values = key_values_sheet.get_all_values()
+        if len(all_values) > 1:
+            for row in all_values[1:]:
+                if len(row) >= 3:
+                    cn = row[0].strip()
+                    zn = row[2].strip()
+                    if cn and zn:
+                        cell_to_zone[cn.lower()] = zn
     except Exception:
-        return {}
-    all_values = key_values_sheet.get_all_values()
-    if len(all_values) <= 1:
-        return {}
-    cell_to_zone: dict[str, str] = {}
-    for row in all_values[1:]:
-        if len(row) >= 3:
-            cn = row[0].strip()
-            zn = row[2].strip()
-            if cn and zn:
-                cell_to_zone[cn.lower()] = zn
+        pass
+    cell_to_zone["all"] = _ZONE_ALL_PSQ
     return cell_to_zone
 
 
@@ -286,7 +294,6 @@ def rows_from_historical_cell_status(
     lk = _hist_col_lookup(hist_df)
     snap_c = _hist_get_col(lk, "snapshot date", "snapshot")
     cell_c = _hist_get_col(lk, "cell")
-    zone_c = _hist_get_col(lk, "zone")
     if not snap_c or not cell_c:
         return None, None
 
@@ -321,13 +328,7 @@ def rows_from_historical_cell_status(
             agg.get("irregular", 0) - (pagg.get("irregular", 0) if pagg else 0),
             agg.get("follow_up", 0) - (pagg.get("follow_up", 0) if pagg else 0),
         )
-        zone_h = ""
-        if zone_c:
-            r0 = scoped[(scoped["_d"] == snap_curr) & (scoped[cell_c].astype(str).str.strip() == cell_s)]
-            if not r0.empty and str(r0.iloc[0][zone_c]).strip():
-                zone_h = str(r0.iloc[0][zone_c]).strip()
-        if not zone_h:
-            zone_h = cell_to_zone.get(cell_s.lower(), "")
+        zone_h = cell_to_zone.get(cell_s.lower(), "")
         return {
             "zone": zone_h,
             "cell": cell_s,
@@ -371,7 +372,7 @@ def rows_from_historical_cell_status(
     else:
         dn = (0, 0, 0, 0)
     all_row = {
-        "zone": "",
+        "zone": _ZONE_ALL_PSQ,
         "cell": "All",
         "new_s": _format_bucket_cell(r_new, dn[0]),
         "regular_s": _format_bucket_cell(r_reg, dn[1]),
@@ -459,7 +460,7 @@ def build_cell_health_table_rows(
                 all_row_inner["graduated"] += 1
         d_all = _denom_total({**all_row_inner, "total": 0})
         all_row = {
-            "zone": "",
+            "zone": _ZONE_ALL_PSQ,
             "cell": "All",
             "new_s": _format_bucket_cell(_pct(all_row_inner["new"], d_all), 0),
             "regular_s": _format_bucket_cell(_pct(all_row_inner["regular"], d_all), 0),
@@ -493,7 +494,7 @@ def build_cell_health_table_rows(
         agg_all["graduated"] += gc
     d_all = _denom_total({**agg_all, "total": 0})
     all_row = {
-        "zone": "",
+        "zone": _ZONE_ALL_PSQ,
         "cell": "All",
         "new_s": _format_bucket_cell(_pct(agg_all["new"], d_all), 0),
         "regular_s": _format_bucket_cell(_pct(agg_all["regular"], d_all), 0),
