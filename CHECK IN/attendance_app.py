@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import html
 import importlib.util
 import sys
 from pathlib import Path
@@ -14,6 +15,11 @@ for _p in (_REPO_ROOT, _CHECK_IN_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 from nwst_shared.paths import resolved_nwst_accent_config_path
+from nwst_shared.nwst_cell_health_report import (
+    load_cg_combined_df,
+    nwst_health_sheet_id,
+    _resolve_cg_name_cell_columns,
+)
 from nwst_shared.nwst_daily_palette import (
     generate_colors_for_date,
     normalize_primary_hex as _normalize_primary_hex,
@@ -25,7 +31,7 @@ import streamlit.components.v1 as components
 from dotenv import load_dotenv
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import plotly.express as px
 import hashlib
@@ -858,6 +864,202 @@ def parse_name_cell_group(name_cell_group_str):
     else:
         # If no " - " found, treat entire string as name, cell group as "Unknown"
         return parts[0].strip(), "Unknown"
+
+
+def _valid_month_day(month: int, day: int) -> bool:
+    """True if month/day is a valid calendar day (handles leap day against 2004)."""
+    for y in (2004, 2005):
+        try:
+            datetime(y, month, day)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _parse_birthday_month_day(val) -> tuple[int, int] | None:
+    """Parse a sheet Birthday value to (month, day). Supports D/M/Y, Y-M-D, and M/D when unambiguous."""
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    if isinstance(val, datetime):
+        return (val.month, val.day)
+    if hasattr(val, "month") and hasattr(val, "day") and not isinstance(val, str):
+        try:
+            return (int(val.month), int(val.day))
+        except (TypeError, ValueError):
+            pass
+    s = str(val).strip()
+    if not s:
+        return None
+    parts = re.split(r"[/.\-]", s)
+    nums: list[int] = []
+    for p in parts:
+        p = p.strip()
+        if not p or not p.isdigit():
+            if nums:
+                return None
+            continue
+        nums.append(int(p))
+    if len(nums) == 2:
+        a, b = nums
+        if a > 12:
+            month, day = b, a
+        elif b > 12:
+            month, day = a, b
+        else:
+            month, day = b, a
+        if _valid_month_day(month, day):
+            return (month, day)
+        return None
+    if len(nums) >= 3:
+        a, b, c = nums[0], nums[1], nums[2]
+        if a > 1000:
+            month, day = b, c
+        elif c > 1000:
+            if a > 12:
+                month, day = b, a
+            elif b > 12:
+                month, day = a, b
+            else:
+                month, day = b, a
+        else:
+            return None
+        if _valid_month_day(month, day):
+            return (month, day)
+    return None
+
+
+def _find_cg_birthday_column(cg_df: pd.DataFrame) -> str | None:
+    for c in cg_df.columns:
+        if "birthday" in str(c).lower():
+            return c
+    return None
+
+
+def _birthday_md_to_date_in_window(
+    month: int, day: int, center: date, delta_days: int
+) -> date | None:
+    md_to_date: dict[tuple[int, int], date] = {}
+    d = center - timedelta(days=delta_days)
+    end = center + timedelta(days=delta_days)
+    while d <= end:
+        md_to_date[(d.month, d.day)] = d
+        d += timedelta(days=1)
+    return md_to_date.get((month, day))
+
+
+@st.cache_data(ttl=300)
+def _cg_combined_df_for_birthdays(_client, health_sheet_id: str):
+    return load_cg_combined_df(_client, health_sheet_id)
+
+
+def get_birthdays_grouped_near_date(
+    _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+) -> list[tuple[date, list[tuple[str, str]]]]:
+    """
+    Birthdays from NWST Health **CG Combined** within center date ± delta_days (inclusive).
+    Returns [(date, [(name, cell), ...]), ...] sorted by date, names sorted within each day.
+    """
+    cg = _cg_combined_df_for_birthdays(_client, health_sheet_id)
+    if cg is None or cg.empty:
+        return []
+    bcol = _find_cg_birthday_column(cg)
+    ncol, ccol = _resolve_cg_name_cell_columns(cg)
+    if not bcol or not ncol:
+        return []
+    try:
+        center = datetime.strptime(center_myt_iso, "%Y-%m-%d").date()
+    except ValueError:
+        return []
+
+    by_date: dict[date, list[tuple[str, str]]] = defaultdict(list)
+    for _, row in cg.iterrows():
+        md = _parse_birthday_month_day(row.get(bcol))
+        if not md:
+            continue
+        m, d = md
+        occ = _birthday_md_to_date_in_window(m, d, center, delta_days)
+        if not occ:
+            continue
+        name = str(row.get(ncol) or "").strip()
+        if not name:
+            continue
+        cell = str(row.get(ccol) or "").strip() if ccol else ""
+        if not cell:
+            cell = "—"
+        by_date[occ].append((name, cell))
+
+    out: list[tuple[date, list[tuple[str, str]]]] = []
+    for dt in sorted(by_date.keys()):
+        lines = sorted(by_date[dt], key=lambda t: (t[0].lower(), t[1].lower()))
+        out.append((dt, lines))
+    return out
+
+
+def render_birthdays_notice_board(page_colors: dict) -> None:
+    """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID."""
+    sid = (nwst_health_sheet_id() or "").strip()
+    if not sid:
+        return
+    today_s = get_today_myt_date()
+    grouped = get_birthdays_grouped_near_date(client, sid, today_s, delta_days=5)
+    if not grouped:
+        return
+
+    prim = page_colors.get("primary", "#5BC0EB")
+    bg = page_colors.get("background", "#0b1020")
+    text_main = page_colors.get("text", "#e8eaed")
+    muted = page_colors.get("text_muted", "rgba(232,234,237,0.75)")
+
+    def _fmt_day(d: date) -> str:
+        return f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
+
+    prim_e = html.escape(prim, quote=True)
+    text_e = html.escape(text_main, quote=True)
+    rows_html: list[str] = []
+    for dt, pairs in grouped:
+        label = html.escape(_fmt_day(dt), quote=True)
+        rows_html.append(
+            f'<div style="margin-top:0.65rem;">'
+            f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.8rem;'
+            f"color:{prim_e};letter-spacing:0.04em;margin-bottom:0.35rem;\">{label}</div>"
+            f'<ul style="margin:0;padding-left:1.15rem;color:{text_e};'
+            f'font-family:Inter,sans-serif;font-size:0.82rem;line-height:1.45;">'
+        )
+        for name, cell in pairs:
+            line = html.escape(f"{name} - {cell}", quote=True)
+            rows_html.append(f"<li style=\"margin:0.1rem 0;\">{line}</li>")
+        rows_html.append("</ul></div>")
+
+    title = html.escape("Birthdays this week", quote=True)
+    sub = html.escape("Rolling ±5 days from today (MYT)", quote=True)
+    board = f"""
+<div class="nwst-birthday-board" style="
+    margin-bottom:1.1rem;
+    padding:0.85rem 1rem 1rem 1rem;
+    border-radius:6px;
+    border:2px solid {prim};
+    border-bottom-width:4px;
+    background:
+        linear-gradient(180deg, rgba(139,90,43,0.22) 0%, rgba(30,22,14,0.5) 100%),
+        rgba(0,0,0,0.42);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 14px rgba(0,0,0,0.35);
+">
+  <div style="
+      display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:0.35rem;
+      border-bottom:1px dashed rgba(91,192,235,0.45);padding-bottom:0.45rem;margin-bottom:0.15rem;
+  ">
+    <span style="font-family:'Inter',sans-serif;font-weight:800;font-size:0.72rem;
+                 letter-spacing:0.12em;text-transform:uppercase;color:{bg};
+                 background:{prim};padding:0.25rem 0.55rem;">📌 {title}</span>
+    <span style="font-family:'Inter',sans-serif;font-size:0.68rem;color:{muted};">{sub}</span>
+  </div>
+  {''.join(rows_html)}
+</div>
+"""
+    st.markdown(board, unsafe_allow_html=True)
 
 
 def _rebuild_attendance_structures_from_recent(recent_checkins):
@@ -1792,6 +1994,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        render_birthdays_notice_board(page_colors)
+
         def _flush_checkin_success_here():
             succ = st.session_state.get('show_checkin_success')
             if succ and succ.get('form_key') == form_key:
