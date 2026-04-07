@@ -626,8 +626,11 @@ def build_cell_health_table_rows(
         pack = rows_from_historical_cell_status(hist, cell_to_zone, target_date_str)
         rows_h, snap_d = pack
         if rows_h:
-            # Filter out the "All" row from Historical Cell Status
-            per_cell_rows = [r for r in rows_h if r.get("cell", "").lower() != "all"]
+            # Filter out the "All" row and "Archive" cell from Historical Cell Status
+            per_cell_rows = [
+                r for r in rows_h
+                if r.get("cell", "").lower() not in ("all", "archive")
+            ]
 
             # Build "All" row: percentages from CG Combined, WoW deltas from Historical Cell Status
             cg_counts = count_all_from_cg_combined(cg)
@@ -706,7 +709,9 @@ def build_cell_health_table_rows(
             "_sort_follow": float("inf"),
             "_sort_new": float("-inf"),
         }
-        per_sorted = sorted(rows_c, key=sort_key)
+        # Filter out "Archive" cell
+        rows_filtered = [r for r in rows_c if r.get("cell", "").lower() != "archive"]
+        per_sorted = sorted(rows_filtered, key=sort_key)
         return [all_row] + per_sorted, f"NWST Health — CG Combined (live roster, {snap_d.isoformat()})"
 
     agg_all: dict[str, int] = {k: 0 for k in ("new", "regular", "irregular", "follow_up", "red", "graduated")}
@@ -740,6 +745,8 @@ def build_cell_health_table_rows(
         "_sort_follow": float("inf"),
         "_sort_new": float("-inf"),
     }
-    per_sorted = sorted(rows_c, key=sort_key)
+    # Filter out "Archive" cell
+    rows_filtered = [r for r in rows_c if r.get("cell", "").lower() != "archive"]
+    per_sorted = sorted(rows_filtered, key=sort_key)
     return [all_row] + per_sorted, f"NWST Health — CG Combined (estimated mix, {snap_d.isoformat()})"
 
