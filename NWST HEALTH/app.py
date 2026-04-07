@@ -1347,6 +1347,42 @@ def _resolve_member_table_columns(df: pd.DataFrame) -> tuple[list[str], list[str
     return resolved_actual, resolved_labels
 
 
+@st.fragment
+def _cg_detailed_members_fragment(table_df: pd.DataFrame, tile_statuses: list):
+    """Fragment for Detailed Members — name search matches Individual Attendance (CG Health)."""
+    if "cg_dm_name_filter" not in st.session_state:
+        st.session_state.cg_dm_name_filter = ""
+
+    _name_filter = st.text_input(
+        "Search by Name...",
+        value=st.session_state.cg_dm_name_filter,
+        key="cg_dm_name_input",
+        placeholder="Type to filter by name...",
+        label_visibility="collapsed",
+    )
+    st.session_state.cg_dm_name_filter = _name_filter
+
+    _filtered_df = table_df.copy()
+    _tile_f = list(tile_statuses)
+    name_col = (
+        "Name"
+        if "Name" in _filtered_df.columns
+        else (_filtered_df.columns[0] if len(_filtered_df.columns) else None)
+    )
+    if name_col is not None and _name_filter.strip():
+        _filter_lower = _name_filter.strip().lower()
+        _mem_f = _filtered_df[name_col].fillna("").astype(str).str.strip().str.lower()
+        mask = _mem_f.str.contains(_filter_lower, regex=False)
+        _filtered_df = _filtered_df[mask].reset_index(drop=True)
+        _tile_f = [t for t, m in zip(_tile_f, mask) if m]
+
+    if _filtered_df.empty:
+        st.info("No members match the current filter.")
+        return
+
+    display_detailed_members_interactive(_filtered_df, _tile_f)
+
+
 def _render_cg_detailed_members_section(df, _daily_colors):
     """Content for CG Health > Detailed Members collapsible (roster ``df``, respects cell filter)."""
     if df is None or df.empty:
@@ -1376,7 +1412,7 @@ def _render_cg_detailed_members_section(df, _daily_colors):
         )
 
     st.markdown("#### All Members")
-    display_detailed_members_interactive(table_df, tile_statuses)
+    _cg_detailed_members_fragment(table_df, tile_statuses)
 
     _miss_set = set(_DESIRED_MEMBER_TABLE_COLUMNS) - set(display_labels)
     if _miss_set:
