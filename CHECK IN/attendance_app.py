@@ -14,6 +14,11 @@ for _p in (_REPO_ROOT, _CHECK_IN_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 from nwst_shared.paths import resolved_nwst_accent_config_path
+from nwst_shared.nwst_daily_palette import (
+    generate_colors_for_date,
+    normalize_primary_hex as _normalize_primary_hex,
+    theme_from_primary_hex,
+)
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -645,87 +650,6 @@ def get_ministry_members_by_department(_client, sheet_id, ministry_filter=None):
     except Exception:
         return {}
 
-def generate_colors_for_date(date_str):
-    """Generate random colors based on a specific date (consistent for that date)
-    Args:
-        date_str: Date string in format 'YYYY-MM-DD'
-    Returns:
-        dict with 'primary', 'light', 'background', 'accent' colors
-    """
-    # Use date as seed for consistent colors throughout the day
-    seed = int(hashlib.md5(date_str.encode()).hexdigest(), 16)
-
-    # Generate vibrant colors using the seed
-    import random
-    random.seed(seed)
-
-    # Generate a primary accent color (bright, vibrant)
-    hue = random.random()  # 0.0 to 1.0
-    saturation = random.uniform(0.7, 1.0)
-    lightness = random.uniform(0.45, 0.65)
-
-    # Convert HSL to RGB then to hex
-    rgb = colorsys.hls_to_rgb(hue, lightness, saturation)
-    primary_color = '#{:02x}{:02x}{:02x}'.format(
-        int(rgb[0]*255),
-        int(rgb[1]*255),
-        int(rgb[2]*255)
-    )
-
-    # Generate a lighter variant for accents
-    rgb_light = colorsys.hls_to_rgb(hue, min(lightness + 0.2, 0.9), saturation)
-    light_color = '#{:02x}{:02x}{:02x}'.format(
-        int(rgb_light[0]*255),
-        int(rgb_light[1]*255),
-        int(rgb_light[2]*255)
-    )
-
-    return {
-        'primary': primary_color,
-        'light': light_color,
-        'background': '#000000',  # Keep black background for edgy style
-        'accent': primary_color
-    }
-
-
-def _normalize_primary_hex(hex_str):
-    h = (hex_str or "").strip()
-    if not h:
-        return None
-    if not h.startswith("#"):
-        h = "#" + h
-    if len(h) != 7:
-        return None
-    try:
-        int(h[1:], 16)
-    except ValueError:
-        return None
-    return h.lower()
-
-
-def theme_from_primary_hex(primary_hex):
-    """Build the same daily_colors shape as generate_colors_for_date from a fixed primary."""
-    p = _normalize_primary_hex(primary_hex)
-    if not p:
-        raise ValueError("Invalid primary hex")
-    r = int(p[1:3], 16) / 255.0
-    g = int(p[3:5], 16) / 255.0
-    b = int(p[5:7], 16) / 255.0
-    h, light, sat = colorsys.rgb_to_hls(r, g, b)
-    rgb_light = colorsys.hls_to_rgb(h, min(light + 0.2, 0.9), sat)
-    light_color = "#{:02x}{:02x}{:02x}".format(
-        int(rgb_light[0] * 255),
-        int(rgb_light[1] * 255),
-        int(rgb_light[2] * 255),
-    )
-    return {
-        "primary": p,
-        "light": light_color,
-        "background": "#000000",
-        "accent": p,
-    }
-
-
 _nwst_accent_cfg_mod = None
 
 
@@ -797,10 +721,8 @@ def resolve_theme_override_row_for_today(from_sheet=None):
 
 
 def generate_daily_colors():
-    """Weekly Saturday-locked palette (MYT), unless Theme Override is cached in Upstash (latest sheet row)."""
-    today = datetime.strptime(get_today_myt_date(), "%Y-%m-%d")
-    days_since_saturday = (today.weekday() - 5) % 7
-    last_saturday = today - timedelta(days=days_since_saturday)
+    """Daily MYT generated palette unless Theme Override supplies primary/banner (Upstash / JSON / env)."""
+    today_str = get_today_myt_date()
     from_sheet = _theme_overrides_from_redis()
     row = resolve_theme_override_row_for_today(from_sheet=from_sheet)
     hex_override = row.get("primary")
@@ -810,7 +732,7 @@ def generate_daily_colors():
         if pn:
             base = theme_from_primary_hex(pn)
     if base is None:
-        base = generate_colors_for_date(last_saturday.strftime("%Y-%m-%d"))
+        base = generate_colors_for_date(today_str)
     b_raw = row.get("banner")
     if b_raw:
         if _nwst_accent_cfg_mod is None:
