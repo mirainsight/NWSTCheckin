@@ -25,9 +25,9 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-_PROJECTS_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECTS_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from nwst_shared.nwst_cell_health_report import (
     build_cell_health_table_rows,
@@ -115,56 +115,126 @@ def _nwst_core_cc() -> str | None:
     return _normalize_cc_list(os.getenv("NWST_CORE_TEAM_CC"))
 
 
-def _build_report_html(
+def _build_report_pdf_bytes(
     rows: list[dict],
     subtitle: str,
     report_label: str,
-) -> str:
-    thead = (
-        "<tr>"
-        "<th>Zone</th><th>Cell</th><th>New</th><th>Regular</th>"
-        "<th>Irregular</th><th>Follow Up</th>"
-        "</tr>"
+) -> tuple[bytes, str | None]:
+    """Build PDF with ReportLab so the cell-health table is always visible (xhtml2pdf tables are unreliable)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="NwstTitle",
+        parent=styles["Title"],
+        fontSize=16,
+        leading=20,
+        spaceAfter=6,
     )
-    body_rows = []
+    sub_style = ParagraphStyle(
+        name="NwstSub",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#444444"),
+        spaceAfter=8,
+    )
+    sec_style = ParagraphStyle(
+        name="NwstSec",
+        parent=styles["Normal"],
+        fontSize=11,
+        leading=14,
+        fontName="Helvetica-Bold",
+        spaceAfter=6,
+    )
+    th_style = ParagraphStyle(
+        name="NwstTH",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=10,
+        fontName="Helvetica-Bold",
+    )
+    td_style = ParagraphStyle(
+        name="NwstTD",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=10,
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+    story: list = []
+
+    # Cell-health table first (per module docstring); report title/subtitle follow.
+    story.append(Paragraph("Cell health (NWST)", sec_style))
+
+    hdr = ["Zone", "Cell", "New", "Regular", "Irregular", "Follow Up"]
+    data: list[list] = [[Paragraph(escape(h), th_style) for h in hdr]]
+
     for r in rows:
-        body_rows.append(
-            "<tr>"
-            f"<td>{escape(str(r.get('zone', '')))}</td>"
-            f"<td>{escape(str(r.get('cell', '')))}</td>"
-            f"<td>{escape(str(r.get('new_s', '')))}</td>"
-            f"<td>{escape(str(r.get('regular_s', '')))}</td>"
-            f"<td>{escape(str(r.get('irregular_s', '')))}</td>"
-            f"<td>{escape(str(r.get('follow_up_s', '')))}</td>"
-            "</tr>"
+        data.append(
+            [
+                Paragraph(escape(str(r.get("zone", ""))), td_style),
+                Paragraph(escape(str(r.get("cell", ""))), td_style),
+                Paragraph(escape(str(r.get("new_s", ""))), td_style),
+                Paragraph(escape(str(r.get("regular_s", ""))), td_style),
+                Paragraph(escape(str(r.get("irregular_s", ""))), td_style),
+                Paragraph(escape(str(r.get("follow_up_s", ""))), td_style),
+            ]
         )
-    if not body_rows:
-        body_rows.append(
-            '<tr><td colspan="6">No NWST Health cell data available.</td></tr>'
+
+    if len(data) == 1:
+        data.append(
+            [
+                Paragraph(escape("No NWST Health cell data available."), td_style),
+                Paragraph("", td_style),
+                Paragraph("", td_style),
+                Paragraph("", td_style),
+                Paragraph("", td_style),
+                Paragraph("", td_style),
+            ]
         )
-    tbl = (
-        '<table border="1" cellspacing="0" cellpadding="6" '
-        'style="border-collapse:collapse;font-family:Helvetica,Arial,sans-serif;font-size:10pt;width:100%;">'
-        f"<thead>{thead}</thead><tbody>{''.join(body_rows)}</tbody></table>"
+
+    usable_w = A4[0] - 72
+    col_widths = [usable_w * f for f in (0.12, 0.20, 0.14, 0.17, 0.17, 0.20)]
+
+    tbl = Table(data, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+                ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                (
+                    "ROWBACKGROUNDS",
+                    (0, 1),
+                    (-1, -1),
+                    [colors.white, colors.HexColor("#fafafa")],
+                ),
+            ]
+        )
     )
-    return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"/><title>{escape(report_label)}</title></head>
-<body style="font-family:Helvetica,Arial,sans-serif;color:#111;">
-<h1 style="font-size:16pt;">{escape(report_label)}</h1>
-<p style="font-size:10pt;color:#444;">{escape(subtitle)}</p>
-<p style="font-size:11pt;font-weight:bold;">Cell health (NWST)</p>
-{tbl}
-</body></html>"""
+    story.append(tbl)
+    story.append(Spacer(1, 18))
+    story.append(Paragraph(escape(report_label), title_style))
+    story.append(Paragraph(escape(subtitle), sub_style))
 
-
-def _html_to_pdf_bytes(html: str) -> tuple[bytes, str | None]:
-    from xhtml2pdf import pisa
-
-    out = io.BytesIO()
-    pdf = pisa.CreatePDF(io.StringIO(html), dest=out, encoding="utf-8")
-    if pdf.err:
-        return b"", "xhtml2pdf failed"
-    return out.getvalue(), None
+    try:
+        doc.build(story)
+    except Exception as e:
+        return b"", str(e)
+    return buf.getvalue(), None
 
 
 def _send_pdf_email(
@@ -216,8 +286,7 @@ def _run_report(
     if target_date:
         subtitle = f"{subtitle} Attendance report date: {target_date}."
     label = f"{subject_prefix} — {target_date}" if target_date else subject_prefix
-    html = _build_report_html(rows, subtitle, label)
-    pdf_bytes, err = _html_to_pdf_bytes(html)
+    pdf_bytes, err = _build_report_pdf_bytes(rows, subtitle, label)
     if err or not pdf_bytes:
         print(f"FAIL: PDF: {err or 'empty'}")
         return
