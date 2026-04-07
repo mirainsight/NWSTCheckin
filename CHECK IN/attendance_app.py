@@ -5571,51 +5571,89 @@ if 'selected_ministry' not in st.session_state:
     st.session_state.selected_ministry = MINISTRY_LIST[0]  # Default to first ministry
 
 with st.sidebar:
-    # Email Report Button
+    # Email reports to PSQ (weekly check-in PDF vs cell-health-only PDF)
     st.markdown(f"""
     <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
-        ADMIN ACTIONS
+        EMAIL REPORT TO PSQ
     </h3>
     """, unsafe_allow_html=True)
 
-    if st.button("📤 Send to PSQ", type="secondary", use_container_width=True, key="send_email_btn"):
-        st.session_state.show_email_confirm = True
+    if st.button(
+        "📋 Weekly Check In",
+        type="secondary",
+        use_container_width=True,
+        key="psq_weekly_checkin_btn",
+    ):
+        st.session_state.pending_psq_email = "weekly_checkin"
 
-    # Email confirmation dialog
-    if st.session_state.get('show_email_confirm', False):
-        st.warning("Send weekly report email now?")
+    if st.button(
+        "📤 Current Cell Health",
+        type="secondary",
+        use_container_width=True,
+        key="psq_cell_health_btn",
+    ):
+        st.session_state.pending_psq_email = "cell_health"
+
+    pending_psq = st.session_state.get("pending_psq_email")
+    if pending_psq:
+        confirm_msg = (
+            "Send Weekly Check-In email now? (PDF includes check-in summary and roster only — no cell-health table.)"
+            if pending_psq == "weekly_checkin"
+            else "Send Current Cell Health email now? (PDF is the NWST cell-health table only.)"
+        )
+        st.warning(confirm_msg)
         col_yes, col_no = st.columns(2)
         with col_yes:
-            if st.button("Yes, Send", type="primary", key="confirm_send"):
-                st.session_state.show_email_confirm = False
-                st.session_state.sending_email = True
+            if st.button("Yes, Send", type="primary", key="confirm_send_psq"):
+                st.session_state.sending_psq_email = pending_psq
+                st.session_state.pending_psq_email = None
                 st.rerun()
         with col_no:
-            if st.button("Cancel", key="cancel_send"):
-                st.session_state.show_email_confirm = False
+            if st.button("Cancel", key="cancel_send_psq"):
+                st.session_state.pending_psq_email = None
                 st.rerun()
 
-    # Handle email sending
-    if st.session_state.get('sending_email', False):
-        st.session_state.sending_email = False
-        # Determine which date to send - use historical date if viewing historical, otherwise None (today)
-        report_date = st.session_state.get('historical_date') if st.session_state.get('viewing_historical', False) else None
-        with st.spinner(f"Sending email report{' for ' + report_date if report_date else ''}..."):
+    sending_psq = st.session_state.get("sending_psq_email")
+    if sending_psq:
+        st.session_state.sending_psq_email = None
+        report_date = (
+            st.session_state.get("historical_date")
+            if st.session_state.get("viewing_historical", False)
+            else None
+        )
+        kind_label = (
+            "Weekly Check-In"
+            if sending_psq == "weekly_checkin"
+            else "Current Cell Health"
+        )
+        with st.spinner(
+            f"Sending {kind_label} email{' for ' + report_date if report_date else ''}..."
+        ):
             try:
-                from weekly_email_report import main as send_weekly_report
-                # Redirect stdout to capture output
+                from weekly_email_report import (
+                    send_psq_cell_health_only,
+                    send_psq_weekly_checkin_only,
+                )
+
                 import io
                 import sys
+
                 old_stdout = sys.stdout
                 sys.stdout = io.StringIO()
 
-                send_weekly_report(target_date=report_date)
+                if sending_psq == "weekly_checkin":
+                    send_psq_weekly_checkin_only(target_date=report_date)
+                else:
+                    send_psq_cell_health_only(target_date=report_date)
 
                 output = sys.stdout.getvalue()
                 sys.stdout = old_stdout
 
                 if "SUCCESS" in output:
-                    st.success(f"Email report sent successfully!{' (Date: ' + report_date + ')' if report_date else ''}")
+                    st.success(
+                        f"{kind_label} email sent successfully!"
+                        f"{' (Date: ' + report_date + ')' if report_date else ''}"
+                    )
                 else:
                     st.error("Failed to send email. Check configuration.")
                     if output:
