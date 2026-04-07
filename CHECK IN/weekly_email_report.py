@@ -1,9 +1,9 @@
 """
 Weekly PSQ email + PDF for NWST Check In.
 
-PDF starts with a NWST Health cell-mix table (latest Historical Cell Status snapshot when present,
-else live CG Combined). That table always uses **current** NWST data, even if the report is sent
-while viewing a historical attendance date. Configure recipients via Streamlit secrets or env:
+PDF is titled **Weekly Check-In Report**: NWST cell-health table first (Historical Cell Status or CG Combined),
+then NWST Check In counts from **ATTENDANCE_SHEET_ID** (same roster as the app). Cell-health always uses
+**current** NWST Health data even when the attendance section is for a historical date. Configure recipients via Streamlit secrets or env:
   WEEKLY_REPORT_TO or PSQ_EMAIL — primary To line (person A)
   WEEKLY_REPORT_CC or PSQ_CC — optional Cc (comma-separated; person B, etc.)
   NWST_CORE_TEAM_TO — optional separate To for send_to_nwst_core_team
@@ -22,6 +22,7 @@ import sys
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -115,23 +116,123 @@ def _nwst_core_cc() -> str | None:
     return _normalize_cc_list(os.getenv("NWST_CORE_TEAM_CC"))
 
 
+_OPTIONS_TAB = "Options"
+_ATTENDANCE_TAB = "Attendance"
+
+
+def _attendance_sheet_id() -> str | None:
+    sid = (os.getenv("ATTENDANCE_SHEET_ID") or "").strip()
+    if sid:
+        return sid
+    if st is not None and hasattr(st, "secrets"):
+        try:
+            if "ATTENDANCE_SHEET_ID" in st.secrets:
+                return str(st.secrets["ATTENDANCE_SHEET_ID"]).strip()
+        except Exception:
+            pass
+    return None
+
+
+def _parse_name_cell_group(name_cell_group_str: str) -> tuple[str | None, str | None]:
+    if not name_cell_group_str:
+        return None, None
+    parts = name_cell_group_str.split(" - ", 1)
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip()
+    return parts[0].strip(), "Unknown"
+
+
+def _fetch_attendance_checked_in_count(client, sheet_id: str, target_date: str) -> int:
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+        attendance_sheet = spreadsheet.worksheet(_ATTENDANCE_TAB)
+    except Exception:
+        return 0
+    all_rows = attendance_sheet.get_all_values()
+    if len(all_rows) <= 1:
+        return 0
+    checked_in_set: set[str] = set()
+    for row in all_rows[1:]:
+        if len(row) < 2:
+            continue
+        ts = (row[0] or "").strip()
+        opt = (row[1] or "").strip()
+        if not ts or not opt or len(ts) < 10:
+            continue
+        if ts[:10] != target_date:
+            continue
+        if opt not in checked_in_set:
+            checked_in_set.add(opt)
+    return len(checked_in_set)
+
+
+def _roster_count_from_options(client, sheet_id: str) -> int:
+    try:
+        spreadsheet = client.open_by_key(sheet_id)
+        ws = spreadsheet.worksheet(_OPTIONS_TAB)
+    except Exception:
+        return 0
+    col_c = ws.col_values(3)
+    if len(col_c) <= 1:
+        return 0
+    n = 0
+    for value in col_c[1:]:
+        v = (value or "").strip()
+        if not v:
+            continue
+        name, _ = _parse_name_cell_group(v)
+        if name:
+            n += 1
+    return n
+
+
+def _build_checkin_summary(client, target_date: str | None) -> dict | None:
+    sid = _attendance_sheet_id()
+    if not sid:
+        return None
+    myt = timezone(timedelta(hours=8))
+    now = datetime.now(myt)
+    date_str = target_date or now.strftime("%Y-%m-%d")
+    try:
+        display_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %d, %Y")
+    except ValueError:
+        display_date = date_str
+    h12 = now.hour % 12
+    if h12 == 0:
+        h12 = 12
+    ap = "AM" if now.hour < 12 else "PM"
+    gen_at = f"{h12}:{now.minute:02d} {ap} MYT"
+    n_in = _fetch_attendance_checked_in_count(client, sid, date_str)
+    roster = _roster_count_from_options(client, sid)
+    pct = int(round(100.0 * n_in / roster)) if roster > 0 else 0
+    return {
+        "meta_line": f"{display_date} | Generated at {gen_at}",
+        "total_checked_in": n_in,
+        "total_members": roster,
+        "pct": pct,
+    }
+
+
 def _build_report_pdf_bytes(
     rows: list[dict],
     subtitle: str,
     report_label: str,
+    checkin_summary: dict | None = None,
 ) -> tuple[bytes, str | None]:
-    """Build PDF with ReportLab so the cell-health table is always visible (xhtml2pdf tables are unreliable)."""
+    """Build PDF with ReportLab: weekly check-in cover, cell-health table, optional attendance KPIs."""
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     styles = getSampleStyleSheet()
+    green = colors.HexColor("#15803d")
     title_style = ParagraphStyle(
         name="NwstTitle",
         parent=styles["Title"],
-        fontSize=16,
-        leading=20,
+        fontSize=14,
+        leading=18,
         spaceAfter=6,
     )
     sub_style = ParagraphStyle(
@@ -141,6 +242,24 @@ def _build_report_pdf_bytes(
         leading=12,
         textColor=colors.HexColor("#444444"),
         spaceAfter=8,
+    )
+    cover_title_style = ParagraphStyle(
+        name="CoverTitle",
+        parent=styles["Title"],
+        fontSize=20,
+        leading=24,
+        alignment=TA_CENTER,
+        textColor=green,
+        spaceAfter=8,
+        fontName="Helvetica-Bold",
+    )
+    cover_meta_style = ParagraphStyle(
+        name="CoverMeta",
+        parent=styles["Normal"],
+        fontSize=9,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#666666"),
+        spaceAfter=16,
     )
     sec_style = ParagraphStyle(
         name="NwstSec",
@@ -163,6 +282,40 @@ def _build_report_pdf_bytes(
         fontSize=8,
         leading=10,
     )
+    bar_title_style = ParagraphStyle(
+        name="BarTitle",
+        parent=styles["Normal"],
+        fontSize=11,
+        fontName="Helvetica-Bold",
+        textColor=green,
+        leading=14,
+        leftIndent=6,
+    )
+    bar_muted_style = ParagraphStyle(
+        name="BarMuted",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor=colors.HexColor("#555555"),
+        leading=12,
+        leftIndent=6,
+    )
+    kpi_big_style = ParagraphStyle(
+        name="KpiBig",
+        parent=styles["Normal"],
+        fontSize=36,
+        fontName="Helvetica-Bold",
+        textColor=green,
+        leading=42,
+        spaceAfter=4,
+    )
+    kpi_lbl_style = ParagraphStyle(
+        name="KpiLbl",
+        parent=styles["Normal"],
+        fontSize=10,
+        textColor=colors.HexColor("#666666"),
+        leading=14,
+        spaceAfter=12,
+    )
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -175,7 +328,17 @@ def _build_report_pdf_bytes(
     )
     story: list = []
 
-    # Cell-health table first (per module docstring); report title/subtitle follow.
+    story.append(Paragraph("Weekly Check-In Report", cover_title_style))
+    if checkin_summary:
+        story.append(Paragraph(escape(checkin_summary["meta_line"]), cover_meta_style))
+    else:
+        story.append(
+            Paragraph(
+                escape("Attendance summary requires ATTENDANCE_SHEET_ID — cell health table below."),
+                cover_meta_style,
+            )
+        )
+
     story.append(Paragraph("Cell health (NWST)", sec_style))
 
     hdr = ["Zone", "Cell", "New", "Regular", "Irregular", "Follow Up"]
@@ -226,7 +389,55 @@ def _build_report_pdf_bytes(
         )
     )
     story.append(tbl)
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 20))
+
+    if checkin_summary:
+        usable_w = A4[0] - 72
+        grey = colors.HexColor("#e8e8e8")
+
+        def _bar_table(paragraph: Paragraph) -> Table:
+            t = Table([[paragraph]], colWidths=[usable_w])
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), grey),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                )
+            )
+            return t
+
+        story.append(_bar_table(Paragraph("NWST Check In", bar_title_style)))
+        story.append(Spacer(1, 8))
+        story.append(
+            Paragraph(str(checkin_summary["total_checked_in"]), kpi_big_style)
+        )
+        story.append(Paragraph("Total Checked In", kpi_lbl_style))
+        roster = int(checkin_summary["total_members"])
+        pct = int(checkin_summary["pct"])
+        n_in = int(checkin_summary["total_checked_in"])
+        if roster > 0:
+            stat_line = f"{n_in} of {roster} members ({pct}%)"
+        else:
+            stat_line = f"{n_in} checked in (roster count unavailable from Options tab)"
+        story.append(_bar_table(Paragraph(escape(stat_line), bar_muted_style)))
+        story.append(Spacer(1, 6))
+        story.append(
+            _bar_table(
+                Paragraph(
+                    escape(
+                        "Legend: Checked-in members counted from Attendance tab; "
+                        "roster = Options column C. Pending = not checked in for this date."
+                    ),
+                    bar_muted_style,
+                )
+            )
+        )
+        story.append(Spacer(1, 18))
+
     story.append(Paragraph(escape(report_label), title_style))
     story.append(Paragraph(escape(subtitle), sub_style))
 
@@ -280,20 +491,23 @@ def _run_report(
     subject_prefix: str,
 ) -> None:
     client = _gspread_client()
-    sheet_id = nwst_health_sheet_id()
+    sheet_ch = nwst_health_sheet_id()
     # Cell health always reflects latest NWST Health (today), even when sending for a historical attendance date.
-    rows, subtitle = build_cell_health_table_rows(client, sheet_id, target_date_str=None)
+    rows, subtitle = build_cell_health_table_rows(client, sheet_ch, target_date_str=None)
     if target_date:
         subtitle = f"{subtitle} Attendance report date: {target_date}."
     label = f"{subject_prefix} — {target_date}" if target_date else subject_prefix
-    pdf_bytes, err = _build_report_pdf_bytes(rows, subtitle, label)
+    checkin_summary = _build_checkin_summary(client, target_date)
+    pdf_bytes, err = _build_report_pdf_bytes(rows, subtitle, label, checkin_summary=checkin_summary)
     if err or not pdf_bytes:
         print(f"FAIL: PDF: {err or 'empty'}")
         return
     safe_date = (target_date or "").replace("/", "-") or "latest"
-    fname = f"nwst_weekly_{safe_date}.pdf"
+    fname = f"weekly_checkin_report_{safe_date}.pdf"
     body = (
-        f"{label}\n\n{subtitle}\n\nCell health table is on page 1 of the PDF attachment.\n"
+        f"{label}\n\n{subtitle}\n\n"
+        f"PDF: Weekly Check-In Report — cell-health table first, then NWST Check In summary "
+        f"(when ATTENDANCE_SHEET_ID is set).\n"
     )
     ok, detail = _send_pdf_email(
         pdf_bytes=pdf_bytes,
