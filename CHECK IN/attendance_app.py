@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
-_PROJECTS_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECTS_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 from nwst_shared.paths import resolved_nwst_accent_config_path
 
 import streamlit as st
@@ -50,7 +50,7 @@ FORM_RESPONSES_TAB_NAME = "Form Responses 1"  # Tab name for newcomer form respo
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]  # Available ministries
 
 # One-off accent: optional tab **Theme Override** on this spreadsheet (ATTENDANCE_SHEET_ID),
-# plus PROJECTS/nwst_shared/nwst_accent_overrides.json — see nwst_accent_gsheet.py there.
+# plus nwst_shared/nwst_accent_overrides.json at repo root — see nwst_accent_gsheet.py there.
 # Optional: ATTENDANCE_ACCENT_OVERRIDE_DATE + ATTENDANCE_ACCENT_OVERRIDE_HEX env or Streamlit secrets.
 
 # Redis cache configuration
@@ -281,6 +281,8 @@ def get_gsheet_client():
         
         if creds is None:
             st.error("❌ No Google Sheets credentials found.")
+            _check_in_dir = Path(__file__).resolve().parent
+            _repo_root = _check_in_dir.parent
             checked_locations = [
                 'credentials.json',
                 'CHECK IN/credentials.json',
@@ -291,8 +293,8 @@ def get_gsheet_client():
             **For local development, you need:**
             1. Download `credentials.json` from Google Cloud Console
             2. Place it in one of these locations:
-               - `/Users/miracle.wong/Desktop/Cursor/disc-app/PROJECTS/CHECK IN/credentials.json` ✅ (preferred)
-               - `/Users/miracle.wong/Desktop/Cursor/disc-app/PROJECTS/credentials.json`
+               - `{_check_in_dir / "credentials.json"}` ✅ (preferred)
+               - `{_repo_root / "credentials.json"}`
             
             **Checked locations:**
             {location_status}
