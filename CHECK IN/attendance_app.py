@@ -5586,6 +5586,11 @@ with st.sidebar:
     ):
         st.session_state.pending_psq_email = "weekly_checkin"
 
+    st.markdown(
+        '<div aria-hidden="true" style="height: 3rem; min-height: 3rem;"></div>',
+        unsafe_allow_html=True,
+    )
+
     if st.button(
         "📤 Current Cell Health",
         type="secondary",
