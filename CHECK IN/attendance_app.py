@@ -1110,6 +1110,33 @@ def _hex_to_rgb_for_css(h: str) -> tuple[int, int, int]:
     return (91, 192, 235)
 
 
+def _contrasting_gradient_rgb_stops(primary_hex: str, light_hex: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """
+    Complementary-hue accent versus the daily theme (HLS hue + 0.5), keeping a strong + light leg
+    so the 135° primary→light→primary card texture matches non-today cards.
+    """
+    rp, gp, bp = _hex_to_rgb_for_css(primary_hex)
+    rl0, gl0, bl0 = _hex_to_rgb_for_css(light_hex)
+    r = (rp + rl0) / 510.0
+    g = (gp + gl0) / 510.0
+    b = (bp + bl0) / 510.0
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    h2 = (h + 0.5) % 1.0
+    if s < 0.08:
+        s2 = 0.72
+    else:
+        s2 = min(1.0, s * 1.08)
+    l2 = min(0.7, max(0.36, l))
+    r2, g2, b2 = colorsys.hls_to_rgb(h2, l2, s2)
+    s3 = max(0.12, s2 * 0.65)
+    l3 = min(0.9, l2 + 0.2)
+    r3, g3, b3 = colorsys.hls_to_rgb(h2, l3, s3)
+    return (
+        (int(r2 * 255), int(g2 * 255), int(b2 * 255)),
+        (int(r3 * 255), int(g3 * 255), int(b3 * 255)),
+    )
+
+
 def birthdays_notice_payload(
     _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
 ) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
@@ -1170,11 +1197,12 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     light = page_colors.get("light", prim)
     r, g, b = _hex_to_rgb_for_css(prim)
     rl, gl, bl = _hex_to_rgb_for_css(light)
-    # Same angle and primary→light→primary rhythm as flush_pending.py CTAs; overlaid on dark for readability.
-    card_bg_layers = (
-        f"linear-gradient(135deg, rgba({r},{g},{b},0.48) 0%, rgba({rl},{gl},{bl},0.32) 50%, rgba({r},{g},{b},0.42) 100%), "
-        f"linear-gradient(180deg, #26262a 0%, #18181c 100%)"
-    )
+    try:
+        today_d = datetime.strptime(today_s, "%Y-%m-%d").date()
+    except ValueError:
+        today_d = date.today()
+
+    (crx, cgy, cbz), (crlx, cgly, cblz) = _contrasting_gradient_rgb_stops(prim, light)
     cards_html: list[str] = []
 
     if grouped:
@@ -1186,13 +1214,25 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
                 t = f"{_fmt_day(days_only[0])} – {_fmt_day(days_only[1])}"
                 card_title = html.escape(t, quote=True)
 
+            has_today = any(dt == today_d for dt, _ in chunk)
+            ar, ag, ab = (crx, cgy, cbz) if has_today else (r, g, b)
+            arl, agl, abl = (crlx, cgly, cblz) if has_today else (rl, gl, bl)
+            card_bg_layers = (
+                f"linear-gradient(135deg, rgba({ar},{ag},{ab},0.48) 0%, rgba({arl},{agl},{abl},0.32) 50%, rgba({ar},{ag},{ab},0.42) 100%), "
+                f"linear-gradient(180deg, #26262a 0%, #18181c 100%)"
+            )
+
             body_parts: list[str] = []
             for dt, pairs in chunk:
                 if len(chunk) > 1:
                     sub_l = html.escape(_fmt_day(dt), quote=True)
+                    if dt == today_d:
+                        sub_col_e = html.escape(f"#{ar:02x}{ag:02x}{ab:02x}", quote=True)
+                    else:
+                        sub_col_e = prim_e
                     body_parts.append(
                         f'<div style="margin-top:0.55rem;font-family:Inter,sans-serif;font-size:0.72rem;'
-                        f"font-weight:600;color:{prim_e};letter-spacing:0.02em;\">{sub_l}</div>"
+                        f"font-weight:600;color:{sub_col_e};letter-spacing:0.02em;\">{sub_l}</div>"
                     )
                 for name, cell in pairs:
                     line = html.escape(f"{name} - {cell}", quote=True)
@@ -1208,8 +1248,8 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
                 f'<div class="nwst-bday-card" style="'
                 f"flex:0 0 auto;width:min(300px,85vw);scroll-snap-align:start;"
                 f"background:{card_bg_layers};border-radius:18px;padding:14px 14px 12px 14px;"
-                f"border:1px solid rgba({r},{g},{b},0.38);"
-                f"box-shadow:0 8px 24px rgba(0,0,0,0.4),0 4px 18px rgba({r},{g},{b},0.14);"
+                f"border:1px solid rgba({ar},{ag},{ab},0.42);"
+                f"box-shadow:0 8px 24px rgba(0,0,0,0.4),0 4px 18px rgba({ar},{ag},{ab},0.16);"
                 f'">'
                 f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.95rem;'
                 f'color:#f5f5f7;line-height:1.25;">{card_title}</div>'
