@@ -5602,7 +5602,7 @@ with st.sidebar:
     pending_psq = st.session_state.get("pending_psq_email")
     if pending_psq:
         confirm_msg = (
-            "Send Weekly Check-In email now? (Two attachments: check-in summary & roster, plus cell-health table as separate PDF.)"
+            "Send Weekly Check-In email now?"
             if pending_psq == "weekly_checkin"
             else "Send Current Cell Health email now? (PDF is the NWST cell-health table only.)"
         )
