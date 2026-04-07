@@ -148,6 +148,20 @@ def load_cell_zone_map(client: Any, _sheet_id: str) -> dict[str, str]:
     return cell_to_zone
 
 
+def _unique_sheet_column_names(header_row: list[Any]) -> list[str]:
+    """Make header labels unique so DataFrame JSON and column access are well-defined."""
+    counts: dict[str, int] = {}
+    out: list[str] = []
+    for i, cell in enumerate(header_row):
+        base = str(cell).strip() if cell is not None else ""
+        if not base:
+            base = f"Unnamed_{i}"
+        n = counts.get(base, 0)
+        counts[base] = n + 1
+        out.append(base if n == 0 else f"{base}_{n}")
+    return out
+
+
 def load_historical_cell_status_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
     try:
         spreadsheet = client.open_by_key(sheet_id)
@@ -155,7 +169,8 @@ def load_historical_cell_status_df(client: Any, sheet_id: str) -> pd.DataFrame |
         data = ws.get_all_values()
         if not data or len(data) < 2:
             return None
-        return pd.DataFrame(data[1:], columns=data[0])
+        cols = _unique_sheet_column_names(data[0])
+        return pd.DataFrame(data[1:], columns=cols)
     except Exception:
         return None
 
@@ -167,7 +182,8 @@ def load_cg_combined_df(client: Any, sheet_id: str) -> pd.DataFrame | None:
         data = ws.get_all_values()
         if not data or len(data) < 2:
             return None
-        return pd.DataFrame(data[1:], columns=data[0])
+        cols = _unique_sheet_column_names(data[0])
+        return pd.DataFrame(data[1:], columns=cols)
     except Exception:
         return None
 
@@ -180,7 +196,8 @@ def load_nwst_attendance_rollup_df(client: Any, sheet_id: str) -> pd.DataFrame |
         data = ws.get_all_values()
         if not data or len(data) < 2:
             return None
-        return pd.DataFrame(data[1:], columns=data[0])
+        cols = _unique_sheet_column_names(data[0])
+        return pd.DataFrame(data[1:], columns=cols)
     except Exception:
         return None
 
