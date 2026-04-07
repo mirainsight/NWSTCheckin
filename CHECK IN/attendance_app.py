@@ -889,6 +889,39 @@ def _month_day_from_sheets_serial(n: float) -> tuple[int, int] | None:
     return (d.month, d.day)
 
 
+def _parse_en_dd_mmm_yyyy(s: str) -> tuple[int, int] | None:
+    """
+    CG Combined column G style: ``09 Oct 2026`` (DD + space + 3-letter English month + space + YYYY).
+    Locale-independent; year is ignored for recurring birthday.
+    """
+    mon_map = {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+    m = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})", (s or "").strip())
+    if not m:
+        return None
+    try:
+        d = int(m.group(1))
+    except ValueError:
+        return None
+    key = m.group(2).strip().lower()[:3]
+    month = mon_map.get(key)
+    if month is None or not _valid_month_day(month, d):
+        return None
+    return (month, d)
+
+
 def _parse_birthday_month_day(val) -> tuple[int, int] | None:
     """Parse a sheet Birthday value to (month, day). Supports dates, serials, and common text formats."""
     if val is None:
@@ -906,9 +939,14 @@ def _parse_birthday_month_day(val) -> tuple[int, int] | None:
             return (int(val.month), int(val.day))
         except (TypeError, ValueError):
             pass
-    s = str(val).strip()
-    if not s:
+    s_raw = str(val).strip()
+    if not s_raw:
         return None
+    s = re.sub(r"[\u00a0\u202f]", " ", s_raw)
+    s = re.sub(r"\s+", " ", s).strip()
+    dd_mmm = _parse_en_dd_mmm_yyyy(s)
+    if dd_mmm:
+        return dd_mmm
     parts = re.split(r"[/.\-]", s)
     nums: list[int] = []
     for p in parts:
@@ -1038,6 +1076,40 @@ def _group_birthdays_near_date(
     return out
 
 
+def _chunk_birthday_days_into_cards(
+    grouped: list[tuple[date, list[tuple[str, str]]]],
+) -> list[list[tuple[date, list[tuple[str, str]]]]]:
+    """Merge up to **two consecutive calendar days** (that have birthdays) into one horizontal card."""
+    if not grouped:
+        return []
+    cards: list[list[tuple[date, list[tuple[str, str]]]]] = []
+    i = 0
+    n = len(grouped)
+    while i < n:
+        d0, p0 = grouped[i]
+        chunk: list[tuple[date, list[tuple[str, str]]]] = [(d0, p0)]
+        if i + 1 < n:
+            d1, p1 = grouped[i + 1]
+            if d1 == d0 + timedelta(days=1):
+                chunk.append((d1, p1))
+                i += 2
+                cards.append(chunk)
+                continue
+        i += 1
+        cards.append(chunk)
+    return cards
+
+
+def _hex_to_rgb_for_css(h: str) -> tuple[int, int, int]:
+    try:
+        hx = h.lstrip("#")
+        if len(hx) == 6:
+            return (int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16))
+    except ValueError:
+        pass
+    return (91, 192, 235)
+
+
 def birthdays_notice_payload(
     _client, health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
 ) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
@@ -1096,54 +1168,104 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
 
     prim_e = html.escape(prim, quote=True)
     text_e = html.escape(text_main, quote=True)
-    rows_html: list[str] = []
+    r, g, b = _hex_to_rgb_for_css(prim)
+    card_bg = "#2c2c2e"
+    cards_html: list[str] = []
+
     if grouped:
-        for dt, pairs in grouped:
-            label = html.escape(_fmt_day(dt), quote=True)
-            rows_html.append(
-                f'<div style="margin-top:0.65rem;">'
-                f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.8rem;'
-                f"color:{prim_e};letter-spacing:0.04em;margin-bottom:0.35rem;\">{label}</div>"
-                f'<ul style="margin:0;padding-left:1.15rem;color:{text_e};'
-                f'font-family:Inter,sans-serif;font-size:0.82rem;line-height:1.45;">'
+        for chunk in _chunk_birthday_days_into_cards(grouped):
+            days_only = [d for d, _ in chunk]
+            if len(chunk) == 1:
+                card_title = html.escape(_fmt_day(days_only[0]), quote=True)
+            else:
+                t = f"{_fmt_day(days_only[0])} – {_fmt_day(days_only[1])}"
+                card_title = html.escape(t, quote=True)
+
+            body_parts: list[str] = []
+            for dt, pairs in chunk:
+                if len(chunk) > 1:
+                    sub_l = html.escape(_fmt_day(dt), quote=True)
+                    body_parts.append(
+                        f'<div style="margin-top:0.55rem;font-family:Inter,sans-serif;font-size:0.72rem;'
+                        f"font-weight:600;color:{prim_e};letter-spacing:0.02em;\">{sub_l}</div>"
+                    )
+                for name, cell in pairs:
+                    line = html.escape(f"{name} - {cell}", quote=True)
+                    body_parts.append(
+                        f'<div style="margin-top:0.35rem;font-family:Inter,sans-serif;font-size:0.8rem;'
+                        f"line-height:1.35;color:{text_e};\">{line}</div>"
+                    )
+
+            n_b = sum(len(p) for _, p in chunk)
+            foot_n = html.escape(str(n_b), quote=True)
+            foot_label = html.escape("birthday" if n_b == 1 else "birthdays", quote=True)
+            cards_html.append(
+                f'<div class="nwst-bday-card" style="'
+                f"flex:0 0 auto;width:min(300px,85vw);scroll-snap-align:start;"
+                f"background:{card_bg};border-radius:18px;padding:14px 14px 12px 14px;"
+                f"border:1px solid rgba(255,255,255,0.08);box-shadow:0 8px 24px rgba(0,0,0,0.35);"
+                f'">'
+                f'<div style="display:flex;gap:12px;align-items:flex-start;">'
+                f'<div style="flex:1;min-width:0;">'
+                f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.95rem;'
+                f'color:#f5f5f7;line-height:1.25;">{card_title}</div>'
+                f"{''.join(body_parts)}"
+                f'<div style="margin-top:12px;font-family:Inter,sans-serif;font-size:0.74rem;'
+                f"color:rgba(200,200,205,0.85);\">🎂 {foot_n} {foot_label}</div>"
+                f"</div>"
+                f'<div style="flex-shrink:0;width:52px;height:52px;border-radius:16px;'
+                f"border:1px solid rgba({r},{g},{b},0.45);"
+                f"background:rgba({r},{g},{b},0.18);display:flex;align-items:center;"
+                f'justify-content:center;font-size:1.35rem;line-height:1;">🎂</div>'
+                f"</div></div>"
             )
-            for name, cell in pairs:
-                line = html.escape(f"{name} - {cell}", quote=True)
-                rows_html.append(f"<li style=\"margin:0.1rem 0;\">{line}</li>")
-            rows_html.append("</ul></div>")
     else:
         empty_txt = html.escape(
             "No birthdays in this ±5 day window (MYT), or Birthday cells are empty / not recognised.",
             quote=True,
         )
-        rows_html.append(
-            f'<p style="margin:0.65rem 0 0 0;font-family:Inter,sans-serif;font-size:0.82rem;color:{text_e};">{empty_txt}</p>'
+        cards_html.append(
+            f'<div style="flex:1 1 auto;min-width:min(300px,100%);font-family:Inter,sans-serif;'
+            f"font-size:0.82rem;color:{text_e};padding:12px 4px;\">{empty_txt}</div>"
         )
 
+    scroll_row = "".join(cards_html)
     title = html.escape("Birthdays this week", quote=True)
-    sub = html.escape("Rolling ±5 days from today (MYT)", quote=True)
+    sub = html.escape("Swipe sideways · rolling ±5 days (MYT)", quote=True)
     board = f"""
 <div class="nwst-birthday-board" style="
     margin-bottom:1.1rem;
     padding:0.85rem 1rem 1rem 1rem;
-    border-radius:6px;
+    border-radius:12px;
     border:2px solid {prim};
     border-bottom-width:4px;
     background:
-        linear-gradient(180deg, rgba(139,90,43,0.22) 0%, rgba(30,22,14,0.5) 100%),
-        rgba(0,0,0,0.42);
+        linear-gradient(180deg, rgba(139,90,43,0.15) 0%, rgba(24,24,26,0.92) 100%),
+        rgba(0,0,0,0.5);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 14px rgba(0,0,0,0.35);
 ">
   <div style="
       display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:0.35rem;
-      border-bottom:1px dashed rgba(91,192,235,0.45);padding-bottom:0.45rem;margin-bottom:0.15rem;
+      border-bottom:1px dashed rgba(91,192,235,0.45);padding-bottom:0.45rem;margin-bottom:0.75rem;
   ">
     <span style="font-family:'Inter',sans-serif;font-weight:800;font-size:0.72rem;
                  letter-spacing:0.12em;text-transform:uppercase;color:{bg};
                  background:{prim};padding:0.25rem 0.55rem;">📌 {title}</span>
     <span style="font-family:'Inter',sans-serif;font-size:0.68rem;color:{muted};">{sub}</span>
   </div>
-  {''.join(rows_html)}
+  <div class="nwst-bday-scroll" style="
+      display:flex;
+      flex-direction:row;
+      gap:12px;
+      overflow-x:auto;
+      overflow-y:hidden;
+      padding:4px 2px 12px 2px;
+      scroll-snap-type:x mandatory;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-color:rgba({r},{g},{b},0.5) transparent;
+  ">
+    {scroll_row}
+  </div>
 </div>
 """
     st.markdown(board, unsafe_allow_html=True)
