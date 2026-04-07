@@ -1235,8 +1235,7 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     margin-bottom:2.5rem;
     padding:0.85rem 1rem 1rem 1rem;
     border-radius:12px;
-    border:2px solid {prim};
-    border-bottom-width:4px;
+    border:none;
     background:
         linear-gradient(180deg, rgba(139,90,43,0.15) 0%, rgba(24,24,26,0.92) 100%),
         rgba(0,0,0,0.5);
