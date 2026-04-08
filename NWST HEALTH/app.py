@@ -15,6 +15,11 @@ from nwst_shared.nwst_daily_palette import (
     normalize_primary_hex as _normalize_primary_hex,
     theme_from_primary_hex,
 )
+from nwst_shared.nwst_cell_health_cache import (
+    get_cell_health_from_redis,
+    store_cell_health_in_redis,
+    build_cell_health_row,
+)
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -634,7 +639,10 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
 
 
 def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", attendance_stats=None):
-    """Cell health — KPI column layout + Historical Cell Status WoW pills + expandable name tiles."""
+    """Cell health — KPI column layout + Historical Cell Status WoW pills + expandable name tiles.
+
+    Reads from Upstash cache (single source of truth) when available, falls back to live calculation.
+    """
     if attendance_stats is None:
         attendance_stats = {}
 
@@ -645,59 +653,129 @@ def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", 
         st.info("No cell health data available.")
         return
 
-    work_df = display_df.copy()
-    status_columns = [col for col in work_df.columns if "status" in col.lower()]
-    status_col = status_columns[0] if status_columns else None
+    # Try reading from Upstash cache first (single source of truth)
+    cache_hit = False
+    redis = get_redis_client()
+    if redis:
+        cached_data = get_cell_health_from_redis(redis)
+        if cached_data:
+            _cell_scoped = (
+                cell_filter is not None
+                and str(cell_filter).strip()
+                and str(cell_filter).strip().lower() != "all"
+            )
 
-    if status_col:
-        work_df["status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
-        new_count = len(work_df[work_df["status_type"] == "New"])
-        regular_count = len(work_df[work_df["status_type"] == "Regular"])
-        irregular_count = len(work_df[work_df["status_type"] == "Irregular"])
-        follow_up_count = len(work_df[work_df["status_type"] == "Follow Up"])
-        red_count = len(work_df[work_df["status_type"] == "Red"])
-        graduated_count = len(work_df[work_df["status_type"] == "Graduated"])
-    else:
-        total_members_fb = len(work_df)
-        new_count = max(1, int(total_members_fb * 0.20))
-        regular_count = max(1, int(total_members_fb * 0.40))
-        irregular_count = max(1, int(total_members_fb * 0.20))
-        follow_up_count = max(1, int(total_members_fb * 0.10))
-        red_count = max(1, int(total_members_fb * 0.05))
-        graduated_count = (
-            total_members_fb - new_count - regular_count - irregular_count - follow_up_count - red_count
-        )
+            # Find the right row from cache
+            target_row = None
+            if _cell_scoped:
+                # Look for specific cell in cell_rows
+                cell_filter_lower = str(cell_filter).strip().lower()
+                for row in cached_data.get("cell_rows", []):
+                    if str(row.get("cell", "")).strip().lower() == cell_filter_lower:
+                        target_row = row
+                        break
+            else:
+                # Use "All" row
+                target_row = cached_data.get("all_row")
 
-    total_members = new_count + regular_count + irregular_count + follow_up_count + red_count + graduated_count
+            if target_row:
+                cache_hit = True
+                new_count = target_row.get("new_count", 0)
+                regular_count = target_row.get("regular_count", 0)
+                irregular_count = target_row.get("irregular_count", 0)
+                follow_up_count = target_row.get("follow_up_count", 0)
+                red_count = target_row.get("red_count", 0)
+                graduated_count = target_row.get("graduated_count", 0)
+                total_members = target_row.get("total_count", 0)
 
-    _cell_scoped = (
-        cell_filter is not None
-        and str(cell_filter).strip()
-        and str(cell_filter).strip().lower() != "all"
-    )
-    if _cell_scoped:
-        mix_denom = new_count + regular_count + irregular_count + follow_up_count
-        if mix_denom > 0:
-            new_pct = new_count / mix_denom * 100
-            regular_pct = regular_count / mix_denom * 100
-            irregular_pct = irregular_count / mix_denom * 100
-            follow_up_pct = follow_up_count / mix_denom * 100
+                new_pct = target_row.get("new_pct", 0)
+                regular_pct = target_row.get("regular_pct", 0)
+                irregular_pct = target_row.get("irregular_pct", 0)
+                follow_up_pct = target_row.get("follow_up_pct", 0)
+                red_pct = target_row.get("red_pct", 0)
+                graduated_pct = target_row.get("graduated_pct", 0)
+
+                # Build curr_agg and prev_agg from cached deltas for WoW pills
+                delta_new = target_row.get("delta_new", 0)
+                delta_regular = target_row.get("delta_regular", 0)
+                delta_irregular = target_row.get("delta_irregular", 0)
+                delta_follow_up = target_row.get("delta_follow_up", 0)
+
+                # Create synthetic agg dicts for WoW pill rendering
+                curr_agg = {
+                    "new": new_count,
+                    "regular": regular_count,
+                    "irregular": irregular_count,
+                    "follow up": follow_up_count,
+                    "red": red_count,
+                    "graduated": graduated_count,
+                    "total": total_members,
+                }
+                prev_agg = {
+                    "new": new_count - delta_new,
+                    "regular": regular_count - delta_regular,
+                    "irregular": irregular_count - delta_irregular,
+                    "follow up": follow_up_count - delta_follow_up,
+                    "red": red_count,
+                    "graduated": graduated_count,
+                    "total": total_members - delta_new - delta_regular - delta_irregular - delta_follow_up,
+                }
+
+    # Fallback: calculate from live display_df if cache miss
+    if not cache_hit:
+        work_df = display_df.copy()
+        status_columns = [col for col in work_df.columns if "status" in col.lower()]
+        status_col = status_columns[0] if status_columns else None
+
+        if status_col:
+            work_df["status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
+            new_count = len(work_df[work_df["status_type"] == "New"])
+            regular_count = len(work_df[work_df["status_type"] == "Regular"])
+            irregular_count = len(work_df[work_df["status_type"] == "Irregular"])
+            follow_up_count = len(work_df[work_df["status_type"] == "Follow Up"])
+            red_count = len(work_df[work_df["status_type"] == "Red"])
+            graduated_count = len(work_df[work_df["status_type"] == "Graduated"])
         else:
-            new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
-        red_pct = 0.0
-        graduated_pct = 0.0
-    else:
-        new_pct = (new_count / total_members * 100) if total_members > 0 else 0
-        regular_pct = (regular_count / total_members * 100) if total_members > 0 else 0
-        irregular_pct = (irregular_count / total_members * 100) if total_members > 0 else 0
-        follow_up_pct = (follow_up_count / total_members * 100) if total_members > 0 else 0
-        red_pct = (red_count / total_members * 100) if total_members > 0 else 0
-        graduated_pct = (graduated_count / total_members * 100) if total_members > 0 else 0
+            total_members_fb = len(work_df)
+            new_count = max(1, int(total_members_fb * 0.20))
+            regular_count = max(1, int(total_members_fb * 0.40))
+            irregular_count = max(1, int(total_members_fb * 0.20))
+            follow_up_count = max(1, int(total_members_fb * 0.10))
+            red_count = max(1, int(total_members_fb * 0.05))
+            graduated_count = (
+                total_members_fb - new_count - regular_count - irregular_count - follow_up_count - red_count
+            )
 
-    hist_df = load_historical_cell_status_dataframe()
-    curr_agg, prev_agg = None, None
-    if hist_df is not None and not hist_df.empty:
-        curr_agg, prev_agg, _, _ = _nwst_hist_cell_wow_for_scope(hist_df, cell_filter)
+        total_members = new_count + regular_count + irregular_count + follow_up_count + red_count + graduated_count
+
+        _cell_scoped = (
+            cell_filter is not None
+            and str(cell_filter).strip()
+            and str(cell_filter).strip().lower() != "all"
+        )
+        if _cell_scoped:
+            mix_denom = new_count + regular_count + irregular_count + follow_up_count
+            if mix_denom > 0:
+                new_pct = new_count / mix_denom * 100
+                regular_pct = regular_count / mix_denom * 100
+                irregular_pct = irregular_count / mix_denom * 100
+                follow_up_pct = follow_up_count / mix_denom * 100
+            else:
+                new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
+            red_pct = 0.0
+            graduated_pct = 0.0
+        else:
+            new_pct = (new_count / total_members * 100) if total_members > 0 else 0
+            regular_pct = (regular_count / total_members * 100) if total_members > 0 else 0
+            irregular_pct = (irregular_count / total_members * 100) if total_members > 0 else 0
+            follow_up_pct = (follow_up_count / total_members * 100) if total_members > 0 else 0
+            red_pct = (red_count / total_members * 100) if total_members > 0 else 0
+            graduated_pct = (graduated_count / total_members * 100) if total_members > 0 else 0
+
+        hist_df = load_historical_cell_status_dataframe()
+        curr_agg, prev_agg = None, None
+        if hist_df is not None and not hist_df.empty:
+            curr_agg, prev_agg, _, _ = _nwst_hist_cell_wow_for_scope(hist_df, cell_filter)
 
     wow_new = _nwst_cell_health_wow_pill_html("new", curr_agg, prev_agg)
     wow_regular = _nwst_cell_health_wow_pill_html("regular", curr_agg, prev_agg)
@@ -1823,6 +1901,158 @@ def _nwst_cell_health_wow_pill_html(bucket_key, curr_agg, prev_agg):
         '<div class="ch-pill-wrap"><span class="ch-pill ch-pill--hero ch-pill-na">'
         "Need 2 log snapshots</span></div>"
     )
+
+
+def calculate_and_cache_cell_health(redis_client, cg_df, hist_df, cell_to_zone_map):
+    """
+    Calculate cell health data from CG Combined + Historical Cell Status and cache in Redis.
+
+    This is the single source of truth for cell health metrics, used by both:
+    - KPI cards in app.py
+    - PDF reports in nwst_cell_health_report.py
+
+    Args:
+        redis_client: Upstash Redis client
+        cg_df: DataFrame from CG Combined tab
+        hist_df: DataFrame from Historical Cell Status tab (may be None)
+        cell_to_zone_map: dict mapping cell name (lowercase) -> zone string
+    """
+    from datetime import date
+
+    if cg_df is None or cg_df.empty:
+        return
+
+    # Find status column in CG Combined
+    status_columns = [col for col in cg_df.columns if "status" in col.lower()]
+    status_col = status_columns[0] if status_columns else None
+
+    # Find cell column in CG Combined
+    cg_cell_col = None
+    for col in cg_df.columns:
+        if col.lower().strip() in ("cell", "group"):
+            cg_cell_col = col
+            break
+
+    if not cg_cell_col:
+        return
+
+    work_df = cg_df.copy()
+    if status_col:
+        work_df["_status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
+
+    # Get WoW deltas from Historical Cell Status
+    wow_by_cell = {}  # cell_name -> (delta_new, delta_regular, delta_irregular, delta_follow_up)
+    if hist_df is not None and not hist_df.empty:
+        # Get all unique cells from hist_df
+        lk = _nwst_hist_cell_col_lookup(hist_df)
+        cell_c = _nwst_hist_cell_get_col(lk, "cell")
+        if cell_c:
+            unique_cells = hist_df[cell_c].dropna().unique()
+            for cell_name in unique_cells:
+                cell_s = str(cell_name).strip()
+                if not cell_s or cell_s.lower() in ("all", "archive"):
+                    continue
+                curr_agg, prev_agg, _, _ = _nwst_hist_cell_wow_for_scope(hist_df, cell_s)
+                if curr_agg and prev_agg:
+                    d_new = int(curr_agg.get("new", 0)) - int(prev_agg.get("new", 0))
+                    d_reg = int(curr_agg.get("regular", 0)) - int(prev_agg.get("regular", 0))
+                    d_irr = int(curr_agg.get("irregular", 0)) - int(prev_agg.get("irregular", 0))
+                    d_fu = int(curr_agg.get("follow up", 0) or curr_agg.get("follow_up", 0) or 0) - \
+                           int(prev_agg.get("follow up", 0) or prev_agg.get("follow_up", 0) or 0)
+                    wow_by_cell[cell_s.lower()] = (d_new, d_reg, d_irr, d_fu)
+
+        # Get "All" WoW deltas
+        curr_all, prev_all, _, _ = _nwst_hist_cell_wow_for_scope(hist_df, "All")
+        if curr_all and prev_all:
+            d_new = int(curr_all.get("new", 0)) - int(prev_all.get("new", 0))
+            d_reg = int(curr_all.get("regular", 0)) - int(prev_all.get("regular", 0))
+            d_irr = int(curr_all.get("irregular", 0)) - int(prev_all.get("irregular", 0))
+            d_fu = int(curr_all.get("follow up", 0) or curr_all.get("follow_up", 0) or 0) - \
+                   int(prev_all.get("follow up", 0) or prev_all.get("follow_up", 0) or 0)
+            wow_by_cell["all"] = (d_new, d_reg, d_irr, d_fu)
+
+    # Calculate counts per cell from CG Combined (live data)
+    cell_rows = []
+    all_counts = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
+
+    for cell_name, group in work_df.groupby(cg_cell_col):
+        cell_s = str(cell_name).strip()
+        if not cell_s or cell_s.lower() in ("all", "archive"):
+            continue
+
+        if status_col:
+            new_c = len(group[group["_status_type"] == "New"])
+            reg_c = len(group[group["_status_type"] == "Regular"])
+            irr_c = len(group[group["_status_type"] == "Irregular"])
+            fu_c = len(group[group["_status_type"] == "Follow Up"])
+            red_c = len(group[group["_status_type"] == "Red"])
+            grad_c = len(group[group["_status_type"] == "Graduated"])
+        else:
+            # Fallback: estimate distribution
+            n = len(group)
+            new_c = max(1, int(n * 0.20))
+            reg_c = max(1, int(n * 0.40))
+            irr_c = max(1, int(n * 0.20))
+            fu_c = max(1, int(n * 0.10))
+            red_c = max(1, int(n * 0.05))
+            grad_c = max(0, n - new_c - reg_c - irr_c - fu_c - red_c)
+
+        # Accumulate for "All" row
+        all_counts["new"] += new_c
+        all_counts["regular"] += reg_c
+        all_counts["irregular"] += irr_c
+        all_counts["follow_up"] += fu_c
+        all_counts["red"] += red_c
+        all_counts["graduated"] += grad_c
+
+        # Get WoW deltas for this cell
+        deltas = wow_by_cell.get(cell_s.lower(), (0, 0, 0, 0))
+
+        # Get zone for this cell
+        zone = cell_to_zone_map.get(cell_s.lower(), "")
+
+        cell_rows.append(build_cell_health_row(
+            cell_name=cell_s,
+            zone=zone,
+            new_count=new_c,
+            regular_count=reg_c,
+            irregular_count=irr_c,
+            follow_up_count=fu_c,
+            red_count=red_c,
+            graduated_count=grad_c,
+            delta_new=deltas[0],
+            delta_regular=deltas[1],
+            delta_irregular=deltas[2],
+            delta_follow_up=deltas[3],
+        ))
+
+    # Build "All" row with WoW deltas from Historical Cell Status
+    all_deltas = wow_by_cell.get("all", (0, 0, 0, 0))
+    all_row = build_cell_health_row(
+        cell_name="All",
+        zone="PSQ",
+        new_count=all_counts["new"],
+        regular_count=all_counts["regular"],
+        irregular_count=all_counts["irregular"],
+        follow_up_count=all_counts["follow_up"],
+        red_count=all_counts["red"],
+        graduated_count=all_counts["graduated"],
+        delta_new=all_deltas[0],
+        delta_regular=all_deltas[1],
+        delta_irregular=all_deltas[2],
+        delta_follow_up=all_deltas[3],
+    )
+
+    # Build the cache payload
+    cell_health_data = {
+        "snapshot_date": date.today().isoformat(),
+        "all_row": all_row,
+        "cell_rows": cell_rows,
+        "source": "CG Combined + Historical Cell Status",
+    }
+
+    # Store in Redis
+    store_cell_health_in_redis(redis_client, cell_health_data)
 
 
 def _nwst_normalize_member_name(s):
@@ -5049,6 +5279,41 @@ if current_page == "cg":
                                     redis.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
                         except Exception as e:
                             st.warning(f"⚠️ Could not sync Attendance data: {e}")
+
+                        # Sync Cell Health data (single source of truth for KPI cards and PDF reports)
+                        try:
+                            # Load Historical Cell Status for WoW deltas
+                            hist_df = None
+                            try:
+                                hist_ws = spreadsheet.worksheet(NWST_HISTORICAL_CELL_STATUS_TAB)
+                                hist_data = hist_ws.get_all_values()
+                                if hist_data and len(hist_data) >= 2:
+                                    hist_df = pd.DataFrame(hist_data[1:], columns=hist_data[0])
+                            except WorksheetNotFound:
+                                pass
+
+                            # Load cell-to-zone map from Attendance sheet Key Values tab
+                            cell_to_zone_map = {"all": "PSQ"}
+                            try:
+                                att_sheet_id = os.getenv("NWST_ATTENDANCE_SHEET_ID", "").strip() or "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
+                                att_spreadsheet = client.open_by_key(att_sheet_id)
+                                kv_ws = att_spreadsheet.worksheet("Key Values")
+                                kv_data = kv_ws.get_all_values()
+                                if kv_data and len(kv_data) > 1:
+                                    for row in kv_data[1:]:
+                                        if len(row) >= 3:
+                                            cn = row[0].strip()
+                                            zn = row[2].strip()
+                                            if cn and zn:
+                                                cell_to_zone_map[cn.lower()] = zn
+                            except Exception:
+                                pass
+
+                            # Calculate and cache cell health
+                            if redis:
+                                calculate_and_cache_cell_health(redis, df, hist_df, cell_to_zone_map)
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not sync Cell Health data: {e}")
 
                         if redis:
                             st.success("✅ Attendance updated successfully!")
