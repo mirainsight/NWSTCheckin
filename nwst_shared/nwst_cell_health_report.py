@@ -3,6 +3,10 @@ from __future__ import annotations
 __doc__ = """
 Cell health summary for PDF/email reports (NWST Health sheet).
 
+**Primary approach**: Read from Upstash cache (populated by app.py sync).
+This ensures PDF reports show the same data as KPI cards in the NWST HEALTH app.
+
+**Fallback approach** (if cache unavailable):
 Zone for every row comes from the **Attendance Sheet** Key Values tab (column A = cell name, C = zone).
 Historical Cell Status may supply counts and snapshot dates but never overrides zone.
 The aggregate / cell name **All** is always shown as zone **PSQ**.
@@ -20,6 +24,11 @@ from datetime import date
 from typing import Any
 
 import pandas as pd
+
+from nwst_shared.nwst_cell_health_cache import (
+    get_cell_health_from_redis,
+    build_table_rows_from_cache,
+)
 
 # Fixed zone for roll-up row and any cell literally named All / ALL.
 _ZONE_ALL_PSQ = "PSQ"
@@ -665,16 +674,30 @@ def build_cell_health_table_rows(
     client: Any,
     sheet_id: str,
     target_date_str: str | None = None,
+    redis_client: Any = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """
     Return (rows with keys zone, cell, new_s, regular_s, irregular_s, follow_up_s),
     and subtitle text (snapshot / source).
 
+    **Primary approach**: Read from Upstash cache (populated by app.py sync).
+    This ensures PDF reports show the same data as KPI cards.
+
+    **Fallback approach** (if cache unavailable):
     Hybrid approach (matching app.py KPI cards):
     - Individual cell rows: from Historical Cell Status (with WoW deltas)
     - "All" row percentages: from CG Combined (live member counts)
     - "All" row WoW deltas: from Historical Cell Status (snapshot comparison)
     """
+    # Try reading from Upstash cache first (single source of truth)
+    if redis_client is not None:
+        cached_data = get_cell_health_from_redis(redis_client)
+        if cached_data:
+            rows, src = build_table_rows_from_cache(cached_data)
+            if rows:
+                return rows, src
+
+    # Fallback: calculate from Google Sheets data
     cell_to_zone = load_cell_zone_map(client, sheet_id)
 
     hist = load_historical_cell_status_df(client, sheet_id)
@@ -807,4 +830,27 @@ def build_cell_health_table_rows(
     rows_filtered = [r for r in rows_c if r.get("cell", "").lower() != "archive"]
     per_sorted = sorted(rows_filtered, key=sort_key)
     return [all_row] + per_sorted, f"NWST Health — CG Combined (estimated mix, {snap_d.isoformat()})"
+
+
+def build_cell_health_table_rows_from_cache(
+    redis_client: Any,
+) -> tuple[list[dict[str, Any]], str] | None:
+    """
+    Convenience function to get cell health table rows directly from Upstash cache.
+
+    Returns (rows, source_string) if cache is available and valid, None otherwise.
+    Use this when you only want to read from cache without Google Sheets fallback.
+    """
+    if redis_client is None:
+        return None
+
+    cached_data = get_cell_health_from_redis(redis_client)
+    if not cached_data:
+        return None
+
+    rows, src = build_table_rows_from_cache(cached_data)
+    if not rows:
+        return None
+
+    return rows, src
 
