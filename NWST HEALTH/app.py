@@ -721,6 +721,13 @@ def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", 
                     "total": total_members - delta_new - delta_regular - delta_irregular - delta_follow_up,
                 }
 
+                # Still need work_df and status_col for member tiles even with cached aggregates
+                work_df = display_df.copy()
+                status_columns = [col for col in work_df.columns if "status" in col.lower()]
+                status_col = status_columns[0] if status_columns else None
+                if status_col:
+                    work_df["status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
+
     # Fallback: calculate from live display_df if cache miss
     if not cache_hit:
         work_df = display_df.copy()
