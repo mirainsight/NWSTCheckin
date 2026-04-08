@@ -47,6 +47,29 @@ try:
 except ImportError:
     st = None  # type: ignore[assignment]
 
+try:
+    from upstash_redis import Redis
+except ImportError:
+    Redis = None  # type: ignore[assignment]
+
+
+def _redis_client():
+    """Get Upstash Redis client for reading cached cell health data."""
+    if Redis is None:
+        return None
+    url = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
+    token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
+    if not url or not token:
+        if st is not None and hasattr(st, "secrets"):
+            url = url or (st.secrets.get("UPSTASH_REDIS_REST_URL") or "").strip()
+            token = token or (st.secrets.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+    if not url or not token:
+        return None
+    try:
+        return Redis(url=url, token=token)
+    except Exception:
+        return None
+
 
 def _gspread_client():
     import gspread
@@ -697,12 +720,14 @@ def _run_report(
     attach_cell_health_companion: bool = False,
 ) -> None:
     client = _gspread_client()
+    redis = _redis_client()
     sheet_ch = nwst_health_sheet_id()
     rows: list[dict] = []
     subtitle = ""
     if include_cell_health:
         # Cell health always reflects latest NWST Health (today), even for a historical attendance date.
-        rows, subtitle = build_cell_health_table_rows(client, sheet_ch, target_date_str=None)
+        # Try reading from Upstash cache first (single source of truth).
+        rows, subtitle = build_cell_health_table_rows(client, sheet_ch, target_date_str=None, redis_client=redis)
         if target_date:
             subtitle = f"{subtitle} Attendance report date: {target_date}."
     else:
@@ -753,7 +778,7 @@ def _run_report(
         and include_checkin_section
     ):
         rows_ch, sub_ch = build_cell_health_table_rows(
-            client, sheet_ch, target_date_str=None
+            client, sheet_ch, target_date_str=None, redis_client=redis
         )
         if target_date:
             sub_ch = f"{sub_ch} Attendance report date: {target_date}."
