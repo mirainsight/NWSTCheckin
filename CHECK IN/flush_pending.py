@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Full sheet sync for CHECK IN (aligned with ``attendance_app.perform_hard_sheet_resync``):
+Full sheet sync for CHECK IN + NWST Health apps:
 
 1. Append pending check-in rows from Upstash to Google Sheets (per selected tabs).
-2. Clear Upstash caches: options, zone mapping, today’s attendance snapshots (all three tabs),
+2. Clear Upstash caches: options, zone mapping, today's attendance snapshots (all three tabs),
    ministry option keys, newcomers snapshot.
-3. Refresh Theme Override snapshot into Upstash (same as main app after resync).
+3. Sync NWST Health data (same as "Sync from Google Sheets" button in NWST HEALTH/app.py):
+   - CG Combined data (nwst_cg_combined_data)
+   - Ministries Combined data (nwst_ministries_combined_data)
+   - Attendance stats (nwst_attendance_stats)
+   - Last sync time (nwst_last_sync_time)
+4. Refresh Theme Override snapshot into Upstash.
+5. Refresh birthday data from CG Combined.
+6. Refresh Cell Health data (single source of truth for KPI cards and PDF reports).
 
 **CLI (default = full sync):**
   cd "CHECK IN" && python flush_pending.py
@@ -39,7 +46,15 @@ from nwst_shared.nwst_daily_palette import (
 )
 from nwst_shared.nwst_cell_health_report import (
     load_cg_combined_df,
+    load_historical_cell_status_df,
     nwst_health_sheet_id,
+    nwst_attendance_sheet_id,
+    NWST_KEY_VALUES_TAB,
+    extract_cell_sheet_status_type,
+)
+from nwst_shared.nwst_cell_health_cache import (
+    store_cell_health_in_redis,
+    build_cell_health_row,
 )
 
 # CHECK IN folder (this script lives next to ``attendance_app.py``)
@@ -573,6 +588,357 @@ def _refresh_birthdays_cache(
         return False
 
 
+def _refresh_nwst_health_data(
+    redis_client,
+    gsheet_client,
+    log_lines: list[str] | None,
+) -> bool:
+    """
+    Refresh NWST Health data into Upstash - same as app.py "Sync from Google Sheets" button.
+
+    Syncs:
+    - CG Combined data (nwst_cg_combined_data)
+    - Ministries Combined data (nwst_ministries_combined_data)
+    - Attendance stats (nwst_attendance_stats)
+    - Last sync time (nwst_last_sync_time)
+    - Clears attendance chart grid cache
+    """
+    import pandas as pd
+
+    health_sid = (nwst_health_sheet_id() or "").strip()
+    if not health_sid or not redis_client or not gsheet_client:
+        return True
+
+    try:
+        spreadsheet = gsheet_client.open_by_key(health_sid)
+
+        # 1. Sync CG Combined data
+        try:
+            worksheet = spreadsheet.worksheet("CG Combined")
+            data = worksheet.get_all_values()
+
+            if data:
+                df = pd.DataFrame(data[1:], columns=data[0])
+                cache_data = {
+                    "columns": df.columns.tolist(),
+                    "rows": df.values.tolist()
+                }
+                redis_client.set("nwst_cg_combined_data", json.dumps(cache_data), ex=300)
+                _emit("  CG Combined data cached", log_lines, with_ts=False)
+            else:
+                _emit("  CG Combined: no data found", log_lines, with_ts=False)
+                return True
+        except Exception as e:
+            _emit(f"  CG Combined sync failed: {e}", log_lines, err=True, with_ts=False)
+            return False
+
+        # 2. Sync Ministries Combined data
+        try:
+            ministries_worksheet = spreadsheet.worksheet("Ministries Combined")
+            ministries_data = ministries_worksheet.get_all_values()
+
+            if ministries_data:
+                ministries_df = pd.DataFrame(ministries_data[1:], columns=ministries_data[0])
+                cache_data = {
+                    "columns": ministries_df.columns.tolist(),
+                    "rows": ministries_df.values.tolist()
+                }
+                redis_client.set("nwst_ministries_combined_data", json.dumps(cache_data), ex=300)
+                _emit("  Ministries Combined data cached", log_lines, with_ts=False)
+        except Exception as e:
+            _emit(f"  Ministries sync skipped: {e}", log_lines, with_ts=False)
+
+        # 3. Sync Attendance stats
+        try:
+            att_worksheet = spreadsheet.worksheet("Attendance")
+            att_data = att_worksheet.get_all_values()
+
+            if att_data and len(att_data) >= 2:
+                att_headers = att_data[0]
+                att_df = pd.DataFrame(att_data[1:], columns=att_headers)
+
+                # Load CG Combined for name/cell mapping
+                cg_worksheet = spreadsheet.worksheet("CG Combined")
+                cg_data = cg_worksheet.get_all_values()
+
+                if cg_data and len(cg_data) >= 2:
+                    cg_headers = cg_data[0]
+                    cg_df = pd.DataFrame(cg_data[1:], columns=cg_headers)
+
+                    # Find name and cell columns in CG Combined
+                    cg_name_col = None
+                    cg_cell_col = None
+                    for col in cg_df.columns:
+                        if col.lower().strip() in ['name', 'member name', 'member']:
+                            cg_name_col = col
+                        if col.lower().strip() in ['cell', 'group']:
+                            cg_cell_col = col
+
+                    if not cg_name_col:
+                        cg_name_col = cg_df.columns[0]
+
+                    # Calculate attendance stats
+                    attendance_stats = {}
+                    att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
+
+                    if att_name_col:
+                        for att_name in att_df[att_name_col].unique():
+                            if pd.isna(att_name) or att_name == '':
+                                continue
+
+                            att_name_str = str(att_name).strip()
+                            member_att_data = att_df[att_df[att_name_col] == att_name]
+
+                            attendance_count = 0
+                            total_services = 0
+
+                            for col_idx, col in enumerate(att_df.columns):
+                                if col_idx >= 3:  # Skip columns A, B, C
+                                    total_services += 1
+                                    values = member_att_data[col].values
+                                    if len(values) > 0 and str(values[0]).strip() == '1':
+                                        attendance_count += 1
+
+                            # Find cell from CG Combined
+                            cell_info = ""
+                            if cg_name_col and cg_cell_col:
+                                cg_match = cg_df[cg_df[cg_name_col].str.strip().str.lower() == att_name_str.lower()]
+                                if not cg_match.empty:
+                                    cell_info = " - " + str(cg_match[cg_cell_col].iloc[0]).strip()
+
+                            if total_services > 0:
+                                key = att_name_str + cell_info
+                                attendance_stats[key] = {
+                                    'attendance': attendance_count,
+                                    'total': total_services,
+                                    'percentage': round(attendance_count / total_services * 100) if total_services > 0 else 0
+                                }
+
+                    redis_client.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
+                    _emit("  Attendance stats cached", log_lines, with_ts=False)
+        except Exception as e:
+            _emit(f"  Attendance sync skipped: {e}", log_lines, with_ts=False)
+
+        # 4. Store last sync time (MYT)
+        myt = timezone(timedelta(hours=8))
+        sync_time_myt = datetime.now(myt)
+        sync_time_str = sync_time_myt.strftime("%Y-%m-%d %H:%M:%S MYT")
+        redis_client.set("nwst_last_sync_time", sync_time_str)
+
+        # 5. Clear attendance chart grid cache
+        try:
+            redis_client.delete("nwst_attendance_chart_grid")
+        except Exception:
+            pass
+
+        return True
+    except Exception as e:
+        _emit(f"Error: NWST Health sync failed ({e})", log_lines, err=True, with_ts=False)
+        return False
+
+
+def _refresh_cell_health_cache(
+    redis_client,
+    gsheet_client,
+    log_lines: list[str] | None,
+) -> bool:
+    """
+    Refresh Cell Health data into Upstash (single source of truth for KPI cards and PDF reports).
+
+    Same calculation as app.py calculate_and_cache_cell_health().
+    """
+    from datetime import date
+    import pandas as pd
+
+    health_sid = (nwst_health_sheet_id() or "").strip()
+    if not health_sid or not redis_client or not gsheet_client:
+        return True
+
+    try:
+        # Load CG Combined for live member counts
+        cg_df = load_cg_combined_df(gsheet_client, health_sid)
+        if cg_df is None or cg_df.empty:
+            _emit("  Cell health: CG Combined empty or unavailable (skipped)", log_lines, with_ts=False)
+            return True
+
+        # Load Historical Cell Status for WoW deltas
+        hist_df = load_historical_cell_status_df(gsheet_client, health_sid)
+
+        # Load cell-to-zone map from Attendance sheet Key Values tab
+        cell_to_zone_map = {"all": "PSQ"}
+        try:
+            att_sid = (nwst_attendance_sheet_id() or "").strip()
+            if att_sid:
+                att_spreadsheet = gsheet_client.open_by_key(att_sid)
+                kv_ws = att_spreadsheet.worksheet(NWST_KEY_VALUES_TAB)
+                kv_data = kv_ws.get_all_values()
+                if kv_data and len(kv_data) > 1:
+                    for row in kv_data[1:]:
+                        if len(row) >= 3:
+                            cn = row[0].strip()
+                            zn = row[2].strip()
+                            if cn and zn:
+                                cell_to_zone_map[cn.lower()] = zn
+        except Exception:
+            pass
+
+        # Find status and cell columns in CG Combined
+        status_columns = [col for col in cg_df.columns if "status" in col.lower()]
+        status_col = status_columns[0] if status_columns else None
+
+        cg_cell_col = None
+        for col in cg_df.columns:
+            if col.lower().strip() in ("cell", "group"):
+                cg_cell_col = col
+                break
+
+        if not cg_cell_col:
+            _emit("  Cell health: no cell column found (skipped)", log_lines, with_ts=False)
+            return True
+
+        work_df = cg_df.copy()
+        if status_col:
+            work_df["_status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
+
+        # Get WoW deltas from Historical Cell Status (simplified approach)
+        wow_by_cell = {}
+        if hist_df is not None and not hist_df.empty:
+            # Parse snapshot dates
+            lk = {str(c).strip().lower(): c for c in hist_df.columns}
+            snap_c = lk.get("snapshot date") or lk.get("snapshot")
+            cell_c = lk.get("cell")
+
+            if snap_c and cell_c:
+                hist_df["_snap_parsed"] = pd.to_datetime(hist_df[snap_c], errors="coerce")
+                valid_hist = hist_df[hist_df["_snap_parsed"].notna()].copy()
+
+                if not valid_hist.empty:
+                    # Get unique dates sorted descending
+                    all_dates = sorted(valid_hist["_snap_parsed"].dt.date.unique(), reverse=True)
+
+                    if len(all_dates) >= 2:
+                        snap_curr, snap_prev = all_dates[0], all_dates[1]
+                        valid_hist["_d"] = valid_hist["_snap_parsed"].dt.date
+
+                        # Calculate deltas for each cell
+                        for cell_name in valid_hist[cell_c].dropna().unique():
+                            cell_s = str(cell_name).strip()
+                            if not cell_s or cell_s.lower() in ("all", "archive"):
+                                continue
+
+                            curr_rows = valid_hist[(valid_hist["_d"] == snap_curr) & (valid_hist[cell_c] == cell_name)]
+                            prev_rows = valid_hist[(valid_hist["_d"] == snap_prev) & (valid_hist[cell_c] == cell_name)]
+
+                            def _sum_col(df, *names):
+                                for n in names:
+                                    col = lk.get(n.lower())
+                                    if col and col in df.columns:
+                                        return int(pd.to_numeric(df[col], errors="coerce").fillna(0).sum())
+                                return 0
+
+                            if not curr_rows.empty and not prev_rows.empty:
+                                d_new = _sum_col(curr_rows, "new") - _sum_col(prev_rows, "new")
+                                d_reg = _sum_col(curr_rows, "regular") - _sum_col(prev_rows, "regular")
+                                d_irr = _sum_col(curr_rows, "irregular") - _sum_col(prev_rows, "irregular")
+                                d_fu = _sum_col(curr_rows, "follow up", "follow_up") - _sum_col(prev_rows, "follow up", "follow_up")
+                                wow_by_cell[cell_s.lower()] = (d_new, d_reg, d_irr, d_fu)
+
+                        # Calculate "All" deltas (sum across all cells)
+                        curr_all = valid_hist[valid_hist["_d"] == snap_curr]
+                        prev_all = valid_hist[valid_hist["_d"] == snap_prev]
+                        if not curr_all.empty and not prev_all.empty:
+                            d_new = _sum_col(curr_all, "new") - _sum_col(prev_all, "new")
+                            d_reg = _sum_col(curr_all, "regular") - _sum_col(prev_all, "regular")
+                            d_irr = _sum_col(curr_all, "irregular") - _sum_col(prev_all, "irregular")
+                            d_fu = _sum_col(curr_all, "follow up", "follow_up") - _sum_col(prev_all, "follow up", "follow_up")
+                            wow_by_cell["all"] = (d_new, d_reg, d_irr, d_fu)
+
+        # Calculate counts per cell from CG Combined (live data)
+        cell_rows = []
+        all_counts = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
+
+        for cell_name, group in work_df.groupby(cg_cell_col):
+            cell_s = str(cell_name).strip()
+            if not cell_s or cell_s.lower() in ("all", "archive"):
+                continue
+
+            if status_col:
+                new_c = len(group[group["_status_type"] == "New"])
+                reg_c = len(group[group["_status_type"] == "Regular"])
+                irr_c = len(group[group["_status_type"] == "Irregular"])
+                fu_c = len(group[group["_status_type"] == "Follow Up"])
+                red_c = len(group[group["_status_type"] == "Red"])
+                grad_c = len(group[group["_status_type"] == "Graduated"])
+            else:
+                n = len(group)
+                new_c = max(1, int(n * 0.20))
+                reg_c = max(1, int(n * 0.40))
+                irr_c = max(1, int(n * 0.20))
+                fu_c = max(1, int(n * 0.10))
+                red_c = max(1, int(n * 0.05))
+                grad_c = max(0, n - new_c - reg_c - irr_c - fu_c - red_c)
+
+            all_counts["new"] += new_c
+            all_counts["regular"] += reg_c
+            all_counts["irregular"] += irr_c
+            all_counts["follow_up"] += fu_c
+            all_counts["red"] += red_c
+            all_counts["graduated"] += grad_c
+
+            deltas = wow_by_cell.get(cell_s.lower(), (0, 0, 0, 0))
+            zone = cell_to_zone_map.get(cell_s.lower(), "")
+
+            cell_rows.append(build_cell_health_row(
+                cell_name=cell_s,
+                zone=zone,
+                new_count=new_c,
+                regular_count=reg_c,
+                irregular_count=irr_c,
+                follow_up_count=fu_c,
+                red_count=red_c,
+                graduated_count=grad_c,
+                delta_new=deltas[0],
+                delta_regular=deltas[1],
+                delta_irregular=deltas[2],
+                delta_follow_up=deltas[3],
+            ))
+
+        # Build "All" row
+        all_deltas = wow_by_cell.get("all", (0, 0, 0, 0))
+        all_row = build_cell_health_row(
+            cell_name="All",
+            zone="PSQ",
+            new_count=all_counts["new"],
+            regular_count=all_counts["regular"],
+            irregular_count=all_counts["irregular"],
+            follow_up_count=all_counts["follow_up"],
+            red_count=all_counts["red"],
+            graduated_count=all_counts["graduated"],
+            delta_new=all_deltas[0],
+            delta_regular=all_deltas[1],
+            delta_irregular=all_deltas[2],
+            delta_follow_up=all_deltas[3],
+        )
+
+        # Build and store cache payload
+        cell_health_data = {
+            "snapshot_date": date.today().isoformat(),
+            "all_row": all_row,
+            "cell_rows": cell_rows,
+            "source": "CG Combined + Historical Cell Status",
+        }
+
+        if store_cell_health_in_redis(redis_client, cell_health_data):
+            _emit("  Cell health data cached", log_lines, with_ts=False)
+        else:
+            _emit("  Cell health: failed to store in Redis", log_lines, with_ts=False)
+
+        return True
+    except Exception as e:
+        _emit(f"Error: Cell health cache refresh failed ({e})", log_lines, err=True, with_ts=False)
+        return False
+
+
 def _progress_set(bar, value: float, text: str) -> None:
     """Streamlit progress bar; ``text=`` is supported in newer Streamlit versions."""
     if bar is None:
@@ -616,10 +982,15 @@ def run_full_sheet_resync(
 
     _emit("", log_lines, with_ts=False)
     _emit("Clearing old data from Upstash...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.45, "Clearing Upstash caches (options, attendance, ministry)…")
+    _progress_set(progress_bar, 0.40, "Clearing Upstash caches (options, attendance, ministry)…")
     cache_ok = _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
     if cache_ok:
         _emit("  Cache cleared", log_lines, with_ts=False)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Syncing NWST Health data...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.50, "Syncing NWST Health (CG Combined, Ministries, Attendance)…")
+    _refresh_nwst_health_data(redis_client, client, log_lines)
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing theme...", log_lines, with_ts=False)
@@ -630,8 +1001,13 @@ def run_full_sheet_resync(
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing birthdays...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.85, "Refreshing birthday data…")
+    _progress_set(progress_bar, 0.75, "Refreshing birthday data…")
     _refresh_birthdays_cache(redis_client, client, log_lines)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Refreshing cell health...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.90, "Refreshing cell health data (NWST Health)…")
+    _refresh_cell_health_cache(redis_client, client, log_lines)
 
     _save_last_sync_timestamp()
     _progress_set(progress_bar, 1.0, "All done.")
