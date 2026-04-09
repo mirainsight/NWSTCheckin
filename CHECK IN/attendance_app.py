@@ -5571,7 +5571,73 @@ if 'selected_ministry' not in st.session_state:
     st.session_state.selected_ministry = MINISTRY_LIST[0]  # Default to first ministry
 
 with st.sidebar:
-    # Email reports to PSQ (weekly check-in PDF vs cell-health-only PDF)
+    # ========== PAGE NAVIGATION ==========
+    st.markdown(f"""
+    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem; text-transform: uppercase;">
+        Navigate
+    </h3>
+    """, unsafe_allow_html=True)
+
+    _nav_pages = [
+        ("NWST Check In",       "nwst"),
+        ("Leaders Discipleship","leaders"),
+        ("Ministry Discipleship","ministry"),
+    ]
+    for _nav_label, _nav_key in _nav_pages:
+        _nav_active = page == page_map.get(_nav_key, "")
+        if st.button(
+            _nav_label,
+            type="primary" if _nav_active else "secondary",
+            use_container_width=True,
+            key=f"sidebar_nav_{_nav_key}",
+            disabled=_nav_active,
+        ):
+            st.query_params["page"] = _nav_key
+            st.rerun()
+
+    st.markdown("---")
+
+    # ========== HISTORICAL VIEW SECTION ==========
+    st.markdown(f"""
+    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
+        VIEW HISTORICAL DATA
+    </h3>
+    """, unsafe_allow_html=True)
+
+    # Initialize session state for historical view
+    if 'historical_date' not in st.session_state:
+        st.session_state.historical_date = None
+    if 'viewing_historical' not in st.session_state:
+        st.session_state.viewing_historical = False
+
+    # Date picker for historical view
+    today_myt_date = datetime.strptime(get_today_myt_date(), "%Y-%m-%d").date()
+    selected_date = st.date_input(
+        "Select date to view",
+        value=today_myt_date,
+        max_value=today_myt_date,
+        key="historical_date_picker"
+    )
+
+    # Convert to string format
+    selected_date_str = selected_date.strftime("%Y-%m-%d")
+
+    col_view, col_reset = st.columns(2)
+    with col_view:
+        if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
+            st.session_state.historical_date = selected_date_str
+            st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
+            st.rerun()
+
+    with col_reset:
+        if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
+            st.session_state.historical_date = None
+            st.session_state.viewing_historical = False
+            st.rerun()
+
+    st.markdown("---")
+
+    # ========== EMAIL REPORT TO PSQ ==========
     st.markdown(f"""
     <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
         EMAIL REPORT TO PSQ
@@ -5672,124 +5738,7 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Error sending email: {str(e)}")
 
-    st.markdown("---")
-
-    # ========== HISTORICAL VIEW SECTION ==========
-    st.markdown(f"""
-    <h3 style="color: {page_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem;">
-        VIEW HISTORICAL DATA
-    </h3>
-    """, unsafe_allow_html=True)
-
-    # Initialize session state for historical view
-    if 'historical_date' not in st.session_state:
-        st.session_state.historical_date = None
-    if 'viewing_historical' not in st.session_state:
-        st.session_state.viewing_historical = False
-
-    # Date picker for historical view
-    today_myt_date = datetime.strptime(get_today_myt_date(), "%Y-%m-%d").date()
-    selected_date = st.date_input(
-        "Select date to view",
-        value=today_myt_date,
-        max_value=today_myt_date,
-        key="historical_date_picker"
-    )
-
-    # Convert to string format
-    selected_date_str = selected_date.strftime("%Y-%m-%d")
-
-    col_view, col_reset = st.columns(2)
-    with col_view:
-        if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
-            st.session_state.historical_date = selected_date_str
-            st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
-            st.rerun()
-
-    with col_reset:
-        if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
-            st.session_state.historical_date = None
-            st.session_state.viewing_historical = False
-            st.rerun()
-
-    st.markdown("---")
-
 # ========== RENDER SELECTED PAGE ==========
-# Add toggle tabs in main content area for switching between check-in types
-st.markdown(f"""
-<style>
-    .checkin-tabs {{
-        display: flex;
-        justify-content: center;
-        gap: 0;
-        margin-bottom: 1rem;
-    }}
-    .checkin-tab {{
-        padding: 0.8rem 1.5rem;
-        font-family: 'Inter', sans-serif;
-        font-weight: 700;
-        font-size: 0.9rem;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        border: 2px solid {page_colors['primary']};
-        text-decoration: none;
-    }}
-    .checkin-tab-active {{
-        background: {page_colors['primary']};
-        color: {page_colors['background']};
-    }}
-    .checkin-tab-inactive {{
-        background: transparent;
-        color: {page_colors['primary']};
-    }}
-    .checkin-tab-inactive:hover {{
-        background: rgba({int(page_colors['primary'][1:3], 16)}, {int(page_colors['primary'][3:5], 16)}, {int(page_colors['primary'][5:7], 16)}, 0.2);
-    }}
-    .checkin-tab:first-child {{
-        border-right: none;
-    }}
-</style>
-""", unsafe_allow_html=True)
-
-# Create tabs using columns and buttons
-tab_col1, tab_col2, tab_col3 = st.columns(3)
-with tab_col1:
-    nwst_active = page == "NWST Check In"
-    if st.button(
-        "NWST Check In",
-        type="primary" if nwst_active else "secondary",
-        use_container_width=True,
-        key="tab_nwst",
-        disabled=nwst_active
-    ):
-        st.query_params["page"] = "nwst"
-        st.rerun()
-
-with tab_col2:
-    leaders_active = page == "Leaders Discipleship"
-    if st.button(
-        "Leaders Discipleship",
-        type="primary" if leaders_active else "secondary",
-        use_container_width=True,
-        key="tab_leaders",
-        disabled=leaders_active
-    ):
-        st.query_params["page"] = "leaders"
-        st.rerun()
-
-with tab_col3:
-    ministry_active = page == "Ministry Discipleship"
-    if st.button(
-        "Ministry Discipleship",
-        type="primary" if ministry_active else "secondary",
-        use_container_width=True,
-        key="tab_ministry",
-        disabled=ministry_active
-    ):
-        st.query_params["page"] = "ministry"
-        st.rerun()
 
 # Determine if viewing historical data
 viewing_historical = st.session_state.get('viewing_historical', False)
