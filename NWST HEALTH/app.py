@@ -5616,20 +5616,56 @@ st.title("🏥 NWST Health")
 query_params = st.query_params
 current_page = _qp_first(query_params.get("page"), "cg")
 
-# Page navigation — sidebar radio
-_PAGE_LABELS = ["CG Health", "Ministry Health", "Analytics"]
-_PAGE_KEYS   = ["cg",        "ministry",         "analytics"]
-_sidebar_index = _PAGE_KEYS.index(current_page) if current_page in _PAGE_KEYS else 0
-_sidebar_selection = st.sidebar.radio(
-    "Navigate",
-    _PAGE_LABELS,
-    index=_sidebar_index,
-    key="sidebar_page_nav",
-)
-_selected_key = _PAGE_KEYS[_PAGE_LABELS.index(_sidebar_selection)]
-if _selected_key != current_page:
-    st.query_params["page"] = _selected_key
-    st.rerun()
+# Page navigation — sidebar buttons (styled to match CHECK IN attendance_app)
+with st.sidebar:
+    st.markdown(f"""
+<style>
+    [data-testid="stSidebar"] .stButton > button {{
+        background-color: transparent !important;
+        color: {daily_colors['primary']} !important;
+        border: 2px solid {daily_colors['primary']} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        transition: all 0.2s ease !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button:hover {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000000 !important;
+        transform: scale(1.02) !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] {{
+        background-color: {daily_colors['primary']} !important;
+        color: #000000 !important;
+        border: 2px solid {daily_colors['primary']} !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {{
+        background-color: {daily_colors['light']} !important;
+        border-color: {daily_colors['light']} !important;
+    }}
+</style>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <h3 style="color: {daily_colors['primary']}; font-family: 'Inter', sans-serif; font-weight: 700; letter-spacing: 1px; font-size: 0.9rem; text-transform: uppercase;">
+        Navigate
+    </h3>
+    """, unsafe_allow_html=True)
+
+    _PAGE_LABELS = ["CG Health", "Ministry Health", "Analytics"]
+    _PAGE_KEYS   = ["cg",        "ministry",         "analytics"]
+    for _label, _key in zip(_PAGE_LABELS, _PAGE_KEYS):
+        _is_active = current_page == _key
+        if st.button(
+            _label,
+            type="primary" if _is_active else "secondary",
+            use_container_width=True,
+            key=f"sidebar_nav_{_key}",
+            disabled=_is_active,
+        ):
+            st.query_params["page"] = _key
+            st.rerun()
 
 # ========== CG HEALTH PAGE ==========
 if current_page == "cg":
