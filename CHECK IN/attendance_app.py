@@ -5623,18 +5623,17 @@ with st.sidebar:
     # Convert to string format
     selected_date_str = selected_date.strftime("%Y-%m-%d")
 
-    col_view, col_reset = st.columns(2)
-    with col_view:
-        if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
-            st.session_state.historical_date = selected_date_str
-            st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
-            st.rerun()
+    if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
+        st.session_state.historical_date = selected_date_str
+        st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
+        st.rerun()
 
-    with col_reset:
-        if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
-            st.session_state.historical_date = None
-            st.session_state.viewing_historical = False
-            st.rerun()
+    st.markdown('<div style="height: 1.6rem;"></div>', unsafe_allow_html=True)
+
+    if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
+        st.session_state.historical_date = None
+        st.session_state.viewing_historical = False
+        st.rerun()
 
     st.markdown("---")
 
