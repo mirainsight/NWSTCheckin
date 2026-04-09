@@ -5836,7 +5836,13 @@ if current_page == "cg":
         try:
             last_sync = redis.get("nwst_last_sync_time")
             if last_sync:
-                st.markdown(f"<p style='text-align: center; color: #999; font-size: 0.85rem; margin-top: -0.5rem;'>Last synced: {last_sync}</p>", unsafe_allow_html=True)
+                st.markdown(f"""
+<style>
+@media (min-width: 768px) {{ .nwst-last-synced {{ margin-top: 0.25rem !important; }} }}
+@media (max-width: 767px) {{ .nwst-last-synced {{ margin-top: -0.5rem !important; }} }}
+</style>
+<p class='nwst-last-synced' style='text-align: center; color: #999; font-size: 0.85rem;'>Last synced: {last_sync}</p>
+""", unsafe_allow_html=True)
         except Exception:
             pass
 
