@@ -5594,6 +5594,7 @@ with st.sidebar:
         ):
             st.query_params["page"] = _nav_key
             st.rerun()
+        st.markdown('<div style="height: 0.5rem;"></div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
