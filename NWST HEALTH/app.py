@@ -2484,9 +2484,22 @@ def calculate_and_cache_cell_health(redis_client, cg_df, hist_df, cell_to_zone_m
                    int(prev_all.get("follow up", 0) or prev_all.get("follow_up", 0) or 0)
             wow_by_cell["all"] = (d_new, d_reg, d_irr, d_fu)
 
+    # Calculate "All" counts directly from the full work_df so members with blank/archive
+    # cell assignments (common for Red and Graduated) are not missed.
+    if status_col:
+        all_counts = {
+            "new": len(work_df[work_df["_status_type"] == "New"]),
+            "regular": len(work_df[work_df["_status_type"] == "Regular"]),
+            "irregular": len(work_df[work_df["_status_type"] == "Irregular"]),
+            "follow_up": len(work_df[work_df["_status_type"] == "Follow Up"]),
+            "red": len(work_df[work_df["_status_type"] == "Red"]),
+            "graduated": len(work_df[work_df["_status_type"] == "Graduated"]),
+        }
+    else:
+        all_counts = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
+
     # Calculate counts per cell from CG Combined (live data)
     cell_rows = []
-    all_counts = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
 
     for cell_name, group in work_df.groupby(cg_cell_col):
         cell_s = str(cell_name).strip()
@@ -2509,14 +2522,13 @@ def calculate_and_cache_cell_health(redis_client, cg_df, hist_df, cell_to_zone_m
             fu_c = max(1, int(n * 0.10))
             red_c = max(1, int(n * 0.05))
             grad_c = max(0, n - new_c - reg_c - irr_c - fu_c - red_c)
-
-        # Accumulate for "All" row
-        all_counts["new"] += new_c
-        all_counts["regular"] += reg_c
-        all_counts["irregular"] += irr_c
-        all_counts["follow_up"] += fu_c
-        all_counts["red"] += red_c
-        all_counts["graduated"] += grad_c
+            # Accumulate fallback estimates for "All" row (status_col missing case)
+            all_counts["new"] += new_c
+            all_counts["regular"] += reg_c
+            all_counts["irregular"] += irr_c
+            all_counts["follow_up"] += fu_c
+            all_counts["red"] += red_c
+            all_counts["graduated"] += grad_c
 
         # Get WoW deltas for this cell
         deltas = wow_by_cell.get(cell_s.lower(), (0, 0, 0, 0))
