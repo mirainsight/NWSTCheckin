@@ -20,10 +20,11 @@ from nwst_shared.nwst_cell_health_cache import (
     store_cell_health_in_redis,
     build_cell_health_row,
 )
+from nwst_shared.nwst_cell_health_report import load_cg_combined_df
 
 import streamlit as st
 import streamlit.components.v1 as components
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import colorsys
 import hashlib
 import gspread
@@ -41,6 +42,7 @@ _DEFAULT_NWST_HEALTH_SHEET_ID = "1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY"
 NWST_HEALTH_SHEET_ID = os.getenv("NWST_HEALTH_SHEET_ID", "").strip()
 # Processed Attendance grid for Cell Attendance charts (shared across instances via Upstash)
 NWST_REDIS_ATTENDANCE_CHART_GRID_KEY = "nwst_attendance_chart_grid"
+REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"  # CG Combined cached for birthday display
 
 # Monthly matrix shown in st.components.v1.html (iframe) — must be self-contained (no Streamlit theme CSS).
 _MONTHLY_ATTENDANCE_IFRAME_CSS = r"""
@@ -1531,6 +1533,510 @@ def get_google_sheet_client():
         return gspread.authorize(creds)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Birthday dashboard helpers (duplicated from CHECK IN/attendance_app.py)
+# ---------------------------------------------------------------------------
+
+def _valid_month_day(month: int, day: int) -> bool:
+    """True if month/day is a valid calendar day (handles leap day against 2004)."""
+    for y in (2004, 2005):
+        try:
+            datetime(y, month, day)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _month_day_from_sheets_serial(n: float) -> tuple[int, int] | None:
+    """Google Sheets / Excel-style serial (days after 1899-12-30) → (month, day)."""
+    if n != n or n < 200 or n > 800000:  # NaN or implausible
+        return None
+    base = date(1899, 12, 30)
+    try:
+        d = base + timedelta(days=int(round(n)))
+    except (OverflowError, ValueError):
+        return None
+    return (d.month, d.day)
+
+
+def _parse_en_dd_mmm_yyyy(s: str) -> tuple[int, int] | None:
+    """
+    CG Combined column G style: ``09 Oct 2026`` (DD + space + 3-letter English month + space + YYYY).
+    Locale-independent; year is ignored for recurring birthday.
+    """
+    mon_map = {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+    m = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})", (s or "").strip())
+    if not m:
+        return None
+    try:
+        d = int(m.group(1))
+    except ValueError:
+        return None
+    key = m.group(2).strip().lower()[:3]
+    month = mon_map.get(key)
+    if month is None or not _valid_month_day(month, d):
+        return None
+    return (month, d)
+
+
+def _parse_birthday_month_day(val) -> tuple[int, int] | None:
+    """Parse a sheet Birthday value to (month, day). Supports dates, serials, and common text formats."""
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    if isinstance(val, date):
+        return (val.month, val.day)
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        md = _month_day_from_sheets_serial(float(val))
+        if md:
+            return md
+    if hasattr(val, "month") and hasattr(val, "day") and not isinstance(val, str):
+        try:
+            return (int(val.month), int(val.day))
+        except (TypeError, ValueError):
+            pass
+    s_raw = str(val).strip()
+    if not s_raw:
+        return None
+    s = re.sub(r"[\u00a0\u202f]", " ", s_raw)
+    s = re.sub(r"\s+", " ", s).strip()
+    dd_mmm = _parse_en_dd_mmm_yyyy(s)
+    if dd_mmm:
+        return dd_mmm
+    parts = re.split(r"[/.\-]", s)
+    nums: list[int] = []
+    for p in parts:
+        p = p.strip()
+        if not p or not p.isdigit():
+            if nums:
+                return None
+            continue
+        nums.append(int(p))
+    if len(nums) == 2:
+        a, b = nums
+        if a > 12:
+            month, day = b, a
+        elif b > 12:
+            month, day = a, b
+        else:
+            month, day = b, a
+        if _valid_month_day(month, day):
+            return (month, day)
+    if len(nums) >= 3:
+        a, b, c = nums[0], nums[1], nums[2]
+        month, day = 0, 0
+        if a > 1000:
+            month, day = b, c
+        elif c > 1000:
+            if a > 12:
+                month, day = b, a
+            elif b > 12:
+                month, day = a, b
+            else:
+                month, day = b, a
+        if month > 0 and _valid_month_day(month, day):
+            return (month, day)
+    for fmt in (
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%b-%Y",
+        "%d-%b-%y",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return (dt.month, dt.day)
+        except ValueError:
+            continue
+    try:
+        md = _month_day_from_sheets_serial(float(s.replace(",", ".")))
+        if md:
+            return md
+    except ValueError:
+        pass
+    return None
+
+
+_BIRTHDAY_HEADER_MARKERS = (
+    "birthday",
+    "birth day",
+    "date of birth",
+    "birthdate",
+    "dob",
+    "b'day",
+    "bday",
+)
+
+
+def _find_cg_birthday_column(cg_df: pd.DataFrame) -> str | None:
+    for c in cg_df.columns:
+        low = str(c).lower().strip()
+        if any(m in low for m in _BIRTHDAY_HEADER_MARKERS):
+            return c
+    return None
+
+
+def _birthday_md_to_date_in_window(
+    month: int, day: int, center: date, delta_days: int
+) -> date | None:
+    md_to_date: dict[tuple[int, int], date] = {}
+    d = center - timedelta(days=delta_days)
+    end = center + timedelta(days=delta_days)
+    while d <= end:
+        md_to_date[(d.month, d.day)] = d
+        d += timedelta(days=1)
+    return md_to_date.get((month, day))
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cg_combined_df_for_birthdays(_health_sheet_id: str):
+    """
+    Load CG Combined from Upstash (populated by flush_pending sync), with Sheets fallback.
+    @st.cache_data provides 5-min local cache on top of Upstash for same-instance users.
+    """
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            cached = redis_client.get(REDIS_BIRTHDAYS_KEY)
+            if cached:
+                raw = cached.decode() if isinstance(cached, bytes) else cached
+                return pd.read_json(raw)
+        except Exception:
+            pass
+    # Fallback: direct Sheets read (first load before any sync, or Upstash miss)
+    return load_cg_combined_df(get_google_sheet_client(), _health_sheet_id)
+
+
+def _group_birthdays_near_date(
+    cg: pd.DataFrame,
+    bcol: str,
+    ncol: str,
+    ccol: str | None,
+    center: date,
+    delta_days: int,
+) -> list[tuple[date, list[tuple[str, str]]]]:
+    by_date: dict[date, list[tuple[str, str]]] = defaultdict(list)
+    for _, row in cg.iterrows():
+        md = _parse_birthday_month_day(row.get(bcol))
+        if not md:
+            continue
+        m, d = md
+        occ = _birthday_md_to_date_in_window(m, d, center, delta_days)
+        if not occ:
+            continue
+        name = str(row.get(ncol) or "").strip()
+        if not name:
+            continue
+        cell = str(row.get(ccol) or "").strip() if ccol else ""
+        if not cell:
+            cell = "—"
+        by_date[occ].append((name, cell))
+
+    out: list[tuple[date, list[tuple[str, str]]]] = []
+    for dt in sorted(by_date.keys()):
+        lines = sorted(by_date[dt], key=lambda t: (t[0].lower(), t[1].lower()))
+        out.append((dt, lines))
+    return out
+
+
+def _chunk_birthday_days_into_cards(
+    grouped: list[tuple[date, list[tuple[str, str]]]],
+) -> list[list[tuple[date, list[tuple[str, str]]]]]:
+    """Merge up to **two consecutive calendar days** (that have birthdays) into one horizontal card."""
+    if not grouped:
+        return []
+    cards: list[list[tuple[date, list[tuple[str, str]]]]] = []
+    i = 0
+    n = len(grouped)
+    while i < n:
+        d0, p0 = grouped[i]
+        chunk: list[tuple[date, list[tuple[str, str]]]] = [(d0, p0)]
+        if i + 1 < n:
+            d1, p1 = grouped[i + 1]
+            if d1 == d0 + timedelta(days=1):
+                chunk.append((d1, p1))
+                i += 2
+                cards.append(chunk)
+                continue
+        i += 1
+        cards.append(chunk)
+    return cards
+
+
+def _hex_to_rgb_for_css(h: str) -> tuple[int, int, int]:
+    try:
+        hx = h.lstrip("#")
+        if len(hx) == 6:
+            return (int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16))
+    except ValueError:
+        pass
+    return (91, 192, 235)
+
+
+def _contrasting_gradient_rgb_stops(primary_hex: str, light_hex: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """
+    Complementary-hue accent versus the daily theme (HLS hue + 0.5), keeping a strong + light leg
+    so the 135° primary→light→primary card texture matches non-today cards.
+    """
+    rp, gp, bp = _hex_to_rgb_for_css(primary_hex)
+    rl0, gl0, bl0 = _hex_to_rgb_for_css(light_hex)
+    r = (rp + rl0) / 510.0
+    g = (gp + gl0) / 510.0
+    b = (bp + bl0) / 510.0
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    h2 = (h + 0.5) % 1.0
+    if s < 0.08:
+        s2 = 0.72
+    else:
+        s2 = min(1.0, s * 1.08)
+    l2 = min(0.7, max(0.36, l))
+    r2, g2, b2 = colorsys.hls_to_rgb(h2, l2, s2)
+    s3 = max(0.12, s2 * 0.65)
+    l3 = min(0.9, l2 + 0.2)
+    r3, g3, b3 = colorsys.hls_to_rgb(h2, l3, s3)
+    return (
+        (int(r2 * 255), int(g2 * 255), int(b2 * 255)),
+        (int(r3 * 255), int(g3 * 255), int(b3 * 255)),
+    )
+
+
+def _relative_luminance_srgb(rc: int, gc: int, bc: int) -> float:
+    """WCAG relative luminance for sRGB 0–255 channels."""
+
+    def _lin(c: int) -> float:
+        x = c / 255.0
+        return x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+
+    R, G, B = _lin(rc), _lin(gc), _lin(bc)
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B
+
+
+def _hex_accent_readable_on_dark_card(ar: int, ag: int, ab: int) -> str:
+    """
+    Keep saturated hue for "today" / date labels but lift HLS lightness if the accent
+    is too dark to read on charcoal + translucent gradient (≈ WCAG-minded).
+    """
+    lum = _relative_luminance_srgb(ar, ag, ab)
+    if lum >= 0.58:
+        return f"#{ar:02x}{ag:02x}{ab:02x}"
+    r, g, b = ar / 255.0, ag / 255.0, ab / 255.0
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    target = 0.62
+    l = min(0.9, max(l, target - 0.15 * (1.0 - s)))
+    if lum < 0.35:
+        l = min(0.9, l + 0.18)
+    s = max(s, 0.38)
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
+
+
+def _card_body_text_hex(theme_text: str) -> str:
+    """Prefer theme body colour; fall back to light gray if theme text would be too dark on cards."""
+    t = (theme_text or "").strip()
+    if t.startswith("#") and len(t) >= 7:
+        tr, tg, tb = _hex_to_rgb_for_css(t[:7])
+        if _relative_luminance_srgb(tr, tg, tb) < 0.48:
+            return "#e8eaed"
+        return t[:7]
+    return "#e8eaed"
+
+
+def birthdays_notice_payload(
+    health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
+    """
+    (status, grouped, user_hint).
+
+    status: ``ok`` | ``empty_window`` | ``load_failed`` | ``empty_sheet`` | ``no_birthday_col``
+    | ``no_name_col`` | ``no_sid``
+    """
+    sid = (health_sheet_id or "").strip()
+    if not sid:
+        return "no_sid", [], "Configure **NWST_HEALTH_SHEET_ID** (or rely on the built-in default) for the Health workbook."
+    cg = _cg_combined_df_for_birthdays(sid)
+    if cg is None:
+        return "load_failed", [], (
+            "Could not read **CG Combined** from the NWST Health spreadsheet. "
+            "Share that workbook with the **same Google service account** as Check In, then refresh."
+        )
+    if cg.empty:
+        return "empty_sheet", [], "CG Combined is empty—NWST Health has no roster rows to read."
+    bcol = _find_cg_birthday_column(cg)
+    ncol, ccol = _resolve_cg_name_cell_columns(cg)
+    if not bcol:
+        return "no_birthday_col", [], "Add a column whose header mentions Birthday, DOB, or Date of Birth."
+    if not ncol:
+        return "no_name_col", [], "CG Combined needs a Name column so birthdays can be listed."
+    try:
+        center = datetime.strptime(center_myt_iso, "%Y-%m-%d").date()
+    except ValueError:
+        return "empty_window", [], None
+
+    grouped = _group_birthdays_near_date(cg, bcol, ncol, ccol, center, delta_days)
+    if not grouped:
+        return "empty_window", [], None
+    return "ok", grouped, None
+
+
+def render_birthdays_notice_board(page_colors: dict) -> None:
+    """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID."""
+    sid = (NWST_HEALTH_SHEET_ID or "").strip()
+    today_s = get_today_myt_date()
+    status, grouped, hint = birthdays_notice_payload(sid, today_s, delta_days=5)
+
+    if status in ("no_sid", "load_failed", "empty_sheet", "no_birthday_col", "no_name_col"):
+        if hint:
+            st.info(hint)
+        return
+
+    prim = page_colors.get("primary", "#5BC0EB")
+    bg = page_colors.get("background", "#0b1020")
+    text_main = page_colors.get("text", "#e8eaed")
+
+    def _fmt_day(d: date) -> str:
+        return f"{d.strftime('%a')}, {d.day} {d.strftime('%b')}"
+
+    prim_e = html.escape(prim, quote=True)
+    body_hex = _card_body_text_hex(text_main)
+    text_e = html.escape(body_hex, quote=True)
+    light = page_colors.get("light", prim)
+    r, g, b = _hex_to_rgb_for_css(prim)
+    rl, gl, bl = _hex_to_rgb_for_css(light)
+    try:
+        today_d = datetime.strptime(today_s, "%Y-%m-%d").date()
+    except ValueError:
+        today_d = date.today()
+
+    (crx, cgy, cbz), (crlx, cgly, cblz) = _contrasting_gradient_rgb_stops(prim, light)
+    cards_html: list[str] = []
+
+    if grouped:
+        for chunk in _chunk_birthday_days_into_cards(grouped):
+            days_only = [d for d, _ in chunk]
+            if len(chunk) == 1:
+                card_title = html.escape(_fmt_day(days_only[0]), quote=True)
+            else:
+                t = f"{_fmt_day(days_only[0])} – {_fmt_day(days_only[1])}"
+                card_title = html.escape(t, quote=True)
+
+            has_today = any(dt == today_d for dt, _ in chunk)
+            ar, ag, ab = (crx, cgy, cbz) if has_today else (r, g, b)
+            arl, agl, abl = (crlx, cgly, cblz) if has_today else (rl, gl, bl)
+            card_bg_layers = (
+                f"linear-gradient(135deg, rgba({ar},{ag},{ab},0.48) 0%, rgba({arl},{agl},{abl},0.32) 50%, rgba({ar},{ag},{ab},0.42) 100%), "
+                f"linear-gradient(180deg, #26262a 0%, #18181c 100%)"
+            )
+
+            txt_sh = "0 1px 3px rgba(0,0,0,0.75),0 0 1px rgba(0,0,0,0.55)"
+            sub_today_e = html.escape(_hex_accent_readable_on_dark_card(ar, ag, ab), quote=True)
+            sub_other_e = html.escape(_hex_accent_readable_on_dark_card(r, g, b), quote=True)
+
+            body_parts: list[str] = []
+            for dt, pairs in chunk:
+                if len(chunk) > 1:
+                    sub_l = html.escape(_fmt_day(dt), quote=True)
+                    sub_col_e = sub_today_e if dt == today_d else sub_other_e
+                    body_parts.append(
+                        f'<div style="margin-top:0.55rem;font-family:Inter,sans-serif;font-size:0.72rem;'
+                        f"font-weight:600;color:{sub_col_e};letter-spacing:0.02em;text-shadow:{txt_sh};\">{sub_l}</div>"
+                    )
+                for name, cell in pairs:
+                    line = html.escape(f"{name} - {cell}", quote=True)
+                    body_parts.append(
+                        f'<div style="margin-top:0.35rem;font-family:Inter,sans-serif;font-size:0.8rem;'
+                        f"line-height:1.35;color:{text_e};text-shadow:{txt_sh};\">{line}</div>"
+                    )
+
+            n_b = sum(len(p) for _, p in chunk)
+            foot_n = html.escape(str(n_b), quote=True)
+            foot_label = html.escape("birthday" if n_b == 1 else "birthdays", quote=True)
+            cards_html.append(
+                f'<div class="nwst-bday-card" style="'
+                f"flex:0 0 auto;width:min(300px,85vw);scroll-snap-align:start;"
+                f"background:{card_bg_layers};border-radius:18px;padding:14px 14px 12px 14px;"
+                f"border:1px solid rgba({ar},{ag},{ab},0.42);"
+                f"box-shadow:0 8px 24px rgba(0,0,0,0.4),0 4px 18px rgba({ar},{ag},{ab},0.16);"
+                f'">'
+                f'<div style="font-family:Inter,sans-serif;font-weight:700;font-size:0.95rem;'
+                f"color:#f5f5f7;line-height:1.25;text-shadow:{txt_sh};\">{card_title}</div>"
+                f"{''.join(body_parts)}"
+                f'<div style="margin-top:12px;font-family:Inter,sans-serif;font-size:0.74rem;'
+                f"color:rgba(220,220,225,0.95);text-shadow:{txt_sh};\">🎂 {foot_n} {foot_label}</div>"
+                f"</div>"
+            )
+    else:
+        empty_txt = html.escape(
+            "No birthdays in this ±5 day window (MYT), or Birthday cells are empty / not recognised.",
+            quote=True,
+        )
+        cards_html.append(
+            f'<div style="flex:1 1 auto;min-width:min(300px,100%);font-family:Inter,sans-serif;'
+            f"font-size:0.82rem;color:{text_e};padding:12px 4px;\">{empty_txt}</div>"
+        )
+
+    scroll_row = "".join(cards_html)
+    title = html.escape("Birthdays this week", quote=True)
+    board = f"""
+<div class="nwst-birthday-board" style="
+    margin-bottom:2.5rem;
+    padding:0.85rem 1rem 1rem 1rem;
+    border-radius:12px;
+    border:none;
+    background:
+        linear-gradient(180deg, rgba(139,90,43,0.15) 0%, rgba(24,24,26,0.92) 100%),
+        rgba(0,0,0,0.5);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 14px rgba(0,0,0,0.35);
+">
+  <div style="margin-bottom:0.75rem;">
+    <span style="font-family:'Inter',sans-serif;font-weight:800;font-size:0.72rem;
+                 letter-spacing:0.12em;text-transform:uppercase;color:{bg};
+                 background:{prim};padding:0.25rem 0.55rem;">📌 {title}</span>
+  </div>
+  <div class="nwst-bday-scroll" style="
+      display:flex;
+      flex-direction:row;
+      gap:12px;
+      overflow-x:auto;
+      overflow-y:hidden;
+      padding:4px 2px 12px 2px;
+      scroll-snap-type:x mandatory;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-color:rgba({r},{g},{b},0.5) transparent;
+  ">
+    {scroll_row}
+  </div>
+</div>
+"""
+    st.markdown(board, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# End birthday dashboard helpers
+# ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
 def load_sheet_data():
@@ -5375,6 +5881,7 @@ if current_page == "cg":
             pass
 
     st.markdown("")
+    render_birthdays_notice_board(daily_colors)
     try:
         newcomers_df = get_newcomers_data()
         attendance_stats = get_attendance_data()
