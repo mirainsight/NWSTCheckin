@@ -2291,11 +2291,11 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
 
+    render_birthdays_notice_board(page_colors)
+
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        render_birthdays_notice_board(page_colors)
-
         def _flush_checkin_success_here():
             succ = st.session_state.get('show_checkin_success')
             if succ and succ.get('form_key') == form_key:
