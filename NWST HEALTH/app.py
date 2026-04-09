@@ -5616,58 +5616,20 @@ st.title("🏥 NWST Health")
 query_params = st.query_params
 current_page = _qp_first(query_params.get("page"), "cg")
 
-# Page navigation buttons
-st.markdown(f"""
-<style>
-    .health-tabs {{
-        display: flex;
-        gap: 0;
-        margin-bottom: 1rem;
-    }}
-    .health-tab-btn {{
-        flex: 1;
-    }}
-</style>
-""", unsafe_allow_html=True)
-
-tab_col1, tab_col2, tab_col3 = st.columns(3)
-with tab_col1:
-    cg_active = current_page == "cg"
-    if st.button(
-        "CG Health",
-        type="primary" if cg_active else "secondary",
-        use_container_width=True,
-        key="tab_cg",
-        disabled=cg_active
-    ):
-        st.query_params["page"] = "cg"
-        st.rerun()
-
-with tab_col2:
-    ministry_active = current_page == "ministry"
-    if st.button(
-        "Ministry Health",
-        type="primary" if ministry_active else "secondary",
-        use_container_width=True,
-        key="tab_ministry",
-        disabled=ministry_active
-    ):
-        st.query_params["page"] = "ministry"
-        st.rerun()
-
-with tab_col3:
-    analytics_active = current_page == "analytics"
-    if st.button(
-        "Analytics",
-        type="primary" if analytics_active else "secondary",
-        use_container_width=True,
-        key="tab_analytics",
-        disabled=analytics_active
-    ):
-        st.query_params["page"] = "analytics"
-        st.rerun()
-
-st.markdown("---")
+# Page navigation — sidebar radio
+_PAGE_LABELS = ["CG Health", "Ministry Health", "Analytics"]
+_PAGE_KEYS   = ["cg",        "ministry",         "analytics"]
+_sidebar_index = _PAGE_KEYS.index(current_page) if current_page in _PAGE_KEYS else 0
+_sidebar_selection = st.sidebar.radio(
+    "Navigate",
+    _PAGE_LABELS,
+    index=_sidebar_index,
+    key="sidebar_page_nav",
+)
+_selected_key = _PAGE_KEYS[_PAGE_LABELS.index(_sidebar_selection)]
+if _selected_key != current_page:
+    st.query_params["page"] = _selected_key
+    st.rerun()
 
 # ========== CG HEALTH PAGE ==========
 if current_page == "cg":
@@ -5867,8 +5829,6 @@ if current_page == "cg":
                         )
                 except Exception as e:
                     st.error(f"Error syncing data: {e}")
-
-    st.markdown("---")
 
     # Display last sync time
     redis = get_redis_client()
