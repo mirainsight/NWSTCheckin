@@ -1330,6 +1330,7 @@ def render_birthdays_notice_board(page_colors: dict) -> None:
     title = html.escape("Birthdays this week", quote=True)
     board = f"""
 <div class="nwst-birthday-board" style="
+    margin-top:2rem;
     margin-bottom:2.5rem;
     padding:0.85rem 1rem 1rem 1rem;
     border-radius:12px;
