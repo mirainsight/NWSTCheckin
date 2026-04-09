@@ -5594,7 +5594,7 @@ with st.sidebar:
         ):
             st.query_params["page"] = _nav_key
             st.rerun()
-        st.markdown('<div style="height: 0.5rem;"></div>', unsafe_allow_html=True)
+        st.markdown('<div style="height: 1.6rem;"></div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -5654,7 +5654,7 @@ with st.sidebar:
         st.session_state.pending_psq_email = "weekly_checkin"
 
     st.markdown(
-        '<div aria-hidden="true" style="height: 3rem; min-height: 3rem;"></div>',
+        '<div aria-hidden="true" style="height: 1.6rem; min-height: 1.6rem;"></div>',
         unsafe_allow_html=True,
     )
 
