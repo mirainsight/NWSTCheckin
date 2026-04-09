@@ -5666,6 +5666,7 @@ with st.sidebar:
         ):
             st.query_params["page"] = _key
             st.rerun()
+        st.markdown('<div style="height: 1.6rem;"></div>', unsafe_allow_html=True)
 
 # ========== CG HEALTH PAGE ==========
 if current_page == "cg":
