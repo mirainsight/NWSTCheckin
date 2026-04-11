@@ -1187,11 +1187,6 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
     if bool(work["_cb_ministry_ne"].any()):
         seg_labels.append("Ministry")
         seg_ids.append("ministry")
-    for _min_id in _MINISTRY_ROLE_COLS:
-        _ne_col = f"_cb_{_min_id.lower()}_ne"
-        if _ne_col in work.columns and bool(work[_ne_col].any()):
-            seg_labels.append(_min_id)
-            seg_ids.append(f"min:{_min_id.lower()}")
 
     if status_col:
         for st_lab in ("New", "Regular", "Irregular", "Follow Up"):
@@ -1375,63 +1370,169 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
     st.markdown(
         f'<div class="nwst-cb-between" role="presentation">'
         f'<div class="nwst-cb-between-line"></div>'
-        f"</div>"
-        f'<p class="nwst-cb-h2 nwst-cb-h2--after-split">Gender</p>',
+        f"</div>",
         unsafe_allow_html=True,
     )
 
+    n_total = len(filt)
+
+    # ── Gender card content ──────────────────────────────────────────────────
     if not gender_col:
-        st.markdown(
-            f'<p class="nwst-cb-note">No <b>Gender</b> column in CG Combined.</p>',
-            unsafe_allow_html=True,
-        )
-        return
+        gender_card_html = '<p class="nwst-swipe-note">No <b>Gender</b> column in CG Combined.</p>'
+    else:
+        sub_g = filt
+        n_m = int((sub_g["_cb_gender"] == "Male").sum())
+        n_f = int((sub_g["_cb_gender"] == "Female").sum())
+        denom = n_m + n_f
+        if denom == 0:
+            gender_card_html = '<p class="nwst-swipe-note">No Male/Female values in this group.</p>'
+        else:
+            pm = 100.0 * n_m / denom
+            pf = 100.0 * n_f / denom
+            unk = len(sub_g) - n_m - n_f
+            unk_note = (
+                f'<p class="nwst-swipe-note">{unk} member(s) with other/blank gender excluded.</p>'
+                if unk > 0 else ""
+            )
+            gender_card_html = (
+                f'<p class="nwst-swipe-summary">{n_m}M · {n_f}F</p>'
+                f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
+                f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">Male</span>'
+                f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
+                f'<div class="nwst-cb-fill" style="width:{pm:.2f}%;background:{prim};"></div>'
+                f'</div>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{pm:.1f}%</span>'
+                f'</div>'
+                f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
+                f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">Female</span>'
+                f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
+                f'<div class="nwst-cb-fill" style="width:{pf:.2f}%;background:{bar_female};"></div>'
+                f'</div>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{pf:.1f}%</span>'
+                f'</div>'
+                + unk_note
+            )
 
-    sub_g = filt
-    males = sub_g[sub_g["_cb_gender"] == "Male"]
-    females = sub_g[sub_g["_cb_gender"] == "Female"]
-    n_m = len(males)
-    n_f = len(females)
-    denom = n_m + n_f
-    if denom == 0:
-        st.markdown(
-            f'<p class="nwst-cb-note">No Male/Female values in this group (check Gender cells).</p>',
-            unsafe_allow_html=True,
+    # ── Leader card content ──────────────────────────────────────────────────
+    n_leaders = int(filt["_cb_role_ne"].sum()) if "_cb_role_ne" in filt.columns else 0
+    if not role_col:
+        leader_card_html = '<p class="nwst-swipe-note">No <b>Role</b> column in CG Combined.</p>'
+    elif n_leaders == 0:
+        leader_card_html = '<p class="nwst-swipe-note">No leaders in this group.</p>'
+    else:
+        leader_pct = 100.0 * n_leaders / n_total if n_total > 0 else 0
+        role_counts = (
+            filt[filt["_cb_role_ne"]][role_col]
+            .astype(str).str.strip()
+            .value_counts()
         )
-        return
-    pm = 100.0 * n_m / denom
-    pf = 100.0 * n_f / denom
-    unk = len(sub_g) - n_m - n_f
-    note = ""
-    if unk > 0:
-        note = f'<p class="nwst-cb-note">{unk} member(s) with other/blank gender excluded from % split.</p>'
+        leader_rows = ""
+        for role_val, cnt in role_counts.items():
+            rp = 100.0 * cnt / n_leaders
+            leader_rows += (
+                f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
+                f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">{html.escape(str(role_val))}</span>'
+                f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
+                f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
+                f'</div>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
+                f'</div>'
+            )
+        leader_card_html = (
+            f'<p class="nwst-swipe-summary">{n_leaders} of {n_total} members &nbsp;·&nbsp; {leader_pct:.1f}%</p>'
+            + leader_rows
+        )
 
-    female_e = html.escape(bar_female, quote=True)
-    ri = html.escape(_cb_row_inline, quote=True)
-    li = html.escape(_cb_lbl_inline, quote=True)
-    ti = html.escape(_cb_track_inline, quote=True)
-    pi = html.escape(_cb_pct_inline, quote=True)
-    parts_g = [
-        '<div class="nwst-cb-wrap">',
-        f'<div class="nwst-cb-row" style="{ri}">'
-        f'<span class="nwst-cb-lbl" style="{li}">Male</span>'
-        f'<div class="nwst-cb-track" style="{ti}">'
-        f'<div class="nwst-cb-fill" style="width:{pm:.2f}%;background:{prim};"></div>'
-        f"</div>"
-        f'<span class="nwst-cb-pct" style="{pi}">{html.escape(f"{pm:.1f}", quote=True)}%</span>'
-        f"</div>",
-        f'<div class="nwst-cb-row" style="{ri}">'
-        f'<span class="nwst-cb-lbl" style="{li}">Female</span>'
-        f'<div class="nwst-cb-track" style="{ti}">'
-        f'<div class="nwst-cb-fill" style="width:{pf:.2f}%;background:{female_e};"></div>'
-        f"</div>"
-        f'<span class="nwst-cb-pct" style="{pi}">{html.escape(f"{pf:.1f}", quote=True)}%</span>'
-        f"</div>",
-        "</div>",
-    ]
-    st.markdown("".join(parts_g), unsafe_allow_html=True)
-    if note:
-        st.markdown(note, unsafe_allow_html=True)
+    # ── Ministry card content ────────────────────────────────────────────────
+    n_ministry = int(filt["_cb_ministry_ne"].sum()) if "_cb_ministry_ne" in filt.columns else 0
+    if n_ministry == 0:
+        ministry_card_html = '<p class="nwst-swipe-note">No ministry members in this group.</p>'
+    else:
+        min_pct = 100.0 * n_ministry / n_total if n_total > 0 else 0
+        ministry_rows = ""
+        for _min_id in _MINISTRY_ROLE_COLS:
+            _ne_col = f"_cb_{_min_id.lower()}_ne"
+            if _ne_col not in filt.columns:
+                continue
+            cnt = int(filt[_ne_col].sum())
+            if cnt == 0:
+                continue
+            rp = 100.0 * cnt / n_ministry
+            ministry_rows += (
+                f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
+                f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">{html.escape(_min_id)}</span>'
+                f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
+                f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
+                f'</div>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
+                f'</div>'
+            )
+        ministry_card_html = (
+            f'<p class="nwst-swipe-summary">{n_ministry} of {n_total} members &nbsp;·&nbsp; {min_pct:.1f}%</p>'
+            + ministry_rows
+        )
+
+    # ── Swipable card strip ──────────────────────────────────────────────────
+    _sid = _cb_key_scope
+    cards_html = (
+        f"<style>"
+        f".nwst-swipe-track-{_sid}{{"
+        f"display:flex;overflow-x:auto;scroll-snap-type:x mandatory;"
+        f"-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:0.75rem;"
+        f"padding-bottom:0.5rem;"
+        f"}}"
+        f".nwst-swipe-track-{_sid}::-webkit-scrollbar{{display:none;}}"
+        f".nwst-swipe-card-{_sid}{{"
+        f"flex:0 0 100%;scroll-snap-align:start;"
+        f"background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);"
+        f"border-radius:12px;padding:1rem 1.1rem 0.85rem 1.1rem;box-sizing:border-box;"
+        f"}}"
+        f".nwst-swipe-card-title{{font-weight:800;font-size:0.9rem;letter-spacing:0.04em;"
+        f"color:{text};margin:0 0 0.75rem 0;display:block;}}"
+        f".nwst-swipe-summary{{font-size:0.82rem;color:{muted};margin:0 0 0.65rem 0;}}"
+        f".nwst-swipe-note{{font-size:0.82rem;color:{muted};margin:0.25rem 0;}}"
+        f".nwst-swipe-dots-{_sid}{{display:flex;justify-content:center;gap:0.4rem;margin-top:0.55rem;}}"
+        f".nwst-swipe-dots-{_sid} .nwst-sdot{{width:6px;height:6px;border-radius:50%;"
+        f"background:rgba(255,255,255,0.2);cursor:pointer;transition:background 0.2s;}}"
+        f".nwst-swipe-dots-{_sid} .nwst-sdot.active{{background:{prim};}}"
+        f"</style>"
+        f'<div class="nwst-swipe-track-{_sid}" id="nwst-st-{_sid}">'
+        f'  <div class="nwst-swipe-card-{_sid}">'
+        f'    <span class="nwst-swipe-card-title">Gender</span>'
+        f'    {gender_card_html}'
+        f'  </div>'
+        f'  <div class="nwst-swipe-card-{_sid}">'
+        f'    <span class="nwst-swipe-card-title">Leader</span>'
+        f'    {leader_card_html}'
+        f'  </div>'
+        f'  <div class="nwst-swipe-card-{_sid}">'
+        f'    <span class="nwst-swipe-card-title">Ministry</span>'
+        f'    {ministry_card_html}'
+        f'  </div>'
+        f'</div>'
+        f'<div class="nwst-swipe-dots-{_sid}" id="nwst-sd-{_sid}">'
+        f'  <div class="nwst-sdot active" onclick="nwstSwipe(\'{_sid}\',0)"></div>'
+        f'  <div class="nwst-sdot" onclick="nwstSwipe(\'{_sid}\',1)"></div>'
+        f'  <div class="nwst-sdot" onclick="nwstSwipe(\'{_sid}\',2)"></div>'
+        f'</div>'
+        f"<script>"
+        f"(function(){{"
+        f"  var t=document.getElementById('nwst-st-{_sid}');"
+        f"  var ds=document.querySelectorAll('#nwst-sd-{_sid} .nwst-sdot');"
+        f"  if(!t)return;"
+        f"  function upd(){{"
+        f"    var i=Math.round(t.scrollLeft/t.offsetWidth);"
+        f"    ds.forEach(function(d,j){{d.classList.toggle('active',i===j);}});"
+        f"  }}"
+        f"  t.addEventListener('scroll',upd,{{passive:true}});"
+        f"  window.nwstSwipe=window.nwstSwipe||function(s,i){{"
+        f"    var el=document.getElementById('nwst-st-'+s);"
+        f"    if(el)el.scrollTo({{left:i*el.offsetWidth,behavior:'smooth'}});"
+        f"  }};"
+        f"}})();"
+        f"</script>"
+    )
+    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 @st.fragment
