@@ -372,6 +372,64 @@ def _render_cg_leadership_section(display_df, cell_filter, cell_columns, daily_c
         st.info("No leadership data available.")
 
 
+def _render_cg_ministry_section(display_df, daily_colors):
+    """Content for CG Health > Ministry collapsible."""
+    if display_df is None or display_df.empty:
+        st.info("No ministry data available.")
+        return
+
+    ministry_data = get_members_by_ministry(display_df)
+    if not ministry_data:
+        st.info("No ministry roles assigned yet.")
+        return
+
+    total_ministry = sum(len(m) for m in ministry_data.values())
+    total_in_cell = len(display_df)
+    ministry_pct = (total_ministry / total_in_cell * 100) if total_in_cell > 0 else 0
+
+    kpi_col1, kpi_col2 = st.columns(2)
+    with kpi_col1:
+        st.markdown(
+            f"""
+        <div class="kpi-card">
+            <div class="kpi-label">Total in Ministry</div>
+            <div class="kpi-number">{total_ministry}</div>
+        </div>""",
+            unsafe_allow_html=True,
+        )
+    with kpi_col2:
+        st.markdown(
+            f"""
+        <div class="kpi-card">
+            <div class="kpi-label">Ministry %</div>
+            <div class="kpi-number" style="color: {daily_colors['primary']};">{ministry_pct:.0f}%</div>
+            <div class="kpi-subtitle">{total_ministry} of {total_in_cell}</div>
+        </div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("")
+
+    for ministry_name, members in ministry_data.items():
+        st.markdown(
+            f"<h3 style='color: {daily_colors['primary']}; font-size: 1.1rem;'>"
+            f"{ministry_name} ({len(members)})</h3>",
+            unsafe_allow_html=True,
+        )
+        for member in members:
+            st.markdown(
+                f"""
+            <div style='padding: 1rem; background: #1a1a1a;
+                        border-left: 3px solid {daily_colors['primary']};
+                        margin-bottom: 0.75rem;'>
+                <p style='font-weight: 600; margin: 0;'>{member['name']}</p>
+                <p style='font-size: 0.85rem; color: #999; margin: 0.25rem 0 0 0;'>{member['role']}</p>
+            </div>""",
+                unsafe_allow_html=True,
+            )
+        st.markdown("")
+
+
 @st.fragment
 def _nwst_cell_health_fragment(ch_ctx: dict):
     """Only this block reruns when Cell health category buttons toggle name lists."""
@@ -1350,6 +1408,12 @@ def _nwst_cell_breakdown_fragment(display_df, daily_colors, filter_scope: str):
 
 _DESIRED_MEMBER_TABLE_COLUMNS = [
     "Name",
+    "Role",
+    "Hype Role",
+    "Frontlines Role",
+    "VS Role",
+    "Worship Role",
+    "Ministry Department",
     "Age",
     "Gender",
     "Birthday",
@@ -4451,6 +4515,49 @@ def get_leadership_by_role(df):
 
     return sorted_leadership
 
+
+_MINISTRY_ROLE_COLS = {
+    "Hype":       "Hype Role",
+    "Frontlines": "Frontlines Role",
+    "VS":         "VS Role",
+    "Worship":    "Worship Role",
+}
+
+
+def get_members_by_ministry(df):
+    """
+    Group members by ministry based on the 4 ministry-role columns.
+    Returns dict {ministry_name: [{"name": ..., "role": ...}, ...]}
+    Only ministries with at least one assigned member are included.
+    """
+    name_col = None
+    for col in df.columns:
+        cl = col.lower()
+        if ("name" in cl or "member" in cl) and "last" not in cl:
+            name_col = col
+            break
+    if not name_col:
+        name_col = df.columns[0]
+
+    result = {}
+    for ministry, role_label in _MINISTRY_ROLE_COLS.items():
+        role_col = next(
+            (c for c in df.columns if c.lower().strip() == role_label.lower()),
+            None,
+        )
+        if not role_col:
+            continue
+        members = []
+        for _, row in df.iterrows():
+            role_val = str(row[role_col]).strip() if pd.notna(row[role_col]) else ""
+            if role_val:
+                name = str(row[name_col]).strip() if pd.notna(row[name_col]) else "Unknown"
+                members.append({"name": name, "role": role_val})
+        if members:
+            result[ministry] = members
+    return result
+
+
 def get_today_myt_date():
     """Get today's date in MYT timezone as a string (YYYY-MM-DD)"""
     myt = timezone(timedelta(hours=8))
@@ -5971,6 +6078,9 @@ if current_page == "cg":
 
             with st.expander("👔 LEADERSHIP", expanded=False):
                 _render_cg_leadership_section(display_df, cell_filter, cell_columns, daily_colors)
+
+            with st.expander("⛪ MINISTRY", expanded=False):
+                _render_cg_ministry_section(display_df, daily_colors)
 
         else:
             st.warning("No data found. Click 'Sync from Google Sheets' to load data.")
