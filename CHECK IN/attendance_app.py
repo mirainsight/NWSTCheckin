@@ -91,6 +91,22 @@ def get_now_myt():
     myt = timezone(timedelta(hours=8))
     return datetime.now(myt)
 
+def get_week_start_myt():
+    """Return the most recent Saturday's date in MYT (week resets on Saturday).
+    weekday(): Mon=0 … Sat=5, Sun=6  →  days_since_saturday = (weekday - 5) % 7"""
+    today = get_now_myt().date()
+    days_since_saturday = (today.weekday() - 5) % 7
+    return today - timedelta(days=days_since_saturday)
+
+def _parse_form_timestamp(ts_str):
+    """Parse a Google Forms Column-A timestamp to a date. Returns None if unparseable."""
+    for fmt in ("%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(ts_str.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
 
 def _with_checkin_progress(caption: str, fn):
     """Show a simple ``st.progress`` (themed via global CSS) while ``fn`` runs; slot cleared when done."""
@@ -233,7 +249,7 @@ def perform_hard_sheet_resync(mode="congregation"):
                     redis_client.delete(f"attendance:ministry_options:{ministry}")
                 redis_client.delete("attendance:ministry_options:all")
                 redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{MINISTRY_ATTENDANCE_TAB_NAME}")
-                redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{get_week_start_myt().isoformat()}")
             except Exception:
                 pass
         _refresh_theme_override_redis_after_resync()
@@ -248,7 +264,7 @@ def perform_hard_sheet_resync(mode="congregation"):
             redis_client.delete(REDIS_ZONE_MAPPING_KEY)
             redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{ATTENDANCE_TAB_NAME}")
             redis_client.delete(f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{LEADERS_ATTENDANCE_TAB_NAME}")
-            redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+            redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{get_week_start_myt().isoformat()}")
         except Exception:
             pass
     _refresh_theme_override_redis_after_resync()
@@ -1504,16 +1520,18 @@ def get_checked_in_today(client, sheet_id, tab_name=ATTENDANCE_TAB_NAME):
 
 @st.cache_data(ttl=60)
 def get_newcomers_count(_client, sheet_id, refresh_key=0):
-    """Count newcomers from Form Responses 1: rows where Column P (Status) = 'New'
-    and Column Q (Processed) is false/empty.
+    """Count newcomers from Form Responses 1: rows where Column P (Status) = 'New',
+    Column Q (Processed) is false/empty, and Column A (timestamp) falls within the
+    current Saturday-to-Friday week (MYT).
+
     Returns: tuple (count, list_of_newcomers)
         where list_of_newcomers is a list of dicts with 'name' and 'cell' keys
 
-    Uses Upstash Redis caching — see ``REDIS_CACHE_TTL``; **Refresh** in the app clears the newcomers key
-    so counts update after new form responses.
+    Uses Upstash Redis caching keyed by the current week's Saturday date so the
+    cache is valid all week and resets naturally each Saturday.
     """
-    today_myt = get_today_myt_date()
-    redis_key = f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}"
+    week_start = get_week_start_myt()
+    redis_key = f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{week_start.isoformat()}"
 
     # Try Redis cache first
     redis_client = get_redis_client()
@@ -1541,14 +1559,21 @@ def get_newcomers_count(_client, sheet_id, refresh_key=0):
             return 0, []
         newcomers = []
         for row in all_rows[1:]:
-            # Column P = index 15 (Status), Column Q = index 16 (Processed)
+            # Column A = index 0 (Form submission timestamp)
             # Column B = index 1 (Name), Column C = index 2 (Assigned Cell)
+            # Column P = index 15 (Status), Column Q = index 16 (Processed)
+            ts_str = row[0].strip() if len(row) > 0 and row[0] else ""
             name = row[1].strip() if len(row) > 1 and row[1] else ""
             cell = row[2].strip() if len(row) > 2 and row[2] else ""
             p_val = row[15].strip() if len(row) > 15 and row[15] else ""
             q_val = row[16].strip() if len(row) > 16 and row[16] else ""
-            if p_val.lower() == "new" and (not q_val or q_val.lower() == "false"):
-                newcomers.append({"name": name, "cell": cell})
+            if not (p_val.lower() == "new" and (not q_val or q_val.lower() == "false")):
+                continue
+            # Only include rows whose submission date falls within the current week
+            row_date = _parse_form_timestamp(ts_str)
+            if row_date is None or row_date < week_start:
+                continue
+            newcomers.append({"name": name, "cell": cell})
 
         count = len(newcomers)
 
@@ -3406,7 +3431,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 if redis_client:
                     try:
                         today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{get_week_start_myt().isoformat()}")
                     except Exception:
                         pass
                 st.rerun()
@@ -5838,7 +5863,7 @@ if page == "NWST Check In":
                 if redis_client:
                     try:
                         today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{get_week_start_myt().isoformat()}")
                     except Exception:
                         pass
                 st.rerun()
@@ -5915,7 +5940,7 @@ elif page == "Ministry Discipleship":
                 if redis_client:
                     try:
                         today_myt = get_today_myt_date()
-                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}{today_myt}")
+                        redis_client.delete(f"{REDIS_NEWCOMERS_KEY_PREFIX}week:{get_week_start_myt().isoformat()}")
                     except Exception:
                         pass
                 st.rerun()
