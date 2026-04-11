@@ -698,10 +698,20 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
     st.markdown("")
 
 
-def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", attendance_stats=None):
+def _render_cg_cell_health_section(
+    display_df,
+    daily_colors,
+    cell_filter="All",
+    attendance_stats=None,
+    hist_df_override=None,
+    redis_cache_key_override=None,
+):
     """Cell health — KPI column layout + Historical Cell Status WoW pills + expandable name tiles.
 
     Reads from Upstash cache (single source of truth) when available, falls back to live calculation.
+    Pass ``hist_df_override`` to use a different historical snapshot DataFrame (e.g. Historical Ministry
+    Status) instead of Historical Cell Status. Pass ``redis_cache_key_override`` to read/write a
+    separate Redis key (e.g. ``REDIS_MINISTRY_HEALTH_KEY``) so ministry WoW is cached independently.
     """
     if attendance_stats is None:
         attendance_stats = {}
@@ -717,7 +727,17 @@ def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", 
     cache_hit = False
     redis = get_redis_client()
     if redis:
-        cached_data = get_cell_health_from_redis(redis)
+        if redis_cache_key_override:
+            try:
+                raw = redis.get(redis_cache_key_override)
+                if raw:
+                    cached_data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+                else:
+                    cached_data = None
+            except Exception:
+                cached_data = None
+        else:
+            cached_data = get_cell_health_from_redis(redis)
         if cached_data:
             _cell_scoped = (
                 cell_filter is not None
@@ -839,7 +859,7 @@ def _render_cg_cell_health_section(display_df, daily_colors, cell_filter="All", 
             red_pct = (red_count / total_members * 100) if total_members > 0 else 0
             graduated_pct = (graduated_count / total_members * 100) if total_members > 0 else 0
 
-        hist_df = load_historical_cell_status_dataframe()
+        hist_df = hist_df_override if hist_df_override is not None else load_historical_cell_status_dataframe()
         curr_agg, prev_agg = None, None
         if hist_df is not None and not hist_df.empty:
             curr_agg, prev_agg, _, _ = _nwst_hist_cell_wow_for_scope(hist_df, cell_filter)
@@ -2777,6 +2797,189 @@ def calculate_and_cache_cell_health(redis_client, cg_df, hist_df, cell_to_zone_m
 
     # Store in Redis
     store_cell_health_in_redis(redis_client, cell_health_data)
+
+
+NWST_HISTORICAL_MINISTRY_STATUS_TAB = "Historical Ministry Status"
+REDIS_MINISTRY_HEALTH_KEY = "nwst_ministry_health_data"
+
+# The four ministry tab names written by the Apps Script (MINISTRY TABS.txt).
+_MINISTRY_TAB_NAMES = ["Hype", "Frontlines", "VS", "Worship"]
+
+
+@st.cache_data(ttl=300)
+def load_historical_ministry_status_dataframe():
+    """Load **Historical Ministry Status** tab (per-ministry snapshots + WoW).
+
+    Same column structure as Historical Cell Status; column C ("Cell") stores the ministry
+    name so all shared WoW helpers work without modification.
+    """
+    client = get_google_sheet_client()
+    if not client:
+        return None
+    try:
+        spreadsheet = client.open_by_key(NWST_HEALTH_SHEET_ID)
+        ws = spreadsheet.worksheet(NWST_HISTORICAL_MINISTRY_STATUS_TAB)
+        data = ws.get_all_values()
+        if not data or len(data) < 2:
+            return None
+        return pd.DataFrame(data[1:], columns=data[0])
+    except WorksheetNotFound:
+        return None
+    except Exception:
+        return None
+
+
+def calculate_and_cache_ministry_health(redis_client, ministries_df, ministry_hist_df):
+    """Calculate ministry health WoW from Ministries Combined + Historical Ministry Status,
+    store under ``REDIS_MINISTRY_HEALTH_KEY`` using the same payload shape as cell health.
+
+    One row per ministry (Hype / Frontlines / VS / Worship) plus an "All" aggregate.
+    """
+    from datetime import date as _date
+
+    if ministries_df is None or ministries_df.empty:
+        return
+
+    # Find status column
+    status_columns = [col for col in ministries_df.columns if "status" in col.lower()]
+    status_col = status_columns[0] if status_columns else None
+
+    # Find ministry column
+    ministry_col = None
+    for col in ministries_df.columns:
+        if "ministry" in col.lower() or "department" in col.lower():
+            ministry_col = col
+            break
+
+    if not ministry_col:
+        return
+
+    work_df = ministries_df.copy()
+    if status_col:
+        work_df["_status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
+
+    # WoW deltas from Historical Ministry Status (same helpers; col C stores ministry name)
+    wow_by_ministry: dict = {}
+    if ministry_hist_df is not None and not ministry_hist_df.empty:
+        lk = _nwst_hist_cell_col_lookup(ministry_hist_df)
+        cell_c = _nwst_hist_cell_get_col(lk, "cell")
+        if cell_c:
+            for ministry_name in ministry_hist_df[cell_c].dropna().unique():
+                ms = str(ministry_name).strip()
+                if not ms or ms.lower() == "all":
+                    continue
+                curr_a, prev_a, _, _ = _nwst_hist_cell_wow_for_scope(ministry_hist_df, ms)
+                if curr_a and prev_a:
+                    wow_by_ministry[ms.lower()] = (
+                        int(curr_a.get("new", 0)) - int(prev_a.get("new", 0)),
+                        int(curr_a.get("regular", 0)) - int(prev_a.get("regular", 0)),
+                        int(curr_a.get("irregular", 0)) - int(prev_a.get("irregular", 0)),
+                        int(curr_a.get("follow up", 0) or curr_a.get("follow_up", 0) or 0)
+                        - int(prev_a.get("follow up", 0) or prev_a.get("follow_up", 0) or 0),
+                    )
+        # "All" aggregate WoW
+        curr_all, prev_all, _, _ = _nwst_hist_cell_wow_for_scope(ministry_hist_df, "All")
+        if curr_all and prev_all:
+            wow_by_ministry["all"] = (
+                int(curr_all.get("new", 0)) - int(prev_all.get("new", 0)),
+                int(curr_all.get("regular", 0)) - int(prev_all.get("regular", 0)),
+                int(curr_all.get("irregular", 0)) - int(prev_all.get("irregular", 0)),
+                int(curr_all.get("follow up", 0) or curr_all.get("follow_up", 0) or 0)
+                - int(prev_all.get("follow up", 0) or prev_all.get("follow_up", 0) or 0),
+            )
+
+    # Per-ministry counts — group by base ministry name (part before the first colon)
+    ministry_rows = []
+    all_counts: dict = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
+
+    # Derive base ministry label for each row
+    work_df["_base_ministry"] = (
+        work_df[ministry_col]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.split(":", n=1)
+        .str[0]
+        .str.strip()
+    )
+
+    for ministry_name, group in work_df.groupby("_base_ministry"):
+        ms = str(ministry_name).strip()
+        if not ms:
+            continue
+
+        if status_col:
+            new_c = len(group[group["_status_type"] == "New"])
+            reg_c = len(group[group["_status_type"] == "Regular"])
+            irr_c = len(group[group["_status_type"] == "Irregular"])
+            fu_c = len(group[group["_status_type"] == "Follow Up"])
+            red_c = len(group[group["_status_type"] == "Red"])
+            grad_c = len(group[group["_status_type"] == "Graduated"])
+        else:
+            n = len(group)
+            new_c = max(1, int(n * 0.20))
+            reg_c = max(1, int(n * 0.40))
+            irr_c = max(1, int(n * 0.20))
+            fu_c = max(1, int(n * 0.10))
+            red_c = max(1, int(n * 0.05))
+            grad_c = max(0, n - new_c - reg_c - irr_c - fu_c - red_c)
+
+        all_counts["new"] += new_c
+        all_counts["regular"] += reg_c
+        all_counts["irregular"] += irr_c
+        all_counts["follow_up"] += fu_c
+        all_counts["red"] += red_c
+        all_counts["graduated"] += grad_c
+
+        deltas = wow_by_ministry.get(ms.lower(), (0, 0, 0, 0))
+        ministry_rows.append(
+            build_cell_health_row(
+                cell_name=ms,
+                zone="",
+                new_count=new_c,
+                regular_count=reg_c,
+                irregular_count=irr_c,
+                follow_up_count=fu_c,
+                red_count=red_c,
+                graduated_count=grad_c,
+                delta_new=deltas[0],
+                delta_regular=deltas[1],
+                delta_irregular=deltas[2],
+                delta_follow_up=deltas[3],
+            )
+        )
+
+    all_deltas = wow_by_ministry.get("all", (0, 0, 0, 0))
+    all_row = build_cell_health_row(
+        cell_name="All",
+        zone="",
+        new_count=all_counts["new"],
+        regular_count=all_counts["regular"],
+        irregular_count=all_counts["irregular"],
+        follow_up_count=all_counts["follow_up"],
+        red_count=all_counts["red"],
+        graduated_count=all_counts["graduated"],
+        delta_new=all_deltas[0],
+        delta_regular=all_deltas[1],
+        delta_irregular=all_deltas[2],
+        delta_follow_up=all_deltas[3],
+    )
+
+    payload = {
+        "snapshot_date": _date.today().isoformat(),
+        "all_row": all_row,
+        "cell_rows": ministry_rows,  # keyed by "cell" field (holds ministry name)
+        "source": "Ministries Combined + Historical Ministry Status",
+    }
+
+    try:
+        redis_client.set(
+            REDIS_MINISTRY_HEALTH_KEY,
+            json.dumps(payload),
+            ex=86400 * 7,
+        )
+    except Exception:
+        pass
 
 
 def _nwst_normalize_member_name(s):
@@ -6081,6 +6284,25 @@ if current_page == "cg":
                         except Exception as e:
                             st.warning(f"⚠️ Could not sync Cell Health data: {e}")
 
+                        # Sync Ministry Health data (Historical Ministry Status → Redis)
+                        try:
+                            ministry_hist_df_sync = None
+                            try:
+                                mh_ws = spreadsheet.worksheet(NWST_HISTORICAL_MINISTRY_STATUS_TAB)
+                                mh_data = mh_ws.get_all_values()
+                                if mh_data and len(mh_data) >= 2:
+                                    ministry_hist_df_sync = pd.DataFrame(mh_data[1:], columns=mh_data[0])
+                            except WorksheetNotFound:
+                                pass
+
+                            _min_df_for_sync = locals().get("ministries_df")
+                            if _min_df_for_sync is None or (hasattr(_min_df_for_sync, "empty") and _min_df_for_sync.empty):
+                                _min_df_for_sync = get_ministries_data()
+                            if redis and _min_df_for_sync is not None and not _min_df_for_sync.empty:
+                                calculate_and_cache_ministry_health(redis, _min_df_for_sync, ministry_hist_df_sync)
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not sync Ministry Health data: {e}")
+
                         if redis:
                             st.success("✅ Attendance updated successfully!")
 
@@ -6277,9 +6499,18 @@ elif current_page == "ministry":
 
             # STATUS KPI CARDS — same layout as CG Health (New / Regular / Irregular / Follow Up / Red / Graduated)
             # Pass mc_ministry_filter as the cell_filter arg so _cell_scoped layout is applied when a
-            # specific ministry is selected (4-column row). Cache won't hit for this page so live
-            # calculation from display_df is used automatically.
-            _render_cg_cell_health_section(display_df, daily_colors, mc_ministry_filter, attendance_stats)
+            # specific ministry is selected (4-column row).
+            # hist_df_override: use Historical Ministry Status instead of Historical Cell Status for WoW.
+            # redis_cache_key_override: read/write ministry health cache independently from cell health.
+            _mc_hist_df = load_historical_ministry_status_dataframe()
+            _render_cg_cell_health_section(
+                display_df,
+                daily_colors,
+                mc_ministry_filter,
+                attendance_stats,
+                hist_df_override=_mc_hist_df,
+                redis_cache_key_override=REDIS_MINISTRY_HEALTH_KEY,
+            )
 
             with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
                 if not display_df.empty:
