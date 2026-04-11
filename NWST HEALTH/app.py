@@ -6086,12 +6086,14 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# Main app content
-st.title("🏥 NWST Health")
-
 # Get page from query parameters
 query_params = st.query_params
 current_page = _qp_first(query_params.get("page"), "cg")
+
+# Main app content
+_page_title = "Ministry Health" if current_page == "ministry" else "NWST Health"
+_page_icon = "🎵📷👋🎤" if current_page == "ministry" else "🏥"
+st.title(f"{_page_icon} {_page_title}")
 
 # Page navigation — sidebar buttons (styled to match CHECK IN attendance_app)
 with st.sidebar:
