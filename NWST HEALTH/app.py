@@ -1149,6 +1149,24 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
     else:
         work["_cb_role_ne"] = pd.Series(False, index=work.index)
 
+    # Ministry role columns
+    _ministry_col_map = {}  # ministry_id -> actual column name
+    for _min_id, _min_label in _MINISTRY_ROLE_COLS.items():
+        for col in work.columns:
+            if col.lower().strip() == _min_label.lower():
+                _ministry_col_map[_min_id] = col
+                break
+    for _min_id, _col in _ministry_col_map.items():
+        work[f"_cb_{_min_id.lower()}_ne"] = work[_col].notna() & (
+            work[_col].astype(str).str.strip() != ""
+        )
+    # _cb_ministry_ne: True if member has ANY ministry role
+    _min_ne_cols = [f"_cb_{k.lower()}_ne" for k in _ministry_col_map]
+    if _min_ne_cols:
+        work["_cb_ministry_ne"] = work[_min_ne_cols].any(axis=1)
+    else:
+        work["_cb_ministry_ne"] = pd.Series(False, index=work.index)
+
     # Segment filter options: parallel lists for st.radio
     seg_labels = ["All"]
     seg_ids = ["all"]
@@ -1166,6 +1184,15 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         seg_labels.append("Leader")
         seg_ids.append("leader")
 
+    if bool(work["_cb_ministry_ne"].any()):
+        seg_labels.append("Ministry")
+        seg_ids.append("ministry")
+    for _min_id in _MINISTRY_ROLE_COLS:
+        _ne_col = f"_cb_{_min_id.lower()}_ne"
+        if _ne_col in work.columns and bool(work[_ne_col].any()):
+            seg_labels.append(_min_id)
+            seg_ids.append(f"min:{_min_id.lower()}")
+
     if status_col:
         for st_lab in ("New", "Regular", "Irregular", "Follow Up"):
             if (work["_cb_status"] == st_lab).any():
@@ -1181,6 +1208,13 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
             return df[df["_cb_gender"] == "Female"]
         if seg == "leader" and role_col:
             return df[df["_cb_role_ne"]]
+        if seg == "ministry":
+            return df[df["_cb_ministry_ne"]]
+        if seg.startswith("min:"):
+            _min_id = seg.split(":", 1)[1]
+            _ne_col = f"_cb_{_min_id}_ne"
+            if _ne_col in df.columns:
+                return df[df[_ne_col]]
         if seg.startswith("status:") and status_col:
             want = seg.split(":", 1)[1]
             return df[df["_cb_status"] == want]
