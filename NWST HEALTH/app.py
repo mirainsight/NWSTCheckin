@@ -1415,7 +1415,6 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
                 if unk > 0 else ""
             )
             gender_card_html = (
-                f'<p class="nwst-swipe-summary">{n_m}M · {n_f}F</p>'
                 f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
                 f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">Male</span>'
                 f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
@@ -1446,16 +1445,23 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
             .astype(str).str.strip()
             .value_counts()
         )
+        def _role_sort_key(name):
+            import re
+            m = re.match(r"^(\d+)", str(name))
+            return int(m.group(1)) if m else 9999
+        role_counts = role_counts.iloc[
+            sorted(range(len(role_counts)), key=lambda i: _role_sort_key(role_counts.index[i]))
+        ]
         leader_rows = ""
         for role_val, cnt in role_counts.items():
-            rp = 100.0 * cnt / n_leaders
+            rp = 100.0 * cnt / n_total if n_total > 0 else 0
             leader_rows += (
                 f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
                 f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">{html.escape(str(role_val))}</span>'
                 f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
                 f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
                 f'</div>'
-                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{rp:.1f}%</span>'
                 f'</div>'
             )
         leader_card_html = (
@@ -1477,14 +1483,14 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
             cnt = int(filt[_ne_col].sum())
             if cnt == 0:
                 continue
-            rp = 100.0 * cnt / n_ministry
+            rp = 100.0 * cnt / n_total if n_total > 0 else 0
             ministry_rows += (
                 f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
                 f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">{html.escape(_min_id)}</span>'
                 f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
                 f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
                 f'</div>'
-                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{rp:.1f}%</span>'
                 f'</div>'
             )
         ministry_card_html = (
