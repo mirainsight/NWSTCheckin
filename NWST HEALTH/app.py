@@ -6228,131 +6228,105 @@ elif current_page == "ministry":
     st.markdown("")
     try:
         ministries_df = get_ministries_data()
+        attendance_stats = get_attendance_data()
 
         if not ministries_df.empty:
-            # Get unique ministry names for filtering
-            ministry_columns = [col for col in ministries_df.columns if 'ministry' in col.lower() or 'department' in col.lower()]
+            # Detect ministry column for the filter
+            ministry_col_options = [
+                col for col in ministries_df.columns
+                if "ministry" in col.lower() or "department" in col.lower()
+            ]
+            # Also detect cell columns (same structure as CG Combined — used by leadership section)
+            mc_cell_columns = [
+                col for col in ministries_df.columns
+                if "cell" in col.lower() or "group" in col.lower()
+            ]
 
-            # Extract base ministry names (part before colon, or full value if no colon)
-            base_ministries = set()
-            if ministry_columns:
-                for entry in ministries_df[ministry_columns[0]]:
-                    if pd.notna(entry):
-                        entry_str = str(entry).strip()
-                        # Extract base ministry name (before the colon)
-                        base_ministry = entry_str.split(":", 1)[0].strip()
-                        if base_ministry:
-                            base_ministries.add(base_ministry)
+            # Build ministry filter options (base name before colon)
+            mc_ministry_options = ["All"]
+            if ministry_col_options:
+                _mc_base_set = set()
+                for _mc_entry in ministries_df[ministry_col_options[0]]:
+                    if pd.notna(_mc_entry) and str(_mc_entry).strip():
+                        _mc_base = str(_mc_entry).strip().split(":", 1)[0].strip()
+                        if _mc_base:
+                            _mc_base_set.add(_mc_base)
+                mc_ministry_options = ["All"] + sorted(list(_mc_base_set))
 
-            # Build ministry filter options
-            ministry_options = ["All"] + sorted(list(base_ministries))
-
-            # Filter section with dynamic options
-            filter_col1, filter_col2 = st.columns(2)
-
-            with filter_col1:
-                ministry_filter = st.selectbox(
-                    "Ministry",
-                    options=ministry_options,
-                    key="global_ministry_filter"
-                )
-
-            # If Worship is selected, show department filter
-            department_filter = "All"
-            if ministry_filter == "Worship":
-                with filter_col2:
-                    # Extract departments from Worship entries (format: "Worship: Department Name")
-                    worship_entries = ministries_df[ministries_df[ministry_columns[0]].str.contains("Worship", na=False, case=False)][ministry_columns[0]]
-                    departments = set()
-                    for entry in worship_entries:
-                        if ":" in str(entry):
-                            dept = str(entry).split(":", 1)[1].strip()
-                            departments.add(dept)
-
-                    department_options = ["All"] + sorted(list(departments))
-                    department_filter = st.selectbox(
-                        "Department",
-                        options=department_options,
-                        key="department_filter"
-                    )
-            else:
-                filter_col2.write("")
+            mc_ministry_filter = st.selectbox(
+                "Ministry",
+                options=mc_ministry_options,
+                key="mc_ministry_filter",
+            )
 
             st.markdown("---")
 
-            # Apply filters
-            display_ministry_df = ministries_df.copy()
-
             # Apply ministry filter
-            if ministry_filter != "All" and ministry_columns:
-                if ministry_filter == "Worship":
-                    # For Worship, include all entries that start with "Worship"
-                    display_ministry_df = display_ministry_df[display_ministry_df[ministry_columns[0]].str.contains("^Worship", na=False, case=False, regex=True)]
-                    # Apply department filter if specified
-                    if department_filter != "All":
-                        display_ministry_df = display_ministry_df[display_ministry_df[ministry_columns[0]].str.contains(f"Worship: {department_filter}", na=False, case=False)]
-                else:
-                    # For other ministries, match entries that start with the ministry name but have no department
-                    display_ministry_df = display_ministry_df[display_ministry_df[ministry_columns[0]].str.match(f"^{ministry_filter}$", na=False, case=False)]
+            display_df = ministries_df.copy()
+            if mc_ministry_filter != "All" and ministry_col_options:
+                display_df = display_df[
+                    display_df[ministry_col_options[0]]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.split(":", n=1)
+                    .str[0]
+                    .str.strip()
+                    == mc_ministry_filter
+                ]
 
-            # LEADERSHIP SECTION
-            st.markdown("")
-            st.markdown(f"<h2 style='color: {daily_colors['primary']}; font-weight: 900;'>👔 LEADERSHIP</h2>", unsafe_allow_html=True)
-            st.markdown(f"<div style='height: 3px; background: {daily_colors['primary']}; margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
+            # STATUS KPI CARDS — same layout as CG Health (New / Regular / Irregular / Follow Up / Red / Graduated)
+            # Pass mc_ministry_filter as the cell_filter arg so _cell_scoped layout is applied when a
+            # specific ministry is selected (4-column row). Cache won't hit for this page so live
+            # calculation from display_df is used automatically.
+            _render_cg_cell_health_section(display_df, daily_colors, mc_ministry_filter, attendance_stats)
 
-            if not display_ministry_df.empty:
-                # Get leadership members from data
-                leadership_data_m = get_leadership_by_role(display_ministry_df)
-
-                if leadership_data_m:
-                    # Calculate total leaders and percentage
-                    total_leaders_m = sum(len(members) for members in leadership_data_m.values())
-
-                    # Use the already filtered dataframe
-                    total_in_ministry = len(display_ministry_df)
-
-                    leader_pct_m = (total_leaders_m / total_in_ministry * 100) if total_in_ministry > 0 else 0
-
-                    # Display two cards in columns
-                    leader_kpi_col1_m, leader_kpi_col2_m = st.columns(2)
-
-                    with leader_kpi_col1_m:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-label">Total Leaders</div>
-                            <div class="kpi-number">{total_leaders_m}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    with leader_kpi_col2_m:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-label">Leaders %</div>
-                            <div class="kpi-number" style="color: {daily_colors['primary']};">{leader_pct_m:.0f}%</div>
-                            <div class="kpi-subtitle">{total_leaders_m} of {total_in_ministry}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
+            with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
+                if not display_df.empty:
                     st.markdown("")
-
-                    # Display leadership organized by role
-                    for role_name, members in leadership_data_m.items():
-                        st.markdown(f"<h3 style='color: {daily_colors['primary']}; font-size: 1.1rem;'>{role_name}</h3>", unsafe_allow_html=True)
-
-                        for leader in members:
-                            since_text = f"Since: {leader['since']}" if leader['since'] else "Since: Not available"
-                            st.markdown(f"""
-                            <div style='padding: 1rem; background: #1a1a1a; border-left: 3px solid {daily_colors['primary']}; margin-bottom: 0.75rem;'>
-                                <p style='font-weight: 600; margin: 0;'>{leader['name']}</p>
-                                <p style='font-size: 0.85rem; color: #999; margin: 0.25rem 0 0 0;'>{since_text}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        st.markdown("")
+                    att_df_m, _ = load_attendance_and_cg_dataframes()
+                    # Use ministries_df as the roster (cg_df) so name lookups resolve correctly
+                    if not ministries_df.empty:
+                        if att_df_m is None:
+                            att_df_m = pd.DataFrame()
+                        status_hist_df = load_status_historical_dataframe()
+                        monthly_status_df = build_monthly_member_status_table(
+                            display_df, att_df_m, ministries_df, status_hist_df
+                        )
+                        if monthly_status_df is not None and not monthly_status_df.empty:
+                            _cg_individual_attendance_fragment(monthly_status_df, daily_colors, mc_ministry_filter)
+                        else:
+                            st.info(
+                                "No individual attendance breakdown yet. Check that Attendance row 1 "
+                                "from column D has parseable dates (e.g. DD/MM/YYYY or MM/DD/YYYY)."
+                            )
+                    else:
+                        st.info("Could not load data for the individual attendance table.")
                 else:
-                    st.info("No leadership roles assigned yet.")
-            else:
-                st.info("No ministry data available.")
+                    st.info("No member data to show individual attendance.")
+
+            with st.expander("📊 CELL BREAKDOWN & ATTENDANCE", expanded=False):
+                _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
+                st.markdown("---")
+                st.markdown("")
+                if display_df is None or display_df.empty:
+                    st.info("No member data to show attendance charts.")
+                else:
+                    render_nwst_service_attendance_rate_charts(
+                        display_df,
+                        daily_colors,
+                        tab_each_cell_when_all=(mc_ministry_filter == "All"),
+                    )
+
+            with st.expander("📋 DETAILED MEMBERS", expanded=False):
+                _render_cg_detailed_members_section(display_df, daily_colors)
+
+            with st.expander("👔 LEADERSHIP", expanded=False):
+                _render_cg_leadership_section(display_df, mc_ministry_filter, mc_cell_columns, daily_colors)
+
+            with st.expander("⛪ MINISTRY", expanded=False):
+                _render_cg_ministry_section(display_df, daily_colors)
+
         else:
             st.warning("No ministries data found. Click 'Sync from Google Sheets' on the CG Health tab to load data.")
 
