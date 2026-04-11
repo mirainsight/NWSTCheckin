@@ -6464,16 +6464,17 @@ elif current_page == "ministry":
                 if "cell" in col.lower() or "group" in col.lower()
             ]
 
-            # Build ministry filter options (base name before colon)
+            # Build ministry filter options from the role columns (Hype Role, Frontlines Role, etc.).
+            # The "Ministry Department" column exists in the sheet but is unused/empty;
+            # actual membership is determined by whether the role column is non-empty.
             mc_ministry_options = ["All"]
-            if ministry_col_options:
-                _mc_base_set = set()
-                for _mc_entry in ministries_df[ministry_col_options[0]]:
-                    if pd.notna(_mc_entry) and str(_mc_entry).strip():
-                        _mc_base = str(_mc_entry).strip().split(":", 1)[0].strip()
-                        if _mc_base:
-                            _mc_base_set.add(_mc_base)
-                mc_ministry_options = ["All"] + sorted(list(_mc_base_set))
+            for _min_name, _min_col in _MINISTRY_ROLE_COLS.items():
+                if _min_col in ministries_df.columns:
+                    has_members = ministries_df[_min_col].notna() & (
+                        ministries_df[_min_col].astype(str).str.strip() != ""
+                    )
+                    if has_members.any():
+                        mc_ministry_options.append(_min_name)
 
             mc_ministry_filter = st.selectbox(
                 "Ministry",
@@ -6483,19 +6484,15 @@ elif current_page == "ministry":
 
             st.markdown("---")
 
-            # Apply ministry filter
+            # Apply ministry filter — filter rows where the selected ministry's role column is non-empty.
             display_df = ministries_df.copy()
-            if mc_ministry_filter != "All" and ministry_col_options:
-                display_df = display_df[
-                    display_df[ministry_col_options[0]]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .str.split(":", n=1)
-                    .str[0]
-                    .str.strip()
-                    == mc_ministry_filter
-                ]
+            if mc_ministry_filter != "All":
+                role_col_name = _MINISTRY_ROLE_COLS.get(mc_ministry_filter, f"{mc_ministry_filter} Role")
+                if role_col_name in display_df.columns:
+                    display_df = display_df[
+                        display_df[role_col_name].notna()
+                        & (display_df[role_col_name].astype(str).str.strip() != "")
+                    ]
 
             # STATUS KPI CARDS — same layout as CG Health (New / Regular / Irregular / Follow Up / Red / Graduated)
             # Pass mc_ministry_filter as the cell_filter arg so _cell_scoped layout is applied when a
