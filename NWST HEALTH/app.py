@@ -4907,6 +4907,11 @@ def get_members_by_ministry(df):
                 name = str(row[name_col]).strip() if pd.notna(row[name_col]) else "Unknown"
                 members.append({"name": name, "role": role_val})
         if members:
+            import re as _re
+            def _role_num(r):
+                m = _re.match(r"^(\d+)", str(r["role"]))
+                return (int(m.group(1)) if m else 9999, r["name"].lower())
+            members.sort(key=_role_num)
             result[ministry] = members
     return result
 
