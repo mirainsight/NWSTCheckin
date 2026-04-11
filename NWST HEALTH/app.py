@@ -3677,11 +3677,14 @@ def _nwst_make_attendance_rate_fig(
     return fig
 
 
-def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_each_cell_when_all=False):
+def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_each_cell_when_all=False, aggregate_label=None):
     """Per-zone Saturday attendance (headcount lines) — filtered by current display_df (global Cell / Status).
 
     When ``tab_each_cell_when_all`` is True and multiple cell groups are shown, each cell gets its own tab
     instead of stacking tall charts.
+
+    When ``aggregate_label`` is set (e.g. a ministry name), all matched members are collapsed into a
+    single trend line with that label instead of being split by Cell Group. Use this for Ministry Health.
     """
     if display_df is None or display_df.empty:
         return
@@ -3717,6 +3720,12 @@ def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_eac
             "Check names and cells align with CG Combined."
         )
         return
+
+    # Ministry mode: collapse all Cell Groups into one aggregate line so the chart shows
+    # a single ministry-level trend instead of a per-cell breakdown.
+    if aggregate_label:
+        work_df = work_df.copy()
+        work_df["Cell Group"] = aggregate_label
 
     _mdf = display_df.dropna(subset=[disp_cell_col, disp_name_col]).copy()
     _mdf["_c"] = _mdf[disp_cell_col].astype(str).str.strip()
@@ -6540,10 +6549,14 @@ elif current_page == "ministry":
                 if display_df is None or display_df.empty:
                     st.info("No member data to show attendance charts.")
                 else:
+                    # For ministry health, aggregate all members into one trend line per ministry
+                    # instead of splitting by cell group (which produces irrelevant cell-level lines).
+                    _mc_agg_label = mc_ministry_filter if mc_ministry_filter != "All" else "All Ministries"
                     render_nwst_service_attendance_rate_charts(
                         display_df,
                         daily_colors,
-                        tab_each_cell_when_all=(mc_ministry_filter == "All"),
+                        tab_each_cell_when_all=False,
+                        aggregate_label=_mc_agg_label,
                     )
 
             with st.expander("📋 DETAILED MEMBERS", expanded=False):
