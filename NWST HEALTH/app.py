@@ -1435,7 +1435,7 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
                 f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
                 f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
                 f'</div>'
-                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{rp:.1f}%</span>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
                 f'</div>'
             )
         leader_card_html = (
@@ -1464,7 +1464,7 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
                 f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
                 f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
                 f'</div>'
-                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{rp:.1f}%</span>'
+                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{cnt}</span>'
                 f'</div>'
             )
         ministry_card_html = (
