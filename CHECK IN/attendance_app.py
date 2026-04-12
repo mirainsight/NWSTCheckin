@@ -2434,7 +2434,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             _flush_checkin_success_here()
 
             # Add JavaScript to gray out checked-in options in the dropdown
-            st.iframe(srcdoc=f"""
+            st.iframe(f"""
             <script>
                 // Function to style checked-in options (those starting with ✓)
                 function styleCheckedInOptions() {{
@@ -2722,7 +2722,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             _flush_ministry_checkin_success_here()
 
             # Add JavaScript to gray out checked-in options
-            st.iframe(srcdoc=f"""
+            st.iframe(f"""
             <script>
                 function styleCheckedInOptions() {{
                     const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
@@ -3223,7 +3223,7 @@ def render_ministry_dashboard(selected_ministry):
         # Calculate height and render
         num_depts = len(all_members_by_dept)
         estimated_height = 150 + (num_depts * 80)
-        st.iframe(srcdoc=ministry_breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(ministry_breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Empty state
         st.markdown(f"""
@@ -3352,7 +3352,7 @@ def render_ministry_dashboard(selected_ministry):
 
             num_depts_empty = len(all_members_by_dept)
             estimated_height_empty = 150 + (num_depts_empty * 80)
-            st.iframe(srcdoc=empty_ministry_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(empty_ministry_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_recent_checkins_table(tab_name):
@@ -4164,7 +4164,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Calculate height based on content
         num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height = 150 + (num_items * 60)  # Base height + per-item height
-        st.iframe(srcdoc=breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -4506,7 +4506,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Calculate height and render
             num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_empty = 150 + (num_items_empty * 60)
-            st.iframe(srcdoc=empty_breakdown_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
 
 
 if hasattr(st, "fragment"):
@@ -5232,7 +5232,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         # Calculate height and render
         num_items_hist = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height_hist = 150 + (num_items_hist * 60)
-        st.iframe(srcdoc=hist_breakdown_html, height=estimated_height_hist, scrolling=True)
+        st.iframe(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
     else:
         # No check-ins - show empty state and all pending members greyed out
         st.markdown(f"""
@@ -5578,7 +5578,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             # Calculate height and render
             num_items_hist_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_hist_empty = 150 + (num_items_hist_empty * 60)
-            st.iframe(srcdoc=hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
+            st.iframe(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
 
 
 
