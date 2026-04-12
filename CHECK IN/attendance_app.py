@@ -2455,7 +2455,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 observer.observe(document.body, {{ childList: true, subtree: true }});
                 styleCheckedInOptions();
             </script>
-            """, height=0)
+            """, height=1)
 
             # Auto check-in when a valid selection is made
             if selected_display and selected_display != placeholder:
@@ -2739,7 +2739,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                 observer.observe(document.body, {{ childList: true, subtree: true }});
                 styleCheckedInOptions();
             </script>
-            """, height=0)
+            """, height=1)
 
             # Auto check-in when a valid selection is made
             if selected_display and selected_display != placeholder:
