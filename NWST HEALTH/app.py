@@ -6400,7 +6400,6 @@ if current_page == "cg":
             pass
 
     st.markdown("")
-    render_birthdays_notice_board(daily_colors)
     try:
         newcomers_df = get_newcomers_data()
         attendance_stats = get_attendance_data()
@@ -6430,6 +6429,8 @@ if current_page == "cg":
             # Apply cell filter
             if cell_filter != "All" and cell_columns:
                 display_df = display_df[display_df[cell_columns[0]] == cell_filter]
+
+            render_birthdays_notice_board(daily_colors, df=display_df)
 
             # CELL HEALTH — quick view (Historical Cell Status WoW + live CG Combined mix)
             _render_cg_cell_health_section(display_df, daily_colors, cell_filter, attendance_stats)
