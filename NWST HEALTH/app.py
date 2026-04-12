@@ -4595,7 +4595,7 @@ body {{ margin: 0; background: #0e1117; }}
 }})();
 </script>
 </body></html>"""
-    st.iframe(src="data:text/html;base64," + base64.b64encode(full.encode()).decode(), height=iframe_h, scrolling=True)
+    st.iframe(src="data:text/html;base64," + base64.b64encode(full.encode()).decode(), height=iframe_h)
 
 
 def _detailed_members_health_span_class(tile_status):
@@ -4768,7 +4768,7 @@ body {{ margin: 0; background: #0e1117; }}
 }})();
 </script>
 </body></html>"""
-    st.iframe(src="data:text/html;base64," + base64.b64encode(full.encode()).decode(), height=iframe_h, scrolling=True)
+    st.iframe(src="data:text/html;base64," + base64.b64encode(full.encode()).decode(), height=iframe_h)
 
 
 def get_member_category_color(category):
