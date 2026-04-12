@@ -1543,6 +1543,11 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         f'</div>'
         f"<script>"
         f"(function(){{"
+        f"  function nwstSwipe(s,i){{"
+        f"    var el=document.getElementById('nwst-st-'+s);"
+        f"    if(el)el.scrollTo({{left:i*el.offsetWidth,behavior:'smooth'}});"
+        f"  }}"
+        f"  window.nwstSwipe=nwstSwipe;"
         f"  var t=document.getElementById('nwst-st-{_sid}');"
         f"  var ds=document.querySelectorAll('#nwst-sd-{_sid} .nwst-sdot');"
         f"  if(!t)return;"
@@ -1551,14 +1556,21 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         f"    ds.forEach(function(d,j){{d.classList.toggle('active',i===j);}});"
         f"  }}"
         f"  t.addEventListener('scroll',upd,{{passive:true}});"
-        f"  window.nwstSwipe=window.nwstSwipe||function(s,i){{"
-        f"    var el=document.getElementById('nwst-st-'+s);"
-        f"    if(el)el.scrollTo({{left:i*el.offsetWidth,behavior:'smooth'}});"
-        f"  }};"
+        f"  t.addEventListener('scrollend',upd,{{passive:true}});"
         f"}})();"
         f"</script>"
     )
-    st.markdown(cards_html, unsafe_allow_html=True)
+    _swipe_doc = (
+        f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>"
+        f"<style>html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}</style>"
+        f"</head><body style='background:transparent;'>"
+        f"{cards_html}"
+        f"</body></html>"
+    )
+    try:
+        components.html(_swipe_doc, height=280, scrolling=False)
+    except Exception:
+        components.html(_swipe_doc, height=280)
 
 
 @st.fragment
