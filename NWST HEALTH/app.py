@@ -1456,17 +1456,18 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         for role_val, cnt in role_counts.items():
             rp = 100.0 * cnt / n_total if n_total > 0 else 0
             leader_rows += (
-                f'<div class="nwst-cb-row" style="{_cb_row_inline}">'
-                f'<span class="nwst-cb-lbl" style="{_cb_lbl_inline}">{html.escape(str(role_val))}</span>'
-                f'<div class="nwst-cb-track" style="{_cb_track_inline}">'
+                f'<span style="font-size:0.88rem;color:{text};white-space:nowrap;">{html.escape(str(role_val))}</span>'
+                f'<div style="{_cb_track_inline}">'
                 f'<div class="nwst-cb-fill" style="width:{rp:.2f}%;background:{prim};"></div>'
                 f'</div>'
-                f'<span class="nwst-cb-pct" style="{_cb_pct_inline}">{rp:.1f}%</span>'
-                f'</div>'
+                f'<span style="text-align:right;font-size:0.88rem;font-weight:600;color:{text};white-space:nowrap;">{rp:.1f}%</span>'
             )
         leader_card_html = (
             f'<p class="nwst-swipe-summary">{n_leaders} of {n_total} members &nbsp;·&nbsp; {leader_pct:.1f}%</p>'
+            f'<div style="display:grid;grid-template-columns:auto 1fr auto;'
+            f'gap:0.35rem 0.65rem;align-items:center;">'
             + leader_rows
+            + f'</div>'
         )
 
     # ── Ministry card content ────────────────────────────────────────────────
