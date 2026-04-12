@@ -6577,21 +6577,53 @@ elif current_page == "ministry":
                     st.info("No member data to show individual attendance.")
 
             with st.expander("📊 MINISTRY BREAKDOWN & ATTENDANCE", expanded=False):
-                _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
-                st.markdown("---")
-                st.markdown("")
-                if display_df is None or display_df.empty:
-                    st.info("No member data to show attendance charts.")
+                if mc_ministry_filter == "All":
+                    # Split into per-ministry tabs (same UX as cell health per-cell tabs)
+                    _min_tab_options = []
+                    for _min_name, _min_col in _MINISTRY_ROLE_COLS.items():
+                        if _min_col in display_df.columns:
+                            _has_min = display_df[_min_col].notna() & (
+                                display_df[_min_col].astype(str).str.strip() != ""
+                            )
+                            if _has_min.any():
+                                _min_tab_options.append(_min_name)
+
+                    if not _min_tab_options:
+                        st.info("No ministry data available.")
+                    else:
+                        _min_bd_tabs = st.tabs(_min_tab_options)
+                        for _mti, _min_tab_name in enumerate(_min_tab_options):
+                            with _min_bd_tabs[_mti]:
+                                _min_role_col = _MINISTRY_ROLE_COLS[_min_tab_name]
+                                _min_tab_df = display_df[
+                                    display_df[_min_role_col].notna()
+                                    & (display_df[_min_role_col].astype(str).str.strip() != "")
+                                ]
+                                _nwst_cell_breakdown_fragment(_min_tab_df, daily_colors, _min_tab_name)
+                                st.markdown("---")
+                                st.markdown("")
+                                if _min_tab_df.empty:
+                                    st.info("No member data to show attendance charts.")
+                                else:
+                                    render_nwst_service_attendance_rate_charts(
+                                        _min_tab_df,
+                                        daily_colors,
+                                        tab_each_cell_when_all=False,
+                                        aggregate_label=_min_tab_name,
+                                    )
                 else:
-                    # For ministry health, aggregate all members into one trend line per ministry
-                    # instead of splitting by cell group (which produces irrelevant cell-level lines).
-                    _mc_agg_label = mc_ministry_filter if mc_ministry_filter != "All" else "All Ministries"
-                    render_nwst_service_attendance_rate_charts(
-                        display_df,
-                        daily_colors,
-                        tab_each_cell_when_all=False,
-                        aggregate_label=_mc_agg_label,
-                    )
+                    _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
+                    st.markdown("---")
+                    st.markdown("")
+                    if display_df is None or display_df.empty:
+                        st.info("No member data to show attendance charts.")
+                    else:
+                        render_nwst_service_attendance_rate_charts(
+                            display_df,
+                            daily_colors,
+                            tab_each_cell_when_all=False,
+                            aggregate_label=mc_ministry_filter,
+                        )
 
             with st.expander("📋 DETAILED MEMBERS", expanded=False):
                 _render_cg_detailed_members_section(display_df, daily_colors)
