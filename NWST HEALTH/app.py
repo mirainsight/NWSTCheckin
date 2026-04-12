@@ -6576,7 +6576,7 @@ elif current_page == "ministry":
                 else:
                     st.info("No member data to show individual attendance.")
 
-            with st.expander("📊 CELL BREAKDOWN & ATTENDANCE", expanded=False):
+            with st.expander("📊 MINISTRY BREAKDOWN & ATTENDANCE", expanded=False):
                 _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
                 st.markdown("---")
                 st.markdown("")
