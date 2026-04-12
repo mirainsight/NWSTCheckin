@@ -23,7 +23,6 @@ from nwst_shared.nwst_cell_health_cache import (
 from nwst_shared.nwst_cell_health_report import load_cg_combined_df
 
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import date, datetime, timedelta, timezone
 import colorsys
 import hashlib
@@ -488,7 +487,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 )
             st.markdown("".join(parts), unsafe_allow_html=True)
         else:
-            st.dataframe(data_df, use_container_width=True)
+            st.dataframe(data_df, width='stretch')
 
     def _cell_health_mix_card_html(accent_hex, kpi_label, pct_val, n_members, wow_fragment):
         ae = html.escape(accent_hex, quote=True)
@@ -521,7 +520,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
         col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("🔵 New", key="btn_new", use_container_width=True):
+        if st.button("🔵 New", key="btn_new", width='stretch'):
             st.session_state.expand_new = not st.session_state.expand_new
         st.markdown(
             _cell_health_mix_card_html("#3498db", "New Members", new_pct, new_count, wow_new),
@@ -539,7 +538,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
             _member_tiles(new_data, "#3498db")
 
     with col2:
-        if st.button("🟢 Regular", key="btn_regular", use_container_width=True):
+        if st.button("🟢 Regular", key="btn_regular", width='stretch'):
             st.session_state.expand_regular = not st.session_state.expand_regular
         st.markdown(
             _cell_health_mix_card_html(
@@ -559,7 +558,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
             _member_tiles(regular_data, "#2ecc71")
 
     with col3:
-        if st.button("🟠 Irregular", key="btn_irregular", use_container_width=True):
+        if st.button("🟠 Irregular", key="btn_irregular", width='stretch'):
             st.session_state.expand_irregular = not st.session_state.expand_irregular
         st.markdown(
             _cell_health_mix_card_html(
@@ -586,7 +585,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
 
     if _cell_scoped:
         with col4:
-            if st.button("🟡 Follow Up", key="btn_follow_up", use_container_width=True):
+            if st.button("🟡 Follow Up", key="btn_follow_up", width='stretch'):
                 st.session_state.expand_follow_up = not st.session_state.expand_follow_up
             st.markdown(
                 _cell_health_mix_card_html(
@@ -616,7 +615,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("🟡 Follow Up", key="btn_follow_up", use_container_width=True):
+            if st.button("🟡 Follow Up", key="btn_follow_up", width='stretch'):
                 st.session_state.expand_follow_up = not st.session_state.expand_follow_up
             st.markdown(
                 _cell_health_mix_card_html(
@@ -643,7 +642,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 _member_tiles(follow_up_data, "#f39c12")
 
         with col2:
-            if st.button("🔴 Red", key="btn_red", use_container_width=True):
+            if st.button("🔴 Red", key="btn_red", width='stretch'):
                 st.session_state.expand_red = not st.session_state.expand_red
             st.markdown(
                 _cell_health_mix_card_html("#e74c3c", "Red", red_pct, red_count, wow_red),
@@ -670,7 +669,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 _member_tiles(red_data, "#e74c3c")
 
         with col3:
-            if st.button("⭐ Graduated", key="btn_graduated", use_container_width=True):
+            if st.button("⭐ Graduated", key="btn_graduated", width='stretch'):
                 st.session_state.expand_graduated = not st.session_state.expand_graduated
             st.markdown(
                 _cell_health_mix_card_html(
@@ -1120,7 +1119,7 @@ def _nwst_age_bucket_series(series: pd.Series) -> pd.Series:
     v = num_f.notna()
     out.loc[v & (num_f < 13)] = "<13"
     ge = v & (num_f >= 13)
-    out.loc[ge] = num_f.loc[ge].astype("int64", copy=False).astype(str)
+    out.loc[ge] = num_f.loc[ge].astype("int64").astype(str)
     return out
 
 
@@ -3837,7 +3836,7 @@ def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_eac
                         daily_colors,
                         y_axis_range=_shared_range,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
             return
 
     zone_tab_names = sorted(zone_plots.keys(), key=str.lower)
@@ -3850,7 +3849,7 @@ def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_eac
                 unsafe_allow_html=True,
             )
         fig = _nwst_make_attendance_rate_fig(plot_df, chart_date_cols, colors, daily_colors, y_axis_range=y_axis_range)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def _resolve_cg_name_cell_columns(cg_df):
@@ -4595,10 +4594,7 @@ body {{ margin: 0; background: #0e1117; }}
 }})();
 </script>
 </body></html>"""
-    try:
-        components.html(full, height=iframe_h, scrolling=True, tab_index=0)
-    except TypeError:
-        components.html(full, height=iframe_h, scrolling=True)
+    st.iframe(srcdoc=full, height=iframe_h, scrolling=True)
 
 
 def _detailed_members_health_span_class(tile_status):
@@ -4771,10 +4767,7 @@ body {{ margin: 0; background: #0e1117; }}
 }})();
 </script>
 </body></html>"""
-    try:
-        components.html(full, height=iframe_h, scrolling=True, tab_index=0)
-    except TypeError:
-        components.html(full, height=iframe_h, scrolling=True)
+    st.iframe(srcdoc=full, height=iframe_h, scrolling=True)
 
 
 def get_member_category_color(category):
@@ -5354,7 +5347,7 @@ def render_nwst_analytics_page(colors):
             margin=dict(l=50, r=50, t=30, b=50),
         )
 
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(fig_trend, width='stretch')
 
     with st.expander("📊 AVERAGE ATTENDANCE BY ZONE", expanded=False):
         zone_attendance = (
@@ -5405,7 +5398,7 @@ def render_nwst_analytics_page(colors):
             margin=dict(l=50, r=50, t=30, b=50),
         )
 
-        st.plotly_chart(fig_zone, use_container_width=True)
+        st.plotly_chart(fig_zone, width='stretch')
 
     with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
         st.markdown(
@@ -5483,7 +5476,7 @@ def render_nwst_analytics_page(colors):
                 label_visibility="collapsed",
             )
         with filter_col2:
-            if st.button("Clear All", type="secondary", use_container_width=True, key="nwst_clear_cell_filter"):
+            if st.button("Clear All", type="secondary", width='stretch', key="nwst_clear_cell_filter"):
                 st.session_state.clear_filter_counter += 1
                 st.rerun()
 
@@ -5608,7 +5601,7 @@ def render_nwst_analytics_page(colors):
                         ),
                         margin=dict(l=55, r=50, t=28, b=150),
                     )
-                    st.plotly_chart(fig_zone_cells, use_container_width=True)
+                    st.plotly_chart(fig_zone_cells, width='stretch')
                     st.caption("Tip: follow **one color** across the weeks — rightmost dot is the latest Saturday.")
 
     with st.expander("📊 ATTENDANCE BY CELL GROUP", expanded=False):
@@ -5661,7 +5654,7 @@ def render_nwst_analytics_page(colors):
             margin=dict(l=50, r=50, t=30, b=100),
         )
 
-        st.plotly_chart(fig_cell, use_container_width=True)
+        st.plotly_chart(fig_cell, width='stretch')
 
     with st.expander("📈 ZONE ATTENDANCE TREND", expanded=False):
         zones = df["Zone"].dropna().unique()
@@ -5720,7 +5713,7 @@ def render_nwst_analytics_page(colors):
             margin=dict(l=50, r=50, t=30, b=50),
         )
 
-        st.plotly_chart(fig_zone_trend, use_container_width=True)
+        st.plotly_chart(fig_zone_trend, width='stretch')
 
 
 # Page configuration
@@ -5739,7 +5732,7 @@ _nwst_banner = daily_colors.get("banner")
 if _nwst_banner:
     _nwst_banner_path = Path(__file__).resolve().parent / _nwst_banner
     if _nwst_banner_path.is_file():
-        st.image(str(_nwst_banner_path), use_container_width=True)
+        st.image(str(_nwst_banner_path), width='stretch')
 
 # Convert hex color to RGB for rgba shadows
 def hex_to_rgb(hex_color):
@@ -6142,7 +6135,7 @@ with st.sidebar:
         if st.button(
             _label,
             type="primary" if _is_active else "secondary",
-            use_container_width=True,
+            width='stretch',
             key=f"sidebar_nav_{_key}",
             disabled=_is_active,
         ):
@@ -6155,7 +6148,7 @@ if current_page == "cg":
     # Sync button and status
     sync_col1, sync_col2, sync_col3 = st.columns([1, 2, 1])
     with sync_col2:
-        if st.button("🔄 Sync from Google Sheets", use_container_width=True):
+        if st.button("🔄 Sync from Google Sheets", width='stretch'):
             client = get_google_sheet_client()
             if not client:
                 st.error("❌ Google credentials not configured. Please add 'google' to your Streamlit secrets.")
