@@ -27,7 +27,6 @@ from nwst_shared.nwst_daily_palette import (
 )
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 import gspread
 from google.oauth2.service_account import Credentials
@@ -2435,7 +2434,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             _flush_checkin_success_here()
 
             # Add JavaScript to gray out checked-in options in the dropdown
-            components.html(f"""
+            st.iframe(srcdoc=f"""
             <script>
                 // Function to style checked-in options (those starting with ✓)
                 function styleCheckedInOptions() {{
@@ -2723,7 +2722,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             _flush_ministry_checkin_success_here()
 
             # Add JavaScript to gray out checked-in options
-            components.html(f"""
+            st.iframe(srcdoc=f"""
             <script>
                 function styleCheckedInOptions() {{
                     const options = document.querySelectorAll('[data-baseweb="menu"] li, [role="listbox"] li, [data-baseweb="select"] [role="option"]');
@@ -3224,7 +3223,7 @@ def render_ministry_dashboard(selected_ministry):
         # Calculate height and render
         num_depts = len(all_members_by_dept)
         estimated_height = 150 + (num_depts * 80)
-        components.html(ministry_breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(srcdoc=ministry_breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Empty state
         st.markdown(f"""
@@ -3353,7 +3352,7 @@ def render_ministry_dashboard(selected_ministry):
 
             num_depts_empty = len(all_members_by_dept)
             estimated_height_empty = 150 + (num_depts_empty * 80)
-            components.html(empty_ministry_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(srcdoc=empty_ministry_html, height=estimated_height_empty, scrolling=True)
 
 
 def render_recent_checkins_table(tab_name):
@@ -4165,7 +4164,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Calculate height based on content
         num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height = 150 + (num_items * 60)  # Base height + per-item height
-        components.html(breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(srcdoc=breakdown_html, height=estimated_height, scrolling=True)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -4507,7 +4506,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Calculate height and render
             num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_empty = 150 + (num_items_empty * 60)
-            components.html(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(srcdoc=empty_breakdown_html, height=estimated_height_empty, scrolling=True)
 
 
 if hasattr(st, "fragment"):
@@ -5233,7 +5232,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         # Calculate height and render
         num_items_hist = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height_hist = 150 + (num_items_hist * 60)
-        components.html(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
+        st.iframe(srcdoc=hist_breakdown_html, height=estimated_height_hist, scrolling=True)
     else:
         # No check-ins - show empty state and all pending members greyed out
         st.markdown(f"""
@@ -5579,7 +5578,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             # Calculate height and render
             num_items_hist_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_hist_empty = 150 + (num_items_hist_empty * 60)
-            components.html(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
+            st.iframe(srcdoc=hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
 
 
 
