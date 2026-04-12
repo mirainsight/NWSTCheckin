@@ -1964,8 +1964,16 @@ def _group_birthdays_near_date(
     center: date,
     delta_days: int,
 ) -> list[tuple[date, list[tuple[str, str]]]]:
+    status_col = next(
+        (c for c in cg.columns if "status" in c.lower()),
+        None,
+    )
     by_date: dict[date, list[tuple[str, str]]] = defaultdict(list)
     for _, row in cg.iterrows():
+        if status_col:
+            status_val = str(row.get(status_col) or "").strip().lower()
+            if "duplicate" in status_val:
+                continue
         md = _parse_birthday_month_day(row.get(bcol))
         if not md:
             continue
@@ -1983,7 +1991,7 @@ def _group_birthdays_near_date(
 
     out: list[tuple[date, list[tuple[str, str]]]] = []
     for dt in sorted(by_date.keys()):
-        lines = sorted(by_date[dt], key=lambda t: (t[0].lower(), t[1].lower()))
+        lines = sorted(by_date[dt], key=lambda t: (t[1].lower(), t[0].lower()))
         out.append((dt, lines))
     return out
 
@@ -2091,31 +2099,38 @@ def _card_body_text_hex(theme_text: str) -> str:
 
 
 def birthdays_notice_payload(
-    health_sheet_id: str, center_myt_iso: str, delta_days: int = 5
+    health_sheet_id: str, center_myt_iso: str, delta_days: int = 5,
+    df: "pd.DataFrame | None" = None,
 ) -> tuple[str, list[tuple[date, list[tuple[str, str]]]], str | None]:
     """
     (status, grouped, user_hint).
 
     status: ``ok`` | ``empty_window`` | ``load_failed`` | ``empty_sheet`` | ``no_birthday_col``
     | ``no_name_col`` | ``no_sid``
+
+    Pass ``df`` to use a pre-loaded (and optionally pre-filtered) dataframe instead of
+    loading from Redis / Google Sheets (e.g. the already-fetched ministry roster).
     """
-    sid = (health_sheet_id or "").strip()
-    if not sid:
-        return "no_sid", [], "Configure **NWST_HEALTH_SHEET_ID** (or rely on the built-in default) for the Health workbook."
-    cg = _cg_combined_df_for_birthdays(sid)
-    if cg is None:
-        return "load_failed", [], (
-            "Could not read **CG Combined** from the NWST Health spreadsheet. "
-            "Share that workbook with the **same Google service account** as Check In, then refresh."
-        )
+    if df is None:
+        sid = (health_sheet_id or "").strip()
+        if not sid:
+            return "no_sid", [], "Configure **NWST_HEALTH_SHEET_ID** (or rely on the built-in default) for the Health workbook."
+        cg = _cg_combined_df_for_birthdays(sid)
+        if cg is None:
+            return "load_failed", [], (
+                "Could not read **CG Combined** from the NWST Health spreadsheet. "
+                "Share that workbook with the **same Google service account** as Check In, then refresh."
+            )
+    else:
+        cg = df
     if cg.empty:
-        return "empty_sheet", [], "CG Combined is empty—NWST Health has no roster rows to read."
+        return "empty_sheet", [], "Roster is empty — no rows to read."
     bcol = _find_cg_birthday_column(cg)
     ncol, ccol = _resolve_cg_name_cell_columns(cg)
     if not bcol:
         return "no_birthday_col", [], "Add a column whose header mentions Birthday, DOB, or Date of Birth."
     if not ncol:
-        return "no_name_col", [], "CG Combined needs a Name column so birthdays can be listed."
+        return "no_name_col", [], "The roster needs a Name column so birthdays can be listed."
     try:
         center = datetime.strptime(center_myt_iso, "%Y-%m-%d").date()
     except ValueError:
@@ -2127,11 +2142,14 @@ def birthdays_notice_payload(
     return "ok", grouped, None
 
 
-def render_birthdays_notice_board(page_colors: dict) -> None:
-    """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID."""
+def render_birthdays_notice_board(page_colors: dict, df: "pd.DataFrame | None" = None) -> None:
+    """Notice-board block: under banner, above instruction pill; uses CG Combined + NWST_HEALTH_SHEET_ID.
+
+    Pass ``df`` to render from a pre-loaded / pre-filtered dataframe (e.g. ministry roster).
+    """
     sid = (NWST_HEALTH_SHEET_ID or "").strip()
     today_s = get_today_myt_date()
-    status, grouped, hint = birthdays_notice_payload(sid, today_s, delta_days=5)
+    status, grouped, hint = birthdays_notice_payload(sid, today_s, delta_days=5, df=df)
 
     if status in ("no_sid", "load_failed", "empty_sheet", "no_birthday_col", "no_name_col"):
         if hint:
@@ -6515,6 +6533,8 @@ elif current_page == "ministry":
                         display_df[role_col_name].notna()
                         & (display_df[role_col_name].astype(str).str.strip() != "")
                     ]
+
+            render_birthdays_notice_board(daily_colors, df=display_df)
 
             # STATUS KPI CARDS — same layout as CG Health (New / Regular / Irregular / Follow Up / Red / Graduated)
             # Pass mc_ministry_filter as the cell_filter arg so _cell_scoped layout is applied when a
