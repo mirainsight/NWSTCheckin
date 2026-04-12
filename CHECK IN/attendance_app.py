@@ -1083,8 +1083,16 @@ def _group_birthdays_near_date(
     center: date,
     delta_days: int,
 ) -> list[tuple[date, list[tuple[str, str]]]]:
+    status_col = next(
+        (c for c in cg.columns if "status" in c.lower()),
+        None,
+    )
     by_date: dict[date, list[tuple[str, str]]] = defaultdict(list)
     for _, row in cg.iterrows():
+        if status_col:
+            status_val = str(row.get(status_col) or "").strip().lower()
+            if "duplicate" in status_val:
+                continue
         md = _parse_birthday_month_day(row.get(bcol))
         if not md:
             continue
@@ -1102,7 +1110,7 @@ def _group_birthdays_near_date(
 
     out: list[tuple[date, list[tuple[str, str]]]] = []
     for dt in sorted(by_date.keys()):
-        lines = sorted(by_date[dt], key=lambda t: (t[0].lower(), t[1].lower()))
+        lines = sorted(by_date[dt], key=lambda t: (t[1].lower(), t[0].lower()))
         out.append((dt, lines))
     return out
 
