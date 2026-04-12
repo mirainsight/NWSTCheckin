@@ -2979,7 +2979,7 @@ def render_ministry_dashboard(selected_ministry):
             textposition='inside'
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Names Breakdown by Department with search and collapsible sections
         st.markdown(f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.8rem; font-weight: 900; color: {page_colors["primary"]}; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 1.5rem; border-bottom: 3px solid {page_colors["primary"]}; padding-bottom: 0.5rem; display: inline-block;">Attendees by Department</div>', unsafe_allow_html=True)
@@ -3223,7 +3223,7 @@ def render_ministry_dashboard(selected_ministry):
         # Calculate height and render
         num_depts = len(all_members_by_dept)
         estimated_height = 150 + (num_depts * 80)
-        st.iframe(ministry_breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(ministry_breakdown_html, height=estimated_height)
     else:
         # Empty state
         st.markdown(f"""
@@ -3352,7 +3352,7 @@ def render_ministry_dashboard(selected_ministry):
 
             num_depts_empty = len(all_members_by_dept)
             estimated_height_empty = 150 + (num_depts_empty * 80)
-            st.iframe(empty_ministry_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(empty_ministry_html, height=estimated_height_empty)
 
 
 def render_recent_checkins_table(tab_name):
@@ -3412,7 +3412,7 @@ def render_recent_checkins_table(tab_name):
     display_height = table_height if len(table_data) > max_visible_rows else header_height + (row_height * len(table_data))
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=max(display_height, header_height + row_height)  # Ensure minimum height for at least 1 row
     )
@@ -3427,7 +3427,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     if group_by_zone:
         col_refresh, _col_trailing = st.columns([1, 4])
         with col_refresh:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", use_container_width=True):
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
@@ -3759,7 +3759,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             hoverlabel=dict(bgcolor=page_colors['background'], font=dict(color=page_colors['primary'], family='Inter'))
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Names Breakdown Section
         names_title = "Attendees by Zone" if group_by_zone else "Attendees by Cell Group"
@@ -4164,7 +4164,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Calculate height based on content
         num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height = 150 + (num_items * 60)  # Base height + per-item height
-        st.iframe(breakdown_html, height=estimated_height, scrolling=True)
+        st.iframe(breakdown_html, height=estimated_height)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -4506,7 +4506,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             # Calculate height and render
             num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_empty = 150 + (num_items_empty * 60)
-            st.iframe(empty_breakdown_html, height=estimated_height_empty, scrolling=True)
+            st.iframe(empty_breakdown_html, height=estimated_height_empty)
 
 
 if hasattr(st, "fragment"):
@@ -4797,7 +4797,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             display_height = header_height + (row_height * min(len(table_data), max_visible_rows))
             st.dataframe(
                 df,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 height=max(display_height, header_height + row_height)
             )
@@ -4860,7 +4860,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter'))
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Names Breakdown Section
         names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
@@ -5232,7 +5232,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         # Calculate height and render
         num_items_hist = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
         estimated_height_hist = 150 + (num_items_hist * 60)
-        st.iframe(hist_breakdown_html, height=estimated_height_hist, scrolling=True)
+        st.iframe(hist_breakdown_html, height=estimated_height_hist)
     else:
         # No check-ins - show empty state and all pending members greyed out
         st.markdown(f"""
@@ -5578,7 +5578,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             # Calculate height and render
             num_items_hist_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
             estimated_height_hist_empty = 150 + (num_items_hist_empty * 60)
-            st.iframe(hist_empty_breakdown_html, height=estimated_height_hist_empty, scrolling=True)
+            st.iframe(hist_empty_breakdown_html, height=estimated_height_hist_empty)
 
 
 
@@ -5621,7 +5621,7 @@ with st.sidebar:
         if st.button(
             _nav_label,
             type="primary" if _nav_active else "secondary",
-            use_container_width=True,
+            width='stretch',
             key=f"sidebar_nav_{_nav_key}",
             disabled=_nav_active,
         ):
@@ -5656,14 +5656,14 @@ with st.sidebar:
     # Convert to string format
     selected_date_str = selected_date.strftime("%Y-%m-%d")
 
-    if st.button("View Date", type="primary", use_container_width=True, key="view_historical"):
+    if st.button("View Date", type="primary", width='stretch', key="view_historical"):
         st.session_state.historical_date = selected_date_str
         st.session_state.viewing_historical = (selected_date_str != get_today_myt_date())
         st.rerun()
 
     st.markdown('<div style="height: 1.6rem;"></div>', unsafe_allow_html=True)
 
-    if st.button("Back to Today", type="secondary", use_container_width=True, key="reset_to_today"):
+    if st.button("Back to Today", type="secondary", width='stretch', key="reset_to_today"):
         st.session_state.historical_date = None
         st.session_state.viewing_historical = False
         st.rerun()
@@ -5680,7 +5680,7 @@ with st.sidebar:
     if st.button(
         "📋 Weekly Check In",
         type="secondary",
-        use_container_width=True,
+        width='stretch',
         key="psq_weekly_checkin_btn",
     ):
         st.session_state.pending_psq_email = "weekly_checkin"
@@ -5693,7 +5693,7 @@ with st.sidebar:
     if st.button(
         "📤 Current Cell Health",
         type="secondary",
-        use_container_width=True,
+        width='stretch',
         key="psq_cell_health_btn",
     ):
         st.session_state.pending_psq_email = "cell_health"
@@ -5860,7 +5860,7 @@ if page == "NWST Check In":
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_refresh, col_update_names, _col_trailing = st.columns([1, 1, 3])
         with col_refresh:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", use_container_width=True):
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
@@ -5937,7 +5937,7 @@ elif page == "Ministry Discipleship":
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_refresh_m, col_update_names_m, _col_trailing_m = st.columns([1, 1, 3])
         with col_refresh_m:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{st.session_state.selected_ministry}", use_container_width=True):
+            if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{st.session_state.selected_ministry}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
