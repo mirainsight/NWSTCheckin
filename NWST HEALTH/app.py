@@ -1517,10 +1517,10 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         f"color:{text};margin:0 0 0.75rem 0;display:block;}}"
         f".nwst-swipe-summary{{font-size:0.82rem;color:{muted};margin:0 0 0.65rem 0;}}"
         f".nwst-swipe-note{{font-size:0.82rem;color:{muted};margin:0.25rem 0;}}"
-        f".nwst-swipe-dots-{_sid}{{display:flex;justify-content:center;gap:0.4rem;margin-top:0.55rem;}}"
-        f".nwst-swipe-dots-{_sid} .nwst-sdot{{width:6px;height:6px;border-radius:50%;"
-        f"background:rgba(255,255,255,0.2);cursor:pointer;transition:background 0.2s;}}"
-        f".nwst-swipe-dots-{_sid} .nwst-sdot.active{{background:{prim};}}"
+        f".nwst-swipe-hint{{display:flex;justify-content:center;align-items:center;"
+        f"gap:0.5rem;margin-top:0.45rem;font-size:0.72rem;color:rgba(255,255,255,0.28);"
+        f"letter-spacing:0.06em;user-select:none;}}"
+        f".nwst-swipe-hint svg{{opacity:0.45;}}"
         f"</style>"
         f'<div class="nwst-swipe-track-{_sid}" id="nwst-st-{_sid}">'
         f'  <div class="nwst-swipe-card-{_sid}">'
@@ -1536,41 +1536,13 @@ def _render_cell_breakdown_section(display_df, daily_colors, filter_scope: str =
         f'    {ministry_card_html}'
         f'  </div>'
         f'</div>'
-        f'<div class="nwst-swipe-dots-{_sid}" id="nwst-sd-{_sid}">'
-        f'  <div class="nwst-sdot active" onclick="nwstSwipe(\'{_sid}\',0)"></div>'
-        f'  <div class="nwst-sdot" onclick="nwstSwipe(\'{_sid}\',1)"></div>'
-        f'  <div class="nwst-sdot" onclick="nwstSwipe(\'{_sid}\',2)"></div>'
+        f'<div class="nwst-swipe-hint">'
+        f'  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 2.5L4 6.5L8 10.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        f'  swipe'
+        f'  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 2.5L9 6.5L5 10.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
         f'</div>'
-        f"<script>"
-        f"(function(){{"
-        f"  function nwstSwipe(s,i){{"
-        f"    var el=document.getElementById('nwst-st-'+s);"
-        f"    if(el)el.scrollTo({{left:i*el.offsetWidth,behavior:'smooth'}});"
-        f"  }}"
-        f"  window.nwstSwipe=nwstSwipe;"
-        f"  var t=document.getElementById('nwst-st-{_sid}');"
-        f"  var ds=document.querySelectorAll('#nwst-sd-{_sid} .nwst-sdot');"
-        f"  if(!t)return;"
-        f"  function upd(){{"
-        f"    var i=Math.round(t.scrollLeft/t.offsetWidth);"
-        f"    ds.forEach(function(d,j){{d.classList.toggle('active',i===j);}});"
-        f"  }}"
-        f"  t.addEventListener('scroll',upd,{{passive:true}});"
-        f"  t.addEventListener('scrollend',upd,{{passive:true}});"
-        f"}})();"
-        f"</script>"
     )
-    _swipe_doc = (
-        f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>"
-        f"<style>html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}</style>"
-        f"</head><body style='background:transparent;'>"
-        f"{cards_html}"
-        f"</body></html>"
-    )
-    try:
-        components.html(_swipe_doc, height=280, scrolling=False)
-    except Exception:
-        components.html(_swipe_doc, height=280)
+    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 @st.fragment
