@@ -3701,7 +3701,7 @@ def _nwst_make_attendance_rate_fig(
     return fig
 
 
-def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_each_cell_when_all=False, aggregate_label=None):
+def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_each_cell_when_all=False, aggregate_label=None, y_axis_range=None):
     """Per-zone Saturday attendance (headcount lines) — filtered by current display_df (global Cell / Status).
 
     When ``tab_each_cell_when_all`` is True and multiple cell groups are shown, each cell gets its own tab
@@ -3864,7 +3864,7 @@ def render_nwst_service_attendance_rate_charts(display_df, daily_colors, tab_eac
                 f"{zone}</p>",
                 unsafe_allow_html=True,
             )
-        fig = _nwst_make_attendance_rate_fig(plot_df, chart_date_cols, colors, daily_colors)
+        fig = _nwst_make_attendance_rate_fig(plot_df, chart_date_cols, colors, daily_colors, y_axis_range=y_axis_range)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -6596,6 +6596,45 @@ elif current_page == "ministry":
                     if not _min_tab_options:
                         st.info("No ministry data available.")
                     else:
+                        # Pre-compute shared y-axis range across all ministries (same as cell health)
+                        _min_shared_range = None
+                        try:
+                            _rn_col, _rc_col = _nwst_resolve_display_name_cell_cols(display_df)
+                            _rn_ana, _rn_dates, _rn_err = nwst_get_attendance_grid_for_charts(NWST_HEALTH_SHEET_ID)
+                            if not _rn_err and _rn_ana is not None and _rn_dates and _rc_col:
+                                _rn_date_cols = list(_rn_dates)
+                                if NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS and len(_rn_date_cols) > NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:
+                                    _rn_date_cols = _rn_date_cols[-NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:]
+                                _rn_all_rows = []
+                                for _rn_min in _min_tab_options:
+                                    _rn_mcol = _MINISTRY_ROLE_COLS[_rn_min]
+                                    _rn_df = display_df[
+                                        display_df[_rn_mcol].notna()
+                                        & (display_df[_rn_mcol].astype(str).str.strip() != "")
+                                    ]
+                                    if _rn_df.empty:
+                                        continue
+                                    _rn_keys = _rn_df[[_rn_col, _rc_col]].copy()
+                                    _rn_keys["_n"] = _rn_keys[_rn_col].astype(str).str.strip()
+                                    _rn_keys["_c"] = _rn_keys[_rc_col].astype(str).str.strip()
+                                    _rn_keys = _rn_keys[["_n", "_c"]].drop_duplicates()
+                                    _rn_work = _rn_ana.copy()
+                                    _rn_work["_n"] = _rn_work["Name"].astype(str).str.strip()
+                                    _rn_work["_c"] = _rn_work["Cell Group"].astype(str).str.strip()
+                                    _rn_wdf = _rn_work.merge(_rn_keys, on=["_n", "_c"], how="inner").drop(columns=["_n", "_c"])
+                                    if _rn_wdf.empty:
+                                        continue
+                                    _rn_mc = _rn_df[_rn_col].nunique()
+                                    if _rn_mc == 0:
+                                        continue
+                                    for _rn_dc in _rn_date_cols:
+                                        _rn_att = int(_rn_wdf[_rn_dc].sum()) if _rn_dc in _rn_wdf.columns else 0
+                                        _rn_all_rows.append({NWST_ATTENDED_CELL_MEMBERS_COL: _rn_att})
+                                if _rn_all_rows:
+                                    _min_shared_range = _nwst_count_y_axis_range(pd.DataFrame(_rn_all_rows))
+                        except Exception:
+                            _min_shared_range = None
+
                         _min_att_tabs = st.tabs(_min_tab_options)
                         for _mti, _min_tab_name in enumerate(_min_tab_options):
                             with _min_att_tabs[_mti]:
@@ -6612,6 +6651,7 @@ elif current_page == "ministry":
                                         daily_colors,
                                         tab_each_cell_when_all=False,
                                         aggregate_label=_min_tab_name,
+                                        y_axis_range=_min_shared_range,
                                     )
                 else:
                     render_nwst_service_attendance_rate_charts(
