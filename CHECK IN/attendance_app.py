@@ -78,6 +78,7 @@ REDIS_NEWCOMERS_KEY_PREFIX = "attendance:newcomers:"  # Will be suffixed with da
 REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"  # CG Combined cached for birthday display
 # Rows not yet appended to Google Sheets (flushed via admin flush-pending job / tooling)
 REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
+REDIS_CHECKIN_DEDUPE_PREFIX = "attendance:checkin_dedupe:"  # Atomic per-person lock key (SET NX)
 
 
 def get_today_myt_date():
@@ -1735,6 +1736,20 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
         try:
             redis_key = f"{REDIS_ATTENDANCE_KEY_PREFIX}{today_myt}:{tab_name}"
             pending_key = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+
+            # Atomically claim each check-in slot before reading/writing the cache blob.
+            # SET NX returns "OK" on first write, None if the key already exists.
+            # This prevents two simultaneous users checking in the same person.
+            already_checked_in = []
+            for option in selected_options:
+                dedupe_key = f"{REDIS_CHECKIN_DEDUPE_PREFIX}{today_myt}:{tab_name}:{option}"
+                claimed = redis_client.set(dedupe_key, "1", ex=REDIS_CACHE_TTL, nx=True)
+                if not claimed:
+                    already_checked_in.append(option)
+            selected_options = [o for o in selected_options if o not in already_checked_in]
+            if not selected_options:
+                return False, "Already checked in — someone else just checked this person in."
+
             cached = redis_client.get(redis_key)
 
             if cached:
@@ -4526,6 +4541,22 @@ else:
     def render_ministry_dashboard_fragment(selected_ministry):
         render_ministry_dashboard(selected_ministry)
 
+if hasattr(st, "fragment"):
+    @st.fragment
+    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In"):
+        render_check_in_form(tab_name, form_key, page_label)
+else:
+    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In"):
+        render_check_in_form(tab_name, form_key, page_label)
+
+if hasattr(st, "fragment"):
+    @st.fragment
+    def render_ministry_check_in_form_fragment(selected_ministry, form_key, page_label="Ministry Check In"):
+        render_ministry_check_in_form(selected_ministry, form_key, page_label)
+else:
+    def render_ministry_check_in_form_fragment(selected_ministry, form_key, page_label="Ministry Check In"):
+        render_ministry_check_in_form(selected_ministry, form_key, page_label)
+
 
 def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
     """Render the dashboard for a historical date with custom colors.
@@ -5855,7 +5886,7 @@ if page == "NWST Check In":
     if viewing_historical:
         render_historical_dashboard(ATTENDANCE_TAB_NAME, historical_date, display_colors)
     else:
-        render_check_in_form(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
+        render_check_in_form_fragment(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_refresh, col_update_names, _col_trailing = st.columns([1, 1, 3])
@@ -5898,7 +5929,7 @@ elif page == "Leaders Discipleship":
     if viewing_historical:
         render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
     else:
-        render_check_in_form(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
+        render_check_in_form_fragment(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
@@ -5932,7 +5963,7 @@ elif page == "Ministry Discipleship":
 
     # Show check-in form and dashboard for selected ministry
     if not viewing_historical:
-        render_ministry_check_in_form(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
+        render_ministry_check_in_form_fragment(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_refresh_m, col_update_names_m, _col_trailing_m = st.columns([1, 1, 3])
