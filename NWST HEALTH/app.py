@@ -4808,10 +4808,11 @@ def get_leadership_by_role(df):
     if not role_col:
         return {}
 
-    # Find the "Since" column (case-insensitive)
+    # Find the "Since" / "Role Last Updated" column (case-insensitive)
     since_col = None
     for col in df.columns:
-        if 'since' in col.lower():
+        col_lower = col.lower()
+        if 'since' in col_lower or 'last updated' in col_lower:
             since_col = col
             break
 
