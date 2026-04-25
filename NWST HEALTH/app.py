@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
+if str(_REPO_ROOT) not in sys.spath:
     sys.path.insert(0, str(_REPO_ROOT))
 from nwst_shared.paths import resolved_nwst_accent_config_path
 from nwst_shared.nwst_daily_palette import (
@@ -4849,7 +4849,14 @@ def get_leadership_by_role(df):
             if since_col and pd.notna(row[since_col]):
                 since_val = str(row[since_col]).strip()
                 if since_val:
-                    since_info = since_val
+                    for _fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
+                        try:
+                            since_info = datetime.strptime(since_val, _fmt).strftime("%-d %b %y")
+                            break
+                        except ValueError:
+                            continue
+                    if not since_info:
+                        since_info = since_val
 
             leadership_groups[matching_role].append({
                 "name": member_name,
