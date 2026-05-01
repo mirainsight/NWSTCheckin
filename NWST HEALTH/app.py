@@ -2853,16 +2853,6 @@ def calculate_and_cache_ministry_health(redis_client, ministries_df, ministry_hi
     status_columns = [col for col in ministries_df.columns if "status" in col.lower()]
     status_col = status_columns[0] if status_columns else None
 
-    # Find ministry column
-    ministry_col = None
-    for col in ministries_df.columns:
-        if "ministry" in col.lower() or "department" in col.lower():
-            ministry_col = col
-            break
-
-    if not ministry_col:
-        return
-
     work_df = ministries_df.copy()
     if status_col:
         work_df["_status_type"] = work_df[status_col].apply(extract_cell_sheet_status_type)
@@ -2897,48 +2887,51 @@ def calculate_and_cache_ministry_health(redis_client, ministries_df, ministry_hi
                 - int(prev_all.get("follow up", 0) or prev_all.get("follow_up", 0) or 0),
             )
 
-    # Per-ministry counts — group by base ministry name (part before the first colon)
+    # Compute "All" counts directly from the full work_df (avoids double-counting across ministries)
+    if status_col:
+        all_new_c  = len(work_df[work_df["_status_type"] == "New"])
+        all_reg_c  = len(work_df[work_df["_status_type"] == "Regular"])
+        all_irr_c  = len(work_df[work_df["_status_type"] == "Irregular"])
+        all_fu_c   = len(work_df[work_df["_status_type"] == "Follow Up"])
+        all_red_c  = len(work_df[work_df["_status_type"] == "Red"])
+        all_grad_c = len(work_df[work_df["_status_type"] == "Graduated"])
+    else:
+        _n = len(work_df)
+        all_new_c  = max(1, int(_n * 0.20))
+        all_reg_c  = max(1, int(_n * 0.40))
+        all_irr_c  = max(1, int(_n * 0.20))
+        all_fu_c   = max(1, int(_n * 0.10))
+        all_red_c  = max(1, int(_n * 0.05))
+        all_grad_c = max(0, _n - all_new_c - all_reg_c - all_irr_c - all_fu_c - all_red_c)
+
+    # Per-ministry counts — iterate over known ministries so cache keys match the dropdown values
     ministry_rows = []
-    all_counts: dict = {"new": 0, "regular": 0, "irregular": 0, "follow_up": 0, "red": 0, "graduated": 0}
 
-    # Derive base ministry label for each row
-    work_df["_base_ministry"] = (
-        work_df[ministry_col]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.split(":", n=1)
-        .str[0]
-        .str.strip()
-    )
-
-    for ministry_name, group in work_df.groupby("_base_ministry"):
-        ms = str(ministry_name).strip()
-        if not ms:
+    for ms, role_col_name in _MINISTRY_ROLE_COLS.items():
+        if role_col_name not in work_df.columns:
+            continue
+        group = work_df[
+            work_df[role_col_name].notna()
+            & (work_df[role_col_name].astype(str).str.strip() != "")
+        ]
+        if group.empty:
             continue
 
         if status_col:
-            new_c = len(group[group["_status_type"] == "New"])
-            reg_c = len(group[group["_status_type"] == "Regular"])
-            irr_c = len(group[group["_status_type"] == "Irregular"])
-            fu_c = len(group[group["_status_type"] == "Follow Up"])
-            red_c = len(group[group["_status_type"] == "Red"])
+            new_c  = len(group[group["_status_type"] == "New"])
+            reg_c  = len(group[group["_status_type"] == "Regular"])
+            irr_c  = len(group[group["_status_type"] == "Irregular"])
+            fu_c   = len(group[group["_status_type"] == "Follow Up"])
+            red_c  = len(group[group["_status_type"] == "Red"])
             grad_c = len(group[group["_status_type"] == "Graduated"])
         else:
             n = len(group)
-            new_c = max(1, int(n * 0.20))
-            reg_c = max(1, int(n * 0.40))
-            irr_c = max(1, int(n * 0.20))
-            fu_c = max(1, int(n * 0.10))
-            red_c = max(1, int(n * 0.05))
+            new_c  = max(1, int(n * 0.20))
+            reg_c  = max(1, int(n * 0.40))
+            irr_c  = max(1, int(n * 0.20))
+            fu_c   = max(1, int(n * 0.10))
+            red_c  = max(1, int(n * 0.05))
             grad_c = max(0, n - new_c - reg_c - irr_c - fu_c - red_c)
-
-        all_counts["new"] += new_c
-        all_counts["regular"] += reg_c
-        all_counts["irregular"] += irr_c
-        all_counts["follow_up"] += fu_c
-        all_counts["red"] += red_c
-        all_counts["graduated"] += grad_c
 
         deltas = wow_by_ministry.get(ms.lower(), (0, 0, 0, 0))
         ministry_rows.append(
@@ -2962,12 +2955,12 @@ def calculate_and_cache_ministry_health(redis_client, ministries_df, ministry_hi
     all_row = build_cell_health_row(
         cell_name="All",
         zone="",
-        new_count=all_counts["new"],
-        regular_count=all_counts["regular"],
-        irregular_count=all_counts["irregular"],
-        follow_up_count=all_counts["follow_up"],
-        red_count=all_counts["red"],
-        graduated_count=all_counts["graduated"],
+        new_count=all_new_c,
+        regular_count=all_reg_c,
+        irregular_count=all_irr_c,
+        follow_up_count=all_fu_c,
+        red_count=all_red_c,
+        graduated_count=all_grad_c,
         delta_new=all_deltas[0],
         delta_regular=all_deltas[1],
         delta_irregular=all_deltas[2],
