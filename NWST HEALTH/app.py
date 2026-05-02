@@ -768,12 +768,16 @@ def _render_cg_cell_health_section(
                 graduated_count = target_row.get("graduated_count", 0)
                 total_members = target_row.get("total_count", 0)
 
-                new_pct = target_row.get("new_pct", 0)
-                regular_pct = target_row.get("regular_pct", 0)
-                irregular_pct = target_row.get("irregular_pct", 0)
-                follow_up_pct = target_row.get("follow_up_pct", 0)
-                red_pct = target_row.get("red_pct", 0)
-                graduated_pct = target_row.get("graduated_pct", 0)
+                _mix_denom = new_count + regular_count + irregular_count + follow_up_count
+                if _mix_denom > 0:
+                    new_pct = new_count / _mix_denom * 100
+                    regular_pct = regular_count / _mix_denom * 100
+                    irregular_pct = irregular_count / _mix_denom * 100
+                    follow_up_pct = follow_up_count / _mix_denom * 100
+                else:
+                    new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
+                red_pct = 0.0
+                graduated_pct = 0.0
 
                 # Build curr_agg and prev_agg from cached deltas for WoW pills
                 delta_new = target_row.get("delta_new", 0)
@@ -840,24 +844,16 @@ def _render_cg_cell_health_section(
             and str(cell_filter).strip()
             and str(cell_filter).strip().lower() != "all"
         )
-        if _cell_scoped:
-            mix_denom = new_count + regular_count + irregular_count + follow_up_count
-            if mix_denom > 0:
-                new_pct = new_count / mix_denom * 100
-                regular_pct = regular_count / mix_denom * 100
-                irregular_pct = irregular_count / mix_denom * 100
-                follow_up_pct = follow_up_count / mix_denom * 100
-            else:
-                new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
-            red_pct = 0.0
-            graduated_pct = 0.0
+        mix_denom = new_count + regular_count + irregular_count + follow_up_count
+        if mix_denom > 0:
+            new_pct = new_count / mix_denom * 100
+            regular_pct = regular_count / mix_denom * 100
+            irregular_pct = irregular_count / mix_denom * 100
+            follow_up_pct = follow_up_count / mix_denom * 100
         else:
-            new_pct = (new_count / total_members * 100) if total_members > 0 else 0
-            regular_pct = (regular_count / total_members * 100) if total_members > 0 else 0
-            irregular_pct = (irregular_count / total_members * 100) if total_members > 0 else 0
-            follow_up_pct = (follow_up_count / total_members * 100) if total_members > 0 else 0
-            red_pct = (red_count / total_members * 100) if total_members > 0 else 0
-            graduated_pct = (graduated_count / total_members * 100) if total_members > 0 else 0
+            new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
+        red_pct = 0.0
+        graduated_pct = 0.0
 
         hist_df = hist_df_override if hist_df_override is not None else load_historical_cell_status_dataframe()
         curr_agg, prev_agg = None, None
