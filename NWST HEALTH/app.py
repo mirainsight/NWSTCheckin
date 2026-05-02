@@ -3875,15 +3875,15 @@ def _compute_attendance_stats_from_frames(att_df, cg_df):
         att_name_str = str(att_name).strip()
         member_att_data = att_df[att_df[att_name_col] == att_name]
 
+        date_cols = list(att_df.columns[3:])
+        rolling_cols = date_cols[-12:] if len(date_cols) > 12 else date_cols
         attendance_count = 0
-        total_services = 0
+        total_services = len(rolling_cols)
 
-        for col_idx, col in enumerate(att_df.columns):
-            if col_idx >= 3:
-                total_services += 1
-                values = member_att_data[col].values
-                if len(values) > 0 and str(values[0]).strip() == "1":
-                    attendance_count += 1
+        for col in rolling_cols:
+            values = member_att_data[col].values
+            if len(values) > 0 and str(values[0]).strip() == "1":
+                attendance_count += 1
 
         cell_info = ""
         if cg_name_col and cg_cell_col:
@@ -3944,12 +3944,12 @@ def get_attendance_text(name, cell, attendance_stats):
 
     if key in attendance_stats:
         stats = attendance_stats[key]
-        return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
+        return f"{name} — {stats['attendance']}/{stats['total']} recent services ({stats['percentage']}%)"
 
     key_lower = key.lower()
     for dict_key, stats in attendance_stats.items():
         if dict_key.lower() == key_lower:
-            return f"{name} - {stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
+            return f"{name} — {stats['attendance']}/{stats['total']} recent services ({stats['percentage']}%)"
 
     return name
 
@@ -6236,16 +6236,16 @@ if current_page == "cg":
                                             att_name_str = str(att_name).strip()
                                             member_att_data = att_df[att_df[att_name_col] == att_name]
 
-                                            # Count attendance only from columns D onwards (skip A, B, C)
+                                            # Count attendance over the last 12 service columns only
+                                            _date_cols = list(att_df.columns[3:])
+                                            _rolling_cols = _date_cols[-12:] if len(_date_cols) > 12 else _date_cols
                                             attendance_count = 0
-                                            total_services = 0
+                                            total_services = len(_rolling_cols)
 
-                                            for col_idx, col in enumerate(att_df.columns):
-                                                if col_idx >= 3:  # Skip columns A (0), B (1), C (2)
-                                                    total_services += 1
-                                                    values = member_att_data[col].values
-                                                    if len(values) > 0 and str(values[0]).strip() == '1':
-                                                        attendance_count += 1
+                                            for col in _rolling_cols:
+                                                values = member_att_data[col].values
+                                                if len(values) > 0 and str(values[0]).strip() == '1':
+                                                    attendance_count += 1
 
                                             # Find the cell for this person from CG Combined
                                             cell_info = ""
