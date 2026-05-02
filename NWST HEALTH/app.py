@@ -3944,12 +3944,12 @@ def get_attendance_text(name, cell, attendance_stats):
 
     if key in attendance_stats:
         stats = attendance_stats[key]
-        return f"{name} — {stats['attendance']}/{stats['total']} recent services ({stats['percentage']}%)"
+        return f"{stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
 
     key_lower = key.lower()
     for dict_key, stats in attendance_stats.items():
         if dict_key.lower() == key_lower:
-            return f"{name} — {stats['attendance']}/{stats['total']} recent services ({stats['percentage']}%)"
+            return f"{stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
 
     return name
 
