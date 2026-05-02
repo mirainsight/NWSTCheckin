@@ -1747,8 +1747,6 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
                 if not claimed:
                     already_checked_in.append(option)
             selected_options = [o for o in selected_options if o not in already_checked_in]
-            if not selected_options:
-                return False, "Already checked in — someone else just checked this person in."
 
             cached = redis_client.get(redis_key)
 
@@ -1763,6 +1761,20 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
                 recent_checkins = []
 
             checked_in_set = set(checked_in_list)
+
+            # Recover stale dedupe keys: if the key blocked an option but that person is NOT
+            # in checked_in_list, the key is a leftover from a previously failed cache write.
+            # Reclaim it so the person can be checked in now.
+            for option in list(already_checked_in):
+                if option not in checked_in_set:
+                    dedupe_key = f"{REDIS_CHECKIN_DEDUPE_PREFIX}{today_myt}:{tab_name}:{option}"
+                    redis_client.set(dedupe_key, "1", ex=REDIS_CACHE_TTL)
+                    selected_options.append(option)
+                    already_checked_in.remove(option)
+
+            if not selected_options:
+                return False, "Already checked in — someone else just checked this person in."
+
             for option in selected_options:
                 recent_checkins.insert(0, (timestamp, option))
                 if option not in checked_in_set:
