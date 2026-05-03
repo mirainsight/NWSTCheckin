@@ -289,9 +289,11 @@ def _format_ministries(r) -> str:
     if not groups:
         return ""
 
-    lines = ["=== MINISTRIES ==="]
+    unique_members = len({n for names in groups.values() for n in names})
+    lines = [f"=== MINISTRIES ({unique_members} unique members across all teams) ==="]
     for ministry, names in sorted(groups.items()):
-        lines.append(f"{ministry}: {', '.join(sorted(names))}")
+        pct = round(len(names) / unique_members * 100) if unique_members else 0
+        lines.append(f"{ministry}: {len(names)} members ({pct}%)")
     return "\n".join(lines)
 
 
