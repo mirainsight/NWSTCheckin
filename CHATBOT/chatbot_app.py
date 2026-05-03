@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,12 +23,14 @@ except ImportError:
 
 import streamlit as st
 from chatbot_redis import get_redis_client, log_qa_to_redis
+from chatbot_data import build_data_context
 
 MYT = timezone(timedelta(hours=8))
 
 MAX_RESPONSE_TOKENS = 500
 MAX_CONTEXT_MESSAGES = 6   # last 3 human + 3 assistant turns
 MODEL = "gpt-4o-mini"
+DATA_TTL_SECONDS = 300     # auto-refresh data every 5 minutes
 
 SYSTEM_PROMPT = """You are an assistant for NWST (Narrow Street), a church community in Malaysia.
 You help members and leaders understand two internal tools: cell health tracking and weekly check-in.
@@ -40,7 +42,7 @@ CELL HEALTH — member status categories:
 - Follow Up: requires specific pastoral attention
 - Red: at serious risk of leaving or already disengaged
 - Graduated: completed the cell journey (moved on positively)
-Health % is roughly Regular count divided by total active members. Week-over-week (WoW) deltas show changes from the prior snapshot. The NWST Health dashboard shows KPI cards and per-cell breakdowns by zone.
+Health % is roughly Regular count divided by total active members. Week-over-week (WoW) deltas show +/- changes from the prior snapshot.
 
 CHECK-IN — weekly cell group attendance tracking:
 - Members select their name from a dropdown and click check in.
@@ -49,8 +51,28 @@ CHECK-IN — weekly cell group attendance tracking:
 - Birthdays are displayed on the check-in screen, pulled from CG Combined data.
 - "Update Names" flushes pending check-ins from Redis to Google Sheets and refreshes all caches.
 
-Answer concisely. If you don't know something specific, say so rather than guessing.
-Do not discuss internal credentials, sheet IDs, or Redis keys."""
+You have access to live NWST data injected below. Use it to answer specific questions accurately.
+When summarising health, lead with the weakest cells (lowest Regular %). Be concise."""
+
+
+def _get_week_start() -> str:
+    today = datetime.now(MYT).date()
+    days_since_saturday = (today.weekday() - 5) % 7
+    return (today - timedelta(days=days_since_saturday)).isoformat()
+
+
+def _should_refresh_data() -> bool:
+    fetched_at = st.session_state.get("data_fetched_at")
+    if fetched_at is None:
+        return True
+    return (datetime.now(MYT) - fetched_at).total_seconds() > DATA_TTL_SECONDS
+
+
+def _load_data(cache_buster: int = 0) -> None:
+    today_str = datetime.now(MYT).strftime("%Y-%m-%d")
+    week_start_str = _get_week_start()
+    st.session_state["data_context"] = build_data_context(today_str, week_start_str, cache_buster)
+    st.session_state["data_fetched_at"] = datetime.now(MYT)
 
 
 def _get_openai_key() -> str:
@@ -87,6 +109,8 @@ def _call_openai(messages: list[dict]) -> SimpleNamespace:
         return SimpleNamespace(content=f"Error calling OpenAI: {e}", tokens=0)
 
 
+# ── page setup ─────────────────────────────────────────────────────────────────
+
 st.set_page_config(page_title="NWST Assistant", page_icon="💬", layout="centered")
 
 st.markdown(
@@ -106,7 +130,9 @@ st.markdown(
 )
 
 st.title("NWST Assistant")
-st.caption("Ask about cell health or check-in")
+st.caption("Ask about cell health, check-in, members, or newcomers")
+
+# ── name input ─────────────────────────────────────────────────────────────────
 
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
@@ -117,7 +143,28 @@ st.session_state.user_name = st.text_input(
     placeholder="Enter your name before chatting",
 )
 
+# ── data load + refresh ────────────────────────────────────────────────────────
+
+if _should_refresh_data():
+    _load_data()
+
+col_info, col_btn = st.columns([5, 1])
+with col_info:
+    fetched_at = st.session_state.get("data_fetched_at")
+    if fetched_at:
+        has_data = bool(st.session_state.get("data_context", "").strip())
+        label = f"Data as of {fetched_at.strftime('%H:%M')} MYT"
+        label += "" if has_data else " · no data (run Update Names first)"
+        st.caption(label)
+with col_btn:
+    if st.button("↺", help="Refresh live data", use_container_width=True):
+        build_data_context.clear()
+        _load_data(cache_buster=1)
+        st.rerun()
+
 st.divider()
+
+# ── chat ───────────────────────────────────────────────────────────────────────
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -131,8 +178,14 @@ if prompt := st.chat_input("Ask a question..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Build system message: static behaviour + live data context
+    data_context = st.session_state.get("data_context", "")
+    full_system = SYSTEM_PROMPT
+    if data_context:
+        full_system += "\n\nCURRENT DATA:\n" + data_context
+
     context = st.session_state.messages[-MAX_CONTEXT_MESSAGES:]
-    api_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + context
+    api_messages = [{"role": "system", "content": full_system}] + context
 
     with st.chat_message("assistant"):
         with st.spinner(""):
