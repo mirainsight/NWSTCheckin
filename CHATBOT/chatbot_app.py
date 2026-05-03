@@ -269,6 +269,11 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        if msg["role"] == "assistant" and msg.get("tokens", 0) > 0:
+            st.markdown(
+                f"<p style='font-size:0.72rem;color:#444;font-style:italic;margin:2px 0 0 0;'>{msg['tokens']} tokens</p>",
+                unsafe_allow_html=True,
+            )
 
 # Suggestion bubbles — only shown when chat is empty
 if not st.session_state.messages:
@@ -319,10 +324,15 @@ if prompt:
                 st.markdown(thinking)
             status.update(label="Reasoning", state="complete", expanded=False)
         st.markdown(answer or result.content)
+        if result.tokens > 0:
+            st.markdown(
+                f"<p style='font-size:0.72rem;color:#444;font-style:italic;margin:2px 0 0 0;'>{result.tokens} tokens</p>",
+                unsafe_allow_html=True,
+            )
 
     # Store only the clean answer in chat history (not the <thinking> block)
     stored = answer if answer else result.content
-    st.session_state.messages.append({"role": "assistant", "content": stored})
+    st.session_state.messages.append({"role": "assistant", "content": stored, "tokens": result.tokens})
 
     if result.tokens > 0:
         rc = get_redis_client()
