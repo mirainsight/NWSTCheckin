@@ -750,9 +750,10 @@ def _refresh_nwst_health_data(
         sync_time_str = sync_time_myt.strftime("%Y-%m-%d %H:%M:%S MYT")
         redis_client.set("nwst_last_sync_time", sync_time_str)
 
-        # 5. Clear attendance chart grid cache
+        # 5. Clear attendance chart grid cache + chatbot pre-built context
         try:
             redis_client.delete("nwst_attendance_chart_grid")
+            redis_client.delete("chatbot:data_context")
         except Exception:
             pass
 
