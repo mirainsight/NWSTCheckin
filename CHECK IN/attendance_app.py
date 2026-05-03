@@ -268,6 +268,16 @@ def perform_hard_sheet_resync(mode="congregation"):
         except Exception:
             pass
     _refresh_theme_override_redis_after_resync()
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _chatbot_dir = _Path(__file__).resolve().parent.parent / "CHATBOT"
+        if str(_chatbot_dir) not in _sys.path:
+            _sys.path.insert(0, str(_chatbot_dir))
+        from chatbot_sync import sync_chatbot_logs
+        sync_chatbot_logs()
+    except Exception:
+        pass
 
 
 def get_gsheet_client():
