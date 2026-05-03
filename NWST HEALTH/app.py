@@ -498,7 +498,7 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                     return 0.75  # single member or all tied → mid-bright glow
                 return (p - min_pct) / pct_range  # 0.0 (lowest in bucket) → 1.0 (highest)
 
-            # Second pass: render with rank-based glow
+            # Second pass: render with rank-based attendance badge
             r, g, b = _hex_to_rgb(border_color)
             parts = []
             for name, person_cell, pct in member_data:
@@ -508,31 +508,26 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 if pct is not None:
                     rank = _bucket_rank(pct)
                     if rank >= 0.75:
-                        tile_style = (
-                            f"border: 2px solid rgba({r},{g},{b},1.0); "
-                            f"box-shadow: 0 0 10px 3px rgba({r},{g},{b},0.75), inset 0 0 6px rgba({r},{g},{b},0.12); "
-                            f"color: rgba(255,255,255,1.0);"
-                        )
+                        badge_bg = f"rgba({r},{g},{b},0.9)"
+                        badge_color = "rgba(255,255,255,1.0)"
                     elif rank >= 0.50:
-                        tile_style = (
-                            f"border: 1.5px solid rgba({r},{g},{b},0.8); "
-                            f"box-shadow: 0 0 6px 1px rgba({r},{g},{b},0.5); "
-                            f"color: rgba(255,255,255,0.9);"
-                        )
+                        badge_bg = f"rgba({r},{g},{b},0.65)"
+                        badge_color = "rgba(255,255,255,0.95)"
                     elif rank >= 0.25:
-                        tile_style = (
-                            f"border: 1px solid rgba({r},{g},{b},0.45); "
-                            f"color: rgba(255,255,255,0.65);"
-                        )
+                        badge_bg = f"rgba({r},{g},{b},0.38)"
+                        badge_color = "rgba(255,255,255,0.8)"
                     else:
-                        tile_style = (
-                            f"border: 1px solid rgba({r},{g},{b},0.2); "
-                            f"color: rgba(255,255,255,0.38);"
-                        )
+                        badge_bg = f"rgba({r},{g},{b},0.18)"
+                        badge_color = "rgba(255,255,255,0.5)"
+                    badge_html = (
+                        f'<span class="att-badge" style="background:{badge_bg};color:{badge_color};">'
+                        f'{pct}%</span>'
+                    )
                 else:
-                    tile_style = f"border-color: {bc};"
+                    badge_html = ""
                 parts.append(
-                    f'<span class="member-tile" style="{tile_style}" data-tooltip="{tip_e}">{name_e}</span> '
+                    f'<span class="member-tile" style="border-color:{bc};" data-tooltip="{tip_e}">'
+                    f'{name_e}{badge_html}</span> '
                 )
             st.markdown("".join(parts), unsafe_allow_html=True)
         else:
@@ -6029,6 +6024,18 @@ st.markdown(f"""
     .member-tile:hover::before {{
         opacity: 1;
         visibility: visible;
+    }}
+
+    .att-badge {{
+        display: inline-block;
+        margin-left: 0.45rem;
+        padding: 0.12rem 0.38rem;
+        border-radius: 3px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        vertical-align: middle;
+        line-height: 1.4;
+        letter-spacing: 0;
     }}
 
     /* Monthly attendance matrix — status colors match KPI / member-tile accents */
