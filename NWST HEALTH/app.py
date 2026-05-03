@@ -547,7 +547,6 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
     display: inline-block; transition: transform 0.2s ease;
     font-size: 0.8rem; color: {pc}; flex-shrink: 0;
 }}
-.cat-toggle.cat-expanded {{ transform: rotate(90deg); }}
 .cat-row-name {{
     font-family: 'Inter', sans-serif; font-size: 0.95rem;
     font-weight: 900; text-transform: uppercase;
@@ -560,36 +559,36 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
     background: #111; border-left: 3px solid;
 }}
 </style>"""
+        # Inline onclick uses relative DOM traversal — no global JS function needed,
+        # which avoids Streamlit shadow-DOM isolation breaking getElementById.
+        _toggle_js = (
+            "var _w=this.parentElement;"
+            "var _c=_w.querySelector('.cat-row-content');"
+            "var _t=this.querySelector('.cat-toggle');"
+            "if(_c.style.display==='block'){"
+            "_c.style.display='none';_t.style.transform='rotate(0deg)'"
+            "}else{"
+            "_c.style.display='block';_t.style.transform='rotate(90deg)'"
+            "}"
+        )
         rows = ""
         for cat in categories:
-            cid   = html.escape(cat["id"], quote=True)
             color = html.escape(cat["color"], quote=True)
             name  = html.escape(cat["label"])
             rows += f"""
 <div class="cat-row-wrap">
-  <div class="cat-row-header" onclick="toggleCatRow('{cid}')" style="border-left:4px solid {color};">
-    <span class="cat-toggle" id="cattoggle-{cid}">&#9658;</span>
+  <div class="cat-row-header" onclick="{_toggle_js}" style="border-left:4px solid {color};">
+    <span class="cat-toggle">&#9658;</span>
     <span class="cat-row-name">{name}</span>
     <span class="cat-row-pct" style="color:{color};">{cat['pct']:.0f}%</span>
     {cat['wow']}
     <span class="cat-row-count">{cat['count']} members</span>
   </div>
-  <div class="cat-row-content" id="catcontent-{cid}" style="border-color:{color};">
+  <div class="cat-row-content" style="border-color:{color};">
     {cat['tiles']}
   </div>
 </div>"""
-        js = """<script>
-function toggleCatRow(id) {
-  var c = document.getElementById('catcontent-' + id);
-  var t = document.getElementById('cattoggle-' + id);
-  if (c.style.display === 'block') {
-    c.style.display = 'none'; t.classList.remove('cat-expanded');
-  } else {
-    c.style.display = 'block'; t.classList.add('cat-expanded');
-  }
-}
-</script>"""
-        return css + rows + js
+        return css + rows
 
     if status_col:
         new_data       = work_df[work_df["status_type"] == "New"].copy()
