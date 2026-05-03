@@ -227,18 +227,61 @@ For **member comparison** — compare: Att%, Last attended, R:x/8, Role.
 
 ---
 
-## Disambiguation rule
+## Name matching and disambiguation
 
-If a first name matches more than one member, **always list all matches before answering**.
+### Partial or unclear names
+> Triggered by: any name that does not exactly match a member — could be a nickname,
+> partial name, typo, or first-name-only query.
+
+Do a **partial match** against the full name list. A match counts if the name the user
+typed appears anywhere inside a member's full name (case-insensitive).
+
+Examples of what should match:
+- "shaun" → matches "Shaun Quek", "Shaun Lim"
+- "quek" → matches "Shaun Quek"
+- "sha" → matches "Shaun Quek", "Shaun Lim", "Shannon Tan"
+- "sh quek" → matches "Shaun Quek" (treat each word as a separate fragment to match)
+
+If one or more partial matches are found, list them and ask which person is meant.
+Never say "member not found" when partial matches exist.
+
+**Template for partial matches:**
+```
+I found [N] member(s) whose name contains "[typed name]":
+1. [Full name] · [Cell] · [Status] · [Role if any]
+2. [Full name] · [Cell] · [Status] · [Role if any]
+
+Which one did you mean?
+```
+
+If only one partial match is found, you may proceed to answer for that member but
+confirm the name at the start of your response:
+
+```
+Assuming you meant **[Full name]** ([Cell]):
+[answer]
+```
+
+### Exact duplicates (same first name)
+If a first name exactly matches more than one member, list all matches before answering.
 Never guess — always ask which person is meant.
 
-**Template:**
+**Template for exact duplicates:**
 ```
 There are [N] members named [name]:
 1. [Full name] · [Cell] · [Status] · [Role if any]
 2. [Full name] · [Cell] · [Status] · [Role if any]
 
 Which one did you mean?
+```
+
+### No match at all
+Only say "not found" after confirming **no partial match exists**.
+If truly no match, suggest the user check the spelling or run Update Names to refresh data.
+
+```
+I couldn't find any member with a name containing "[typed name]".
+The name may be spelled differently in the records, or data may need refreshing (Update Names).
 ```
 
 Always identify a specific individual by **full name + cell** in your answer.
