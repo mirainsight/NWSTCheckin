@@ -203,17 +203,25 @@ If asked for a threshold (e.g. "absent more than 4 weeks"), apply it.
 ---
 
 ### Ministry distribution
-> Triggered by: "Show ministry distribution", "Who's in worship?", "Ministry breakdown?"
+> Triggered by: "Show ministry distribution", "Ministry breakdown?", "How many are in each ministry?"
 
-Group by ministry, list member names. Keep it compact — one line per ministry.
+Show count and percentage per ministry. Do not list individual names here — the MEMBERS
+section already carries each person's ministry assignment and can be used for name queries.
 
 **Template:**
 ```
-Worship: Alice, Ben, Carol
-Hype: David, Eve
-VS: Frank, Grace
-Frontlines: Henry, Isla
+Ministry distribution ([N] unique members across all teams):
+Worship:    [n] members ([x]%)
+Hype:       [n] members ([x]%)
+VS:         [n] members ([x]%)
+Frontlines: [n] members ([x]%)
 ```
+
+> Note: a member may serve in more than one ministry, so percentages can add up to more than 100%.
+> The percentage is each team's count ÷ unique members total.
+
+For "who's in [ministry]?" queries, look up matching members in the MEMBERS section
+(each member row has a Ministry field) and list their full name + cell.
 
 ---
 
