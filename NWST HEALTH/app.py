@@ -537,16 +537,24 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
     def _build_cat_rows_html(categories, primary_col):
         pc = html.escape(primary_col, quote=True)
         css = f"""<style>
-.cat-row-wrap {{ margin-bottom: 6px; }}
-.cat-row-header {{
+.cat-details {{
+    margin-bottom: 6px;
+    border-left: 4px solid;
+}}
+.cat-details > summary {{
     display: flex; align-items: center; gap: 0.7rem;
     padding: 14px 18px; background: #1a1a1a;
     cursor: pointer; user-select: none;
+    list-style: none;
 }}
+.cat-details > summary::-webkit-details-marker {{ display: none; }}
+.cat-details > summary::marker {{ display: none; }}
 .cat-toggle {{
-    display: inline-block; transition: transform 0.2s ease;
     font-size: 0.8rem; color: {pc}; flex-shrink: 0;
+    transition: transform 0.2s ease;
+    display: inline-block;
 }}
+.cat-details[open] > summary .cat-toggle {{ transform: rotate(90deg); }}
 .cat-row-name {{
     font-family: 'Inter', sans-serif; font-size: 0.95rem;
     font-weight: 900; text-transform: uppercase;
@@ -555,39 +563,26 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
 .cat-row-pct {{ font-size: 1.3rem; font-weight: 900; }}
 .cat-row-count {{ font-size: 0.78rem; color: #888; white-space: nowrap; }}
 .cat-row-content {{
-    display: none; padding: 12px 18px 14px 18px;
-    background: #111; border-left: 3px solid;
+    padding: 12px 18px 14px 18px; background: #111;
 }}
 </style>"""
-        # Inline onclick uses relative DOM traversal — no global JS function needed,
-        # which avoids Streamlit shadow-DOM isolation breaking getElementById.
-        _toggle_js = (
-            "var _w=this.parentElement;"
-            "var _c=_w.querySelector('.cat-row-content');"
-            "var _t=this.querySelector('.cat-toggle');"
-            "if(_c.style.display==='block'){"
-            "_c.style.display='none';_t.style.transform='rotate(0deg)'"
-            "}else{"
-            "_c.style.display='block';_t.style.transform='rotate(90deg)'"
-            "}"
-        )
         rows = ""
         for cat in categories:
             color = html.escape(cat["color"], quote=True)
             name  = html.escape(cat["label"])
             rows += f"""
-<div class="cat-row-wrap">
-  <div class="cat-row-header" onclick="{_toggle_js}" style="border-left:4px solid {color};">
+<details class="cat-details" style="border-color:{color};">
+  <summary style="border-left:none;">
     <span class="cat-toggle">&#9658;</span>
     <span class="cat-row-name">{name}</span>
     <span class="cat-row-pct" style="color:{color};">{cat['pct']:.0f}%</span>
     {cat['wow']}
     <span class="cat-row-count">{cat['count']} members</span>
-  </div>
-  <div class="cat-row-content" style="border-color:{color};">
+  </summary>
+  <div class="cat-row-content">
     {cat['tiles']}
   </div>
-</div>"""
+</details>"""
         return css + rows
 
     if status_col:
