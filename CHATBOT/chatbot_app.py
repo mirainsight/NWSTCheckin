@@ -91,6 +91,31 @@ def _parse_response(content: str) -> tuple[str, str]:
     return "", content
 
 
+def _token_stat_html(this_t: int, session_tokens: list) -> str:
+    """Format the token stat line shown below an assistant reply."""
+    total = sum(session_tokens)
+    count = len(session_tokens)
+    if total == 0 or this_t == 0:
+        return ""
+    pct = this_t / total * 100
+    avg = total / count
+    delta = this_t - avg
+    pct_str = f"{pct:.0f}% of session"
+    if count == 1:
+        delta_str = "first reply"
+    elif delta > 0:
+        delta_str = f"+{delta:.0f} vs avg"
+    elif delta < 0:
+        delta_str = f"{delta:.0f} vs avg"
+    else:
+        delta_str = "= avg"
+    return (
+        f"<p style='font-size:0.72rem;color:#555;font-style:italic;margin:2px 0 0 0;'>"
+        f"+{this_t:,} tokens &nbsp;·&nbsp; {pct_str} &nbsp;·&nbsp; {delta_str}"
+        f"</p>"
+    )
+
+
 def _get_openai_key() -> str:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
@@ -136,10 +161,14 @@ st.markdown(
     section[data-testid="stSidebar"] { display: none; }
     .stChatMessage { background: transparent; }
     /* Chat message text — prose font, readable size */
-    [data-testid="stChatMessage"] p,
-    [data-testid="stChatMessage"] li,
-    [data-testid="stChatMessage"] span:not([data-testid]),
-    [data-testid="stChatMessage"] .stMarkdown p {
+    .stChatMessage .stMarkdown p,
+    .stChatMessage .stMarkdown li,
+    .stChatMessage .stMarkdown strong,
+    .stChatMessage .stMarkdown em,
+    [data-testid="stChatMessage"] .stMarkdown p,
+    [data-testid="stChatMessage"] .stMarkdown li,
+    [data-testid="stChatMessageContent"] p,
+    [data-testid="stChatMessageContent"] li {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
         font-size: 0.95rem !important;
         line-height: 1.6 !important;
@@ -239,12 +268,17 @@ _SUGGESTIONS = [
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+_session_tokens = [
+    m["tokens"] for m in st.session_state.messages
+    if m["role"] == "assistant" and m.get("tokens", 0) > 0
+]
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg["role"] == "assistant" and msg.get("tokens", 0) > 0:
             st.markdown(
-                f"<p style='font-size:0.72rem;color:#444;font-style:italic;margin:2px 0 0 0;'>{msg['tokens']} tokens</p>",
+                _token_stat_html(msg["tokens"], _session_tokens),
                 unsafe_allow_html=True,
             )
 
@@ -298,8 +332,9 @@ if prompt:
             status.update(label="Reasoning", state="complete", expanded=False)
         st.markdown(answer or result.content)
         if result.tokens > 0:
+            _live_session_tokens = _session_tokens + [result.tokens]
             st.markdown(
-                f"<p style='font-size:0.72rem;color:#444;font-style:italic;margin:2px 0 0 0;'>{result.tokens} tokens</p>",
+                _token_stat_html(result.tokens, _live_session_tokens),
                 unsafe_allow_html=True,
             )
 
