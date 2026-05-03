@@ -459,11 +459,12 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
     wow_follow_up = ch_ctx["wow_follow_up"]
     wow_red = ch_ctx["wow_red"]
     wow_graduated = ch_ctx["wow_graduated"]
+    daily_colors = ch_ctx.get("daily_colors", {})
+    primary_color = daily_colors.get("primary", "#B8860B")
 
     def _member_tiles(data_df, border_color):
         if data_df.empty:
-            st.caption("No members in this bucket.")
-            return
+            return "<p style='color:#666;font-size:0.85rem;padding:8px 0;'>No members in this bucket.</p>"
         if "name" in data_df.columns or "Name" in data_df.columns:
             name_col = "name" if "name" in data_df.columns else "Name"
             cell_col = None
@@ -529,216 +530,94 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                     f'<span class="member-tile" style="border-color:{bc};" data-tooltip="{tip_e}">'
                     f'{name_e}{badge_html}</span> '
                 )
-            st.markdown("".join(parts), unsafe_allow_html=True)
+            return "".join(parts)
         else:
-            st.dataframe(data_df, width='stretch')
+            return "<p style='color:#666;font-size:0.85rem;'>Member data unavailable.</p>"
 
-    def _cell_health_mix_card_html(accent_hex, kpi_label, pct_val, n_members, wow_fragment):
-        ae = html.escape(accent_hex, quote=True)
-        kl = html.escape(kpi_label, quote=True)
-        return f"""
-            <div class="kpi-card ch-kpi-card-embed" style="cursor: pointer;">
-                <div class="kpi-label">{kl}</div>
-                <div class="ch-kpi-wow-row">
-                    <div class="kpi-number" style="color: {ae};">{pct_val:.0f}%</div>
-                    {wow_fragment}
-                </div>
-                <div class="kpi-subtitle">{n_members} members</div>
-            </div>
-            """
+    def _build_cat_rows_html(categories, primary_col):
+        pc = html.escape(primary_col, quote=True)
+        css = f"""<style>
+.cat-row-wrap {{ margin-bottom: 6px; }}
+.cat-row-header {{
+    display: flex; align-items: center; gap: 0.7rem;
+    padding: 14px 18px; background: #1a1a1a;
+    cursor: pointer; user-select: none;
+}}
+.cat-toggle {{
+    display: inline-block; transition: transform 0.2s ease;
+    font-size: 0.8rem; color: {pc}; flex-shrink: 0;
+}}
+.cat-toggle.cat-expanded {{ transform: rotate(90deg); }}
+.cat-row-name {{
+    font-family: 'Inter', sans-serif; font-size: 0.95rem;
+    font-weight: 900; text-transform: uppercase;
+    letter-spacing: 2px; color: {pc}; flex: 1;
+}}
+.cat-row-pct {{ font-size: 1.3rem; font-weight: 900; }}
+.cat-row-count {{ font-size: 0.78rem; color: #888; white-space: nowrap; }}
+.cat-row-content {{
+    display: none; padding: 12px 18px 14px 18px;
+    background: #111; border-left: 3px solid;
+}}
+</style>"""
+        rows = ""
+        for cat in categories:
+            cid   = html.escape(cat["id"], quote=True)
+            color = html.escape(cat["color"], quote=True)
+            name  = html.escape(cat["label"])
+            rows += f"""
+<div class="cat-row-wrap">
+  <div class="cat-row-header" onclick="toggleCatRow('{cid}')" style="border-left:4px solid {color};">
+    <span class="cat-toggle" id="cattoggle-{cid}">&#9658;</span>
+    <span class="cat-row-name">{name}</span>
+    <span class="cat-row-pct" style="color:{color};">{cat['pct']:.0f}%</span>
+    {cat['wow']}
+    <span class="cat-row-count">{cat['count']} members</span>
+  </div>
+  <div class="cat-row-content" id="catcontent-{cid}" style="border-color:{color};">
+    {cat['tiles']}
+  </div>
+</div>"""
+        js = """<script>
+function toggleCatRow(id) {
+  var c = document.getElementById('catcontent-' + id);
+  var t = document.getElementById('cattoggle-' + id);
+  if (c.style.display === 'block') {
+    c.style.display = 'none'; t.classList.remove('cat-expanded');
+  } else {
+    c.style.display = 'block'; t.classList.add('cat-expanded');
+  }
+}
+</script>"""
+        return css + rows + js
 
-    for _sk in (
-        "expand_new",
-        "expand_regular",
-        "expand_irregular",
-        "expand_follow_up",
-        "expand_red",
-        "expand_graduated",
-    ):
-        if _sk not in st.session_state:
-            st.session_state[_sk] = False
-
-    if _cell_scoped:
-        col1, col2, col3, col4 = st.columns(4)
+    if status_col:
+        new_data       = work_df[work_df["status_type"] == "New"].copy()
+        regular_data   = work_df[work_df["status_type"] == "Regular"].copy()
+        irregular_data = work_df[work_df["status_type"] == "Irregular"].copy()
+        follow_up_data = work_df[work_df["status_type"] == "Follow Up"].copy()
+        red_data       = work_df[work_df["status_type"] == "Red"].copy()
+        graduated_data = work_df[work_df["status_type"] == "Graduated"].copy()
     else:
-        col1, col2, col3 = st.columns(3)
+        new_data       = work_df.head(new_count).copy()
+        regular_data   = work_df.iloc[new_count : new_count + regular_count].copy()
+        irregular_data = work_df.iloc[new_count + regular_count : new_count + regular_count + irregular_count].copy()
+        _fu_start      = new_count + regular_count + irregular_count
+        follow_up_data = work_df.iloc[_fu_start : _fu_start + follow_up_count].copy()
+        _red_start     = _fu_start + follow_up_count
+        red_data       = work_df.iloc[_red_start : _red_start + red_count].copy()
+        graduated_data = work_df.iloc[_red_start + red_count :].copy()
 
-    with col1:
-        if st.button("🔵 New", key="btn_new", width='stretch'):
-            st.session_state.expand_new = not st.session_state.expand_new
-        st.markdown(
-            _cell_health_mix_card_html("#3498db", "New Members", new_pct, new_count, wow_new),
-            unsafe_allow_html=True,
-        )
-        if st.session_state.expand_new:
-            st.markdown(
-                "<p style='color: #3498db; font-weight: 600;'>New Members</p>",
-                unsafe_allow_html=True,
-            )
-            if status_col:
-                new_data = work_df[work_df["status_type"] == "New"].copy()
-            else:
-                new_data = work_df.head(new_count).copy()
-            _member_tiles(new_data, "#3498db")
+    categories = [
+        {"id": "new",       "label": "🔵 New Members",       "color": "#3498db", "pct": new_pct,       "count": new_count,       "wow": wow_new,       "tiles": _member_tiles(new_data,       "#3498db")},
+        {"id": "regular",   "label": "🟢 Regular Members",   "color": "#2ecc71", "pct": regular_pct,   "count": regular_count,   "wow": wow_regular,   "tiles": _member_tiles(regular_data,   "#2ecc71")},
+        {"id": "irregular", "label": "🟠 Irregular Members", "color": "#e67e22", "pct": irregular_pct, "count": irregular_count, "wow": wow_irregular, "tiles": _member_tiles(irregular_data, "#e67e22")},
+        {"id": "follow_up", "label": "🟡 Follow Up",         "color": "#f39c12", "pct": follow_up_pct, "count": follow_up_count, "wow": wow_follow_up, "tiles": _member_tiles(follow_up_data, "#f39c12")},
+        {"id": "red",       "label": "🔴 Red",               "color": "#e74c3c", "pct": red_pct,       "count": red_count,       "wow": wow_red,       "tiles": _member_tiles(red_data,       "#e74c3c")},
+        {"id": "graduated", "label": "⭐ Graduated",         "color": "#9b59b6", "pct": graduated_pct, "count": graduated_count, "wow": wow_graduated, "tiles": _member_tiles(graduated_data, "#9b59b6")},
+    ]
 
-    with col2:
-        if st.button("🟢 Regular", key="btn_regular", width='stretch'):
-            st.session_state.expand_regular = not st.session_state.expand_regular
-        st.markdown(
-            _cell_health_mix_card_html(
-                "#2ecc71", "Regular Members", regular_pct, regular_count, wow_regular
-            ),
-            unsafe_allow_html=True,
-        )
-        if st.session_state.expand_regular:
-            st.markdown(
-                "<p style='color: #2ecc71; font-weight: 600;'>Regular Members (75% and above attendance)</p>",
-                unsafe_allow_html=True,
-            )
-            if status_col:
-                regular_data = work_df[work_df["status_type"] == "Regular"].copy()
-            else:
-                regular_data = work_df.iloc[new_count : new_count + regular_count].copy()
-            _member_tiles(regular_data, "#2ecc71")
-
-    with col3:
-        if st.button("🟠 Irregular", key="btn_irregular", width='stretch'):
-            st.session_state.expand_irregular = not st.session_state.expand_irregular
-        st.markdown(
-            _cell_health_mix_card_html(
-                "#e67e22",
-                "Irregular Members",
-                irregular_pct,
-                irregular_count,
-                wow_irregular,
-            ),
-            unsafe_allow_html=True,
-        )
-        if st.session_state.expand_irregular:
-            st.markdown(
-                "<p style='color: #e67e22; font-weight: 600;'>Irregular Members (Below 75% attendance)</p>",
-                unsafe_allow_html=True,
-            )
-            if status_col:
-                irregular_data = work_df[work_df["status_type"] == "Irregular"].copy()
-            else:
-                irregular_data = work_df.iloc[
-                    new_count + regular_count : new_count + regular_count + irregular_count
-                ].copy()
-            _member_tiles(irregular_data, "#e67e22")
-
-    if _cell_scoped:
-        with col4:
-            if st.button("🟡 Follow Up", key="btn_follow_up", width='stretch'):
-                st.session_state.expand_follow_up = not st.session_state.expand_follow_up
-            st.markdown(
-                _cell_health_mix_card_html(
-                    "#f39c12", "Follow Up", follow_up_pct, follow_up_count, wow_follow_up
-                ),
-                unsafe_allow_html=True,
-            )
-            if st.session_state.expand_follow_up:
-                st.markdown(
-                    "<p style='color: #f39c12; font-weight: 600;'>Follow Up (0% attendance - past 2 months)</p>",
-                    unsafe_allow_html=True,
-                )
-                if status_col:
-                    follow_up_data = work_df[work_df["status_type"] == "Follow Up"].copy()
-                else:
-                    follow_up_data = work_df.iloc[
-                        new_count
-                        + regular_count
-                        + irregular_count : new_count
-                        + regular_count
-                        + irregular_count
-                        + follow_up_count
-                    ].copy()
-                _member_tiles(follow_up_data, "#f39c12")
-    else:
-        st.markdown("")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("🟡 Follow Up", key="btn_follow_up", width='stretch'):
-                st.session_state.expand_follow_up = not st.session_state.expand_follow_up
-            st.markdown(
-                _cell_health_mix_card_html(
-                    "#f39c12", "Follow Up", follow_up_pct, follow_up_count, wow_follow_up
-                ),
-                unsafe_allow_html=True,
-            )
-            if st.session_state.expand_follow_up:
-                st.markdown(
-                    "<p style='color: #f39c12; font-weight: 600;'>Follow Up (0% attendance - past 2 months)</p>",
-                    unsafe_allow_html=True,
-                )
-                if status_col:
-                    follow_up_data = work_df[work_df["status_type"] == "Follow Up"].copy()
-                else:
-                    follow_up_data = work_df.iloc[
-                        new_count
-                        + regular_count
-                        + irregular_count : new_count
-                        + regular_count
-                        + irregular_count
-                        + follow_up_count
-                    ].copy()
-                _member_tiles(follow_up_data, "#f39c12")
-
-        with col2:
-            if st.button("🔴 Red", key="btn_red", width='stretch'):
-                st.session_state.expand_red = not st.session_state.expand_red
-            st.markdown(
-                _cell_health_mix_card_html("#e74c3c", "Red", red_pct, red_count, wow_red),
-                unsafe_allow_html=True,
-            )
-            if st.session_state.expand_red:
-                st.markdown(
-                    "<p style='color: #e74c3c; font-weight: 600;'>Red (Won't come to church anymore)</p>",
-                    unsafe_allow_html=True,
-                )
-                if status_col:
-                    red_data = work_df[work_df["status_type"] == "Red"].copy()
-                else:
-                    red_data = work_df.iloc[
-                        new_count
-                        + regular_count
-                        + irregular_count
-                        + follow_up_count : new_count
-                        + regular_count
-                        + irregular_count
-                        + follow_up_count
-                        + red_count
-                    ].copy()
-                _member_tiles(red_data, "#e74c3c")
-
-        with col3:
-            if st.button("⭐ Graduated", key="btn_graduated", width='stretch'):
-                st.session_state.expand_graduated = not st.session_state.expand_graduated
-            st.markdown(
-                _cell_health_mix_card_html(
-                    "#9b59b6", "Graduated", graduated_pct, graduated_count, wow_graduated
-                ),
-                unsafe_allow_html=True,
-            )
-            if st.session_state.expand_graduated:
-                st.markdown(
-                    "<p style='color: #9b59b6; font-weight: 600;'>Graduated (Moved to leadership roles)</p>",
-                    unsafe_allow_html=True,
-                )
-                if status_col:
-                    graduated_data = work_df[work_df["status_type"] == "Graduated"].copy()
-                else:
-                    graduated_data = work_df.iloc[
-                        new_count
-                        + regular_count
-                        + irregular_count
-                        + follow_up_count
-                        + red_count :
-                    ].copy()
-                _member_tiles(graduated_data, "#9b59b6")
-
-    st.markdown("")
+    st.markdown(_build_cat_rows_html(categories, primary_color), unsafe_allow_html=True)
 
 
 def _render_cg_cell_health_section(
@@ -1063,6 +942,7 @@ def _render_cg_cell_health_section(
         "wow_follow_up": wow_follow_up,
         "wow_red": wow_red,
         "wow_graduated": wow_graduated,
+        "daily_colors": daily_colors,
     }
     _nwst_cell_health_fragment(ch_ctx)
 
