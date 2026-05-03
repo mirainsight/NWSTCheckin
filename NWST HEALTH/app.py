@@ -486,6 +486,10 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 pct = get_attendance_pct(name, person_cell, attendance_stats)
                 member_data.append((name, person_cell, pct))
 
+            # Apply sort order (references sort_order from enclosing scope)
+            if sort_order == "Attendance ↓":
+                member_data.sort(key=lambda x: (x[2] is None, -(x[2] or 0)))
+
             # Min-max normalise within this bucket so intensity is relative to peers
             known_pcts = [p for _, _, p in member_data if p is not None]
             if len(known_pcts) >= 2:
@@ -601,6 +605,14 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
         _red_start     = _fu_start + follow_up_count
         red_data       = work_df.iloc[_red_start : _red_start + red_count].copy()
         graduated_data = work_df.iloc[_red_start + red_count :].copy()
+
+    sort_order = st.pills(
+        "Sort members",
+        ["A → Z", "Attendance ↓"],
+        default="A → Z",
+        key="ch_member_sort",
+        label_visibility="collapsed",
+    ) or "A → Z"
 
     categories = [
         {"id": "new",       "label": "🔵 New Members",       "color": "#3498db", "pct": new_pct,       "count": new_count,       "wow": wow_new,       "tiles": _member_tiles(new_data,       "#3498db")},
