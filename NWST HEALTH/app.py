@@ -486,13 +486,28 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 pct = get_attendance_pct(name, person_cell, attendance_stats)
                 if pct is not None:
                     r, g, b = _hex_to_rgb(border_color)
-                    bg_alpha = 0.08 + (pct / 100) * 0.77
-                    txt_alpha = 0.35 + (pct / 100) * 0.65
-                    tile_style = (
-                        f"border-color: {bc}; "
-                        f"background-color: rgba({r},{g},{b},{bg_alpha:.2f}); "
-                        f"color: rgba(255,255,255,{txt_alpha:.2f});"
-                    )
+                    if pct >= 75:
+                        tile_style = (
+                            f"border: 2px solid rgba({r},{g},{b},1.0); "
+                            f"box-shadow: 0 0 10px 3px rgba({r},{g},{b},0.75), inset 0 0 6px rgba({r},{g},{b},0.12); "
+                            f"color: rgba(255,255,255,1.0);"
+                        )
+                    elif pct >= 50:
+                        tile_style = (
+                            f"border: 1.5px solid rgba({r},{g},{b},0.8); "
+                            f"box-shadow: 0 0 6px 1px rgba({r},{g},{b},0.5); "
+                            f"color: rgba(255,255,255,0.9);"
+                        )
+                    elif pct >= 25:
+                        tile_style = (
+                            f"border: 1px solid rgba({r},{g},{b},0.45); "
+                            f"color: rgba(255,255,255,0.65);"
+                        )
+                    else:
+                        tile_style = (
+                            f"border: 1px solid rgba({r},{g},{b},0.2); "
+                            f"color: rgba(255,255,255,0.38);"
+                        )
                 else:
                     tile_style = f"border-color: {bc};"
                 parts.append(
