@@ -624,7 +624,7 @@ def _refresh_nwst_health_data(
                     "rows": df.values.tolist()
                 }
                 redis_client.set("nwst_cg_combined_data", json.dumps(cache_data))
-                _emit("  CG Combined data cached", log_lines, with_ts=False)
+                _emit(f"  CG Combined: {len(df)} members cached (chatbot data updated)", log_lines, with_ts=False)
             else:
                 _emit("  CG Combined: no data found", log_lines, with_ts=False)
                 return True
@@ -644,7 +644,7 @@ def _refresh_nwst_health_data(
                     "rows": ministries_df.values.tolist()
                 }
                 redis_client.set("nwst_ministries_combined_data", json.dumps(cache_data))
-                _emit("  Ministries Combined data cached", log_lines, with_ts=False)
+                _emit(f"  Ministries: {len(ministries_df)} members cached", log_lines, with_ts=False)
         except Exception as e:
             _emit(f"  Ministries sync skipped: {e}", log_lines, with_ts=False)
 
@@ -740,7 +740,7 @@ def _refresh_nwst_health_data(
                                 }
 
                     redis_client.set("nwst_attendance_stats", json.dumps(attendance_stats))
-                    _emit("  Attendance stats cached", log_lines, with_ts=False)
+                    _emit(f"  Attendance: {len(attendance_stats)} members · {len(date_columns)} sessions tracked", log_lines, with_ts=False)
         except Exception as e:
             _emit(f"  Attendance sync skipped: {e}", log_lines, with_ts=False)
 
