@@ -680,6 +680,10 @@ def _refresh_nwst_health_data(
                     # Calculate attendance stats
                     attendance_stats = {}
                     att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
+                    # Date column headers (cols D onwards) — used for last_attended lookup
+                    date_columns = [col for col_idx, col in enumerate(att_df.columns) if col_idx >= 3]
+                    recent_n = min(8, len(date_columns))
+                    recent_window = date_columns[-recent_n:] if date_columns else []
 
                     if att_name_col:
                         for att_name in att_df[att_name_col].unique():
@@ -699,6 +703,24 @@ def _refresh_nwst_health_data(
                                     if len(values) > 0 and str(values[0]).strip() == '1':
                                         attendance_count += 1
 
+                            # Last attended date + recent attendance pattern (last 8 sessions)
+                            last_attended = None
+                            recent_attended = 0
+                            for col in reversed(recent_window):
+                                values = member_att_data[col].values
+                                if len(values) > 0 and str(values[0]).strip() == '1':
+                                    if last_attended is None:
+                                        last_attended = col
+                                    recent_attended += 1
+                            # Search older columns for last_attended if not found in recent window
+                            if last_attended is None:
+                                older_cols = date_columns[:-recent_n] if len(date_columns) > recent_n else []
+                                for col in reversed(older_cols):
+                                    values = member_att_data[col].values
+                                    if len(values) > 0 and str(values[0]).strip() == '1':
+                                        last_attended = col
+                                        break
+
                             # Find cell from CG Combined
                             cell_info = ""
                             if cg_name_col and cg_cell_col:
@@ -711,7 +733,10 @@ def _refresh_nwst_health_data(
                                 attendance_stats[key] = {
                                     'attendance': attendance_count,
                                     'total': total_services,
-                                    'percentage': round(attendance_count / total_services * 100) if total_services > 0 else 0
+                                    'percentage': round(attendance_count / total_services * 100) if total_services > 0 else 0,
+                                    'last_attended': last_attended,
+                                    'recent_attended': recent_attended,
+                                    'recent_total': recent_n,
                                 }
 
                     redis_client.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
