@@ -6362,6 +6362,8 @@ if current_page == "cg":
             # CELL HEALTH — quick view (Historical Cell Status WoW + live CG Combined mix)
             _render_cg_cell_health_section(display_df, daily_colors, cell_filter, attendance_stats)
 
+            st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
+
             with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
                 if not display_df.empty:
                     st.markdown("")
