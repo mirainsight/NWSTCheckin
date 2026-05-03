@@ -623,7 +623,7 @@ def _refresh_nwst_health_data(
                     "columns": df.columns.tolist(),
                     "rows": df.values.tolist()
                 }
-                redis_client.set("nwst_cg_combined_data", json.dumps(cache_data), ex=300)
+                redis_client.set("nwst_cg_combined_data", json.dumps(cache_data))
                 _emit("  CG Combined data cached", log_lines, with_ts=False)
             else:
                 _emit("  CG Combined: no data found", log_lines, with_ts=False)
@@ -643,7 +643,7 @@ def _refresh_nwst_health_data(
                     "columns": ministries_df.columns.tolist(),
                     "rows": ministries_df.values.tolist()
                 }
-                redis_client.set("nwst_ministries_combined_data", json.dumps(cache_data), ex=300)
+                redis_client.set("nwst_ministries_combined_data", json.dumps(cache_data))
                 _emit("  Ministries Combined data cached", log_lines, with_ts=False)
         except Exception as e:
             _emit(f"  Ministries sync skipped: {e}", log_lines, with_ts=False)
@@ -739,7 +739,7 @@ def _refresh_nwst_health_data(
                                     'recent_total': recent_n,
                                 }
 
-                    redis_client.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
+                    redis_client.set("nwst_attendance_stats", json.dumps(attendance_stats))
                     _emit("  Attendance stats cached", log_lines, with_ts=False)
         except Exception as e:
             _emit(f"  Attendance sync skipped: {e}", log_lines, with_ts=False)
