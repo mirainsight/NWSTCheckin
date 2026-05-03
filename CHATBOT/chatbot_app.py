@@ -21,18 +21,28 @@ try:
 except ImportError:
     pass
 
+import re
+
 import streamlit as st
 from chatbot_redis import get_redis_client, log_qa_to_redis
 from chatbot_data import build_data_context
 
 MYT = timezone(timedelta(hours=8))
 
-MAX_RESPONSE_TOKENS = 500
+MAX_RESPONSE_TOKENS = 800  # increased to accommodate <thinking> block + answer
 MAX_CONTEXT_MESSAGES = 6   # last 3 human + 3 assistant turns
 MODEL = "gpt-4o-mini"
 DATA_TTL_SECONDS = 300     # auto-refresh data every 5 minutes
 
 SYSTEM_PROMPT = """You are an assistant for NWST (Narrow Street), a church community in Malaysia.
+Before every answer, output a <thinking> block in this exact format:
+<thinking>
+Data checked: [which sections of CURRENT DATA you looked at]
+Found: [key facts you found relevant to the question]
+Approach: [how you're forming the answer]
+</thinking>
+Then give your answer after the closing </thinking> tag.
+
 You help members and leaders understand cell health and weekly check-in data.
 
 CELL HEALTH — member status categories:
@@ -86,6 +96,16 @@ def _load_data(cache_buster: int = 0) -> None:
     week_start_str = _get_week_start()
     st.session_state["data_context"] = build_data_context(today_str, week_start_str, cache_buster)
     st.session_state["data_fetched_at"] = datetime.now(MYT)
+
+
+def _parse_response(content: str) -> tuple[str, str]:
+    """Split model output into (thinking, answer). Returns ('', content) if no <thinking> block."""
+    match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
+    if match:
+        thinking = match.group(1).strip()
+        answer = content[match.end():].strip()
+        return thinking, answer
+    return "", content
 
 
 def _get_openai_key() -> str:
@@ -243,11 +263,17 @@ if prompt:
     api_messages = [{"role": "system", "content": full_system}] + context
 
     with st.chat_message("assistant"):
-        with st.spinner(""):
+        with st.status("Thinking...", expanded=True) as status:
             result = _call_openai(api_messages)
-        st.markdown(result.content)
+            thinking, answer = _parse_response(result.content)
+            if thinking:
+                st.markdown(thinking)
+            status.update(label="Reasoning", state="complete", expanded=False)
+        st.markdown(answer or result.content)
 
-    st.session_state.messages.append({"role": "assistant", "content": result.content})
+    # Store only the clean answer in chat history (not the <thinking> block)
+    stored = answer if answer else result.content
+    st.session_state.messages.append({"role": "assistant", "content": stored})
 
     if result.tokens > 0:
         rc = get_redis_client()
@@ -256,6 +282,6 @@ if prompt:
                 rc,
                 st.session_state.user_name or "Anonymous",
                 prompt,
-                result.content,
+                stored,
                 result.tokens,
             )
