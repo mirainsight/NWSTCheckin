@@ -98,6 +98,25 @@ def _load_data(cache_buster: int = 0) -> None:
     st.session_state["data_fetched_at"] = datetime.now(MYT)
 
 
+def _context_ring_html(current: int, total: int) -> str:
+    """SVG circular progress showing context window usage."""
+    pct = current / total if total > 0 else 0
+    fill = round(pct * 100, 1)
+    color = "#2ecc71" if pct < 0.5 else ("#e67e22" if pct < 1.0 else "#e74c3c")
+    left = total - current
+    label = f"{left} msg{'s' if left != 1 else ''} left" if left > 0 else "rolling — oldest dropped"
+    return (
+        f'<div style="display:flex;align-items:center;gap:8px;padding:2px 0;">'
+        f'<svg width="26" height="26" viewBox="0 0 36 36" style="transform:rotate(-90deg);flex-shrink:0;">'
+        f'<circle cx="18" cy="18" r="15.9" fill="none" stroke="#2a2a2a" stroke-width="3.5"/>'
+        f'<circle cx="18" cy="18" r="15.9" fill="none" stroke="{color}" stroke-width="3.5"'
+        f' stroke-dasharray="{fill} 100" stroke-linecap="round"/>'
+        f'</svg>'
+        f'<span style="color:#666;font-size:0.78rem;">Context {current}/{total} &nbsp;·&nbsp; {label}</span>'
+        f'</div>'
+    )
+
+
 def _parse_response(content: str) -> tuple[str, str]:
     """Split model output into (thinking, answer). Returns ('', content) if no <thinking> block."""
     match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
@@ -241,6 +260,18 @@ if not st.session_state.messages:
         if cols[i % 2].button(suggestion, key=f"suggestion_{i}", use_container_width=True):
             st.session_state["pending_prompt"] = suggestion
             st.rerun()
+
+# ── context ring + new chat ────────────────────────────────────────────────────
+
+_col_new, _col_ring = st.columns([1, 3])
+with _col_new:
+    if st.button("+ New Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.pop("pending_prompt", None)
+        st.rerun()
+with _col_ring:
+    _ctx_used = min(len(st.session_state.messages), MAX_CONTEXT_MESSAGES)
+    st.markdown(_context_ring_html(_ctx_used, MAX_CONTEXT_MESSAGES), unsafe_allow_html=True)
 
 # Consume any suggestion-button prompt queued from the previous rerun
 _pending = st.session_state.pop("pending_prompt", None)
