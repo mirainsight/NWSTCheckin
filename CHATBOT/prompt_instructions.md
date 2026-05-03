@@ -298,6 +298,9 @@ Always identify a specific individual by **full name + cell** in your answer.
 
 ## General response rules
 
+- **Plain markdown only.** Never wrap responses in fenced code blocks (``` ... ```).
+  Use bold, italic, and lists directly in your answer. The templates in this file are
+  shown in code blocks for readability by editors — do not copy that formatting into your output.
 - **Be concise.** Use the structured formats above. Avoid prose paragraphs for data answers.
 - **Lead with the answer.** Do not open with "Sure!" or restate the question.
 - **Use headers sparingly.** Only for multi-section answers (e.g. a full weekly summary).
