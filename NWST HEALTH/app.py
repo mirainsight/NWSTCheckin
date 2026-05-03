@@ -483,8 +483,20 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 tooltip_text = get_attendance_text(name, person_cell, attendance_stats)
                 tip_e = html.escape(tooltip_text, quote=True)
                 name_e = html.escape(str(name), quote=True)
+                pct = get_attendance_pct(name, person_cell, attendance_stats)
+                if pct is not None:
+                    r, g, b = _hex_to_rgb(border_color)
+                    bg_alpha = 0.08 + (pct / 100) * 0.77
+                    txt_alpha = 0.35 + (pct / 100) * 0.65
+                    tile_style = (
+                        f"border-color: {bc}; "
+                        f"background-color: rgba({r},{g},{b},{bg_alpha:.2f}); "
+                        f"color: rgba(255,255,255,{txt_alpha:.2f});"
+                    )
+                else:
+                    tile_style = f"border-color: {bc};"
                 parts.append(
-                    f'<span class="member-tile" style="border-color: {bc};" data-tooltip="{tip_e}">{name_e}</span> '
+                    f'<span class="member-tile" style="{tile_style}" data-tooltip="{tip_e}">{name_e}</span> '
                 )
             st.markdown("".join(parts), unsafe_allow_html=True)
         else:
@@ -3948,6 +3960,28 @@ def get_attendance_text(name, cell, attendance_stats):
             return f"{stats['attendance']}/{stats['total']} ({stats['percentage']}%)"
 
     return name
+
+
+def get_attendance_pct(name, cell, attendance_stats):
+    """Return attendance percentage (0-100) for a member, or None if unknown."""
+    if not attendance_stats:
+        return None
+    name_stripped = str(name).strip()
+    cell_stripped = str(cell).strip() if cell else ""
+    key = f"{name_stripped} - {cell_stripped}" if cell_stripped else name_stripped
+    if key in attendance_stats:
+        return attendance_stats[key]["percentage"]
+    key_lower = key.lower()
+    for dict_key, stats in attendance_stats.items():
+        if dict_key.lower() == key_lower:
+            return stats["percentage"]
+    return None
+
+
+def _hex_to_rgb(hex_color):
+    """Convert #rrggbb hex string to (r, g, b) integer tuple."""
+    h = hex_color.lstrip('#')
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
 def categorize_member_status(attendance_count, total_possible):
