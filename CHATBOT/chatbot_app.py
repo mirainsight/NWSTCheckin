@@ -213,8 +213,26 @@ st.session_state.user_name = st.text_input(
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
-if _should_refresh_data():
-    _load_data()
+# Detect Update Names runs: one Redis GET per render, compare sync timestamp
+_sync_changed = False
+try:
+    _rc_sync = get_redis_client()
+    if _rc_sync:
+        _raw_sync = _rc_sync.get("nwst_last_sync_time")
+        if _raw_sync:
+            _sync_str = _raw_sync.decode() if isinstance(_raw_sync, bytes) else _raw_sync
+            if _sync_str != st.session_state.get("_last_sync_seen", ""):
+                st.session_state["_last_sync_seen"] = _sync_str
+                _sync_changed = True
+except Exception:
+    pass
+
+if _sync_changed or _should_refresh_data():
+    if _sync_changed:
+        build_data_context.clear()
+        _load_data(cache_buster=1)
+    else:
+        _load_data()
 
 col_info, col_btn = st.columns([5, 1])
 with col_info:
