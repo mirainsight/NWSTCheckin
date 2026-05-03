@@ -135,6 +135,15 @@ st.markdown(
     .stApp { background-color: #0d0d0d; color: #f0f0f0; }
     section[data-testid="stSidebar"] { display: none; }
     .stChatMessage { background: transparent; }
+    /* Chat message text — prose font, readable size */
+    [data-testid="stChatMessage"] p,
+    [data-testid="stChatMessage"] li,
+    [data-testid="stChatMessage"] span:not([data-testid]),
+    [data-testid="stChatMessage"] .stMarkdown p {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        font-size: 0.95rem !important;
+        line-height: 1.6 !important;
+    }
     .stTextInput > div > div > input {
         background-color: #1a1a1a;
         color: #f0f0f0;
