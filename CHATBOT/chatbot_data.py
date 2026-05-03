@@ -108,6 +108,33 @@ def _format_cell_health(r) -> str:
     return "\n".join(lines)
 
 
+_STATUS_ABBREV = {
+    "regular": "Reg", "irregular": "Irr", "follow up": "FU",
+    "new": "New", "red": "Red", "graduated": "Grad",
+}
+_ROLE_ABBREV = {
+    "cg leader": "CGL", "assistant cg leader": "ACGL",
+    "cg core": "CGC", "potential cg core": "PCGC",
+    "ministry leader": "ML", "assistant ministry leader": "AML",
+    "ministry core": "MC", "potential ministry core": "PMC",
+    "zone leader": "ZL",
+}
+_MINISTRY_ROLE_COLS = ["hype role", "frontlines role", "vs role", "worship role"]
+
+
+def _abbrev_status(raw: str) -> str:
+    key = raw.rstrip(":").strip().lower()
+    return _STATUS_ABBREV.get(key, raw.rstrip(":").strip() or "—")
+
+
+def _abbrev_role(raw: str) -> str:
+    key = raw.strip().lower()
+    for prefix, abbrev in _ROLE_ABBREV.items():
+        if key.startswith(prefix):
+            return abbrev
+    return raw.strip() or ""
+
+
 def _format_members(r) -> str:
     cg_data = _load_json_key(r, "nwst_cg_combined_data")
     if not cg_data:
@@ -120,39 +147,76 @@ def _format_members(r) -> str:
 
     cols_lower = [c.lower().strip() for c in columns]
 
-    def _find_col(*candidates) -> int | None:
+    def _find(*candidates) -> int | None:
         for c in candidates:
             if c in cols_lower:
                 return cols_lower.index(c)
         return None
 
-    name_idx = _find_col("name", "member name", "member")
-    cell_idx = _find_col("cell", "cell group", "group")
-    status_idx = _find_col("status", "member status")
+    name_idx   = _find("name", "member name", "member")
+    cell_idx   = _find("cell", "cell group", "group")
+    status_idx = _find("status", "member status")
+    role_idx   = _find("role")
+    gender_idx = _find("gender")
+    age_idx    = _find("age")
+    min_dept_idx = _find("ministry department")
+    ministry_role_idxs = {label: cols_lower.index(label) for label in _MINISTRY_ROLE_COLS if label in cols_lower}
 
     if name_idx is None:
         return ""
 
     att_stats: dict = _load_json_key(r, "nwst_attendance_stats") or {}
 
-    lines = ["=== MEMBERS (CG Combined) ==="]
+    lines = ["=== MEMBERS (CG Combined) ===",
+             "Format: Name | Cell | Status | Gender | Age | Role | Ministry | Att% | Last attended | Recent(last 8 sessions)"]
+
     for row in rows:
-        name = row[name_idx].strip() if name_idx is not None and name_idx < len(row) else ""
-        cell = row[cell_idx].strip() if cell_idx is not None and cell_idx < len(row) else ""
-        status_raw = row[status_idx].strip() if status_idx is not None and status_idx < len(row) else ""
+        def _get(idx) -> str:
+            return row[idx].strip() if idx is not None and idx < len(row) else ""
+
+        name   = _get(name_idx)
         if not name:
             continue
-        # Clean status prefix (e.g. "Regular:" → "Regular")
-        status = status_raw.rstrip(":") if status_raw else "—"
+        cell   = _get(cell_idx)
+        status = _abbrev_status(_get(status_idx))
+        gender = _get(gender_idx) or "—"
+        age    = _get(age_idx) or "—"
+        role   = _abbrev_role(_get(role_idx)) if role_idx is not None else ""
 
-        # Attendance lookup: try "Name - Cell" key
+        # Ministry: prefer Ministry Department col; fallback to first non-empty ministry role col
+        ministry = _get(min_dept_idx) if min_dept_idx is not None else ""
+        if not ministry:
+            for label, idx in ministry_role_idxs.items():
+                val = _get(idx)
+                if val:
+                    # e.g. "hype role" + "Core" → "Hype:Core"
+                    ministry = label.replace(" role", "").title() + ":" + val
+                    break
+
+        # Attendance lookup keyed by "Name - Cell" (matching flush_pending format)
         att_key = f"{name} - {cell}" if cell else name
-        att_info = att_stats.get(att_key) or att_stats.get(name, {})
-        att_pct = f"{att_info.get('percentage', 0)}%" if att_info else "—"
+        att_info = att_stats.get(att_key) or att_stats.get(name) or {}
+        att_pct  = f"{att_info.get('percentage', 0)}%" if att_info else "—"
+        last_att = att_info.get("last_attended") or "—"
+        rec_att  = att_info.get("recent_attended")
+        rec_tot  = att_info.get("recent_total")
+        recent   = f"{rec_att}/{rec_tot}" if rec_att is not None else "—"
 
-        lines.append(f"{name} | {cell or '—'} | {status} | Att:{att_pct}")
+        parts = [
+            name,
+            cell or "—",
+            status,
+            gender,
+            age,
+            role or "—",
+            ministry or "—",
+            f"Att:{att_pct}",
+            f"Last:{last_att}",
+            f"R:{recent}",
+        ]
+        lines.append(" | ".join(parts))
 
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return "\n".join(lines) if len(lines) > 2 else ""
 
 
 def _format_checkin_today(r, today_str: str) -> str:
