@@ -487,8 +487,10 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                 member_data.append((name, person_cell, pct))
 
             # Apply sort order (references sort_order from enclosing scope)
-            if sort_order == "Attendance ↓":
+            if sort_order == "Att ↓":
                 member_data.sort(key=lambda x: (x[2] is None, -(x[2] or 0)))
+            elif sort_order == "Att ↑":
+                member_data.sort(key=lambda x: (x[2] is None, x[2] or 0))
 
             # Min-max normalise within this bucket so intensity is relative to peers
             known_pcts = [p for _, _, p in member_data if p is not None]
@@ -606,9 +608,17 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
         red_data       = work_df.iloc[_red_start : _red_start + red_count].copy()
         graduated_data = work_df.iloc[_red_start + red_count :].copy()
 
-    sort_order = st.pills(
-        "Sort members",
-        ["A → Z", "Attendance ↓"],
+    _sc = html.escape(primary_color, quote=True)
+    st.markdown(f"""<style>
+div[data-testid="stSegmentedControl"] button[aria-checked="true"] {{
+    background-color: {_sc} !important;
+    color: #000000 !important;
+    border-color: {_sc} !important;
+}}
+</style>""", unsafe_allow_html=True)
+    sort_order = st.segmented_control(
+        "Sort",
+        ["A → Z", "Att ↑", "Att ↓"],
         default="A → Z",
         key="ch_member_sort",
         label_visibility="collapsed",
