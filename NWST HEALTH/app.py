@@ -473,32 +473,53 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
                     break
             bc = html.escape(border_color, quote=True)
             names = sorted(data_df[name_col].astype(str).unique().tolist())
-            parts = []
+
+            # First pass: collect per-member cell and attendance pct
+            member_data = []
             for name in names:
                 person_cell = ""
                 if cell_col:
                     person_row = data_df[data_df[name_col] == name]
                     if not person_row.empty:
                         person_cell = str(person_row[cell_col].iloc[0]).strip()
+                pct = get_attendance_pct(name, person_cell, attendance_stats)
+                member_data.append((name, person_cell, pct))
+
+            # Min-max normalise within this bucket so intensity is relative to peers
+            known_pcts = [p for _, _, p in member_data if p is not None]
+            if len(known_pcts) >= 2:
+                min_pct, max_pct = min(known_pcts), max(known_pcts)
+                pct_range = max_pct - min_pct
+            else:
+                min_pct = max_pct = pct_range = None
+
+            def _bucket_rank(p):
+                if pct_range is None or pct_range == 0:
+                    return 0.75  # single member or all tied → mid-bright glow
+                return (p - min_pct) / pct_range  # 0.0 (lowest in bucket) → 1.0 (highest)
+
+            # Second pass: render with rank-based glow
+            r, g, b = _hex_to_rgb(border_color)
+            parts = []
+            for name, person_cell, pct in member_data:
                 tooltip_text = get_attendance_text(name, person_cell, attendance_stats)
                 tip_e = html.escape(tooltip_text, quote=True)
                 name_e = html.escape(str(name), quote=True)
-                pct = get_attendance_pct(name, person_cell, attendance_stats)
                 if pct is not None:
-                    r, g, b = _hex_to_rgb(border_color)
-                    if pct >= 75:
+                    rank = _bucket_rank(pct)
+                    if rank >= 0.75:
                         tile_style = (
                             f"border: 2px solid rgba({r},{g},{b},1.0); "
                             f"box-shadow: 0 0 10px 3px rgba({r},{g},{b},0.75), inset 0 0 6px rgba({r},{g},{b},0.12); "
                             f"color: rgba(255,255,255,1.0);"
                         )
-                    elif pct >= 50:
+                    elif rank >= 0.50:
                         tile_style = (
                             f"border: 1.5px solid rgba({r},{g},{b},0.8); "
                             f"box-shadow: 0 0 6px 1px rgba({r},{g},{b},0.5); "
                             f"color: rgba(255,255,255,0.9);"
                         )
-                    elif pct >= 25:
+                    elif rank >= 0.25:
                         tile_style = (
                             f"border: 1px solid rgba({r},{g},{b},0.45); "
                             f"color: rgba(255,255,255,0.65);"
