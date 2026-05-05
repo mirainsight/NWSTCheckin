@@ -620,11 +620,6 @@ for msg in st.session_state.messages:
 
 if st.session_state.cr_active:
     _render_cr_wizard()
-elif not st.session_state.messages:
-    if st.button("📋 Info Change", key="suggestion_cr"):
-        st.session_state.cr_active = True
-        st.session_state.cr_step = "requester"
-        st.rerun()
 
 # ── context ring + new chat + info change ─────────────────────────────────────
 
