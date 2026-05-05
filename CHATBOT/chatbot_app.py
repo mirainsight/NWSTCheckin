@@ -127,6 +127,56 @@ def _get_openai_key() -> str:
     return key
 
 
+def _get_viewer_email() -> str:
+    """Return the Streamlit-authenticated viewer email (Community Cloud sharing auth)."""
+    try:
+        return (st.context.user.email or "").strip().lower()
+    except AttributeError:
+        pass
+    try:
+        return (st.experimental_user.email or "").strip().lower()  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+
+
+def _lookup_member_by_email(email: str) -> dict | None:
+    """Look up a member row in nwst_cg_combined_data by email. Returns col→value dict or None."""
+    if not email:
+        return None
+    rc = get_redis_client()
+    if not rc:
+        return None
+    try:
+        raw = rc.get("nwst_cg_combined_data")
+        if not raw:
+            return None
+        data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        cols = data.get("columns", [])
+        rows = data.get("rows", [])
+        cols_lower = [str(c).lower().strip() for c in cols]
+
+        email_idx = next((i for i, c in enumerate(cols_lower) if "email" in c), -1)
+        if email_idx == -1:
+            return None
+
+        for row in rows:
+            cell_val = row[email_idx] if email_idx < len(row) else ""
+            if str(cell_val).strip().lower() == email:
+                return dict(zip(cols_lower, row))
+    except Exception:
+        pass
+    return None
+
+
+def _pick(member: dict, *keywords: str) -> str:
+    """Return the first non-empty value from a member dict whose key contains any keyword."""
+    for kw in keywords:
+        for k, v in member.items():
+            if kw in k and str(v).strip():
+                return str(v).strip()
+    return ""
+
+
 def _call_openai(messages: list[dict]) -> SimpleNamespace:
     api_key = _get_openai_key()
     if not api_key:
@@ -522,14 +572,14 @@ st.markdown(
 st.title("NWST Assistant")
 st.caption("Ask about cell health, check-in, members, or newcomers")
 
-# ── name input ─────────────────────────────────────────────────────────────────
+# ── identity ───────────────────────────────────────────────────────────────────
 
-if "user_name" not in st.session_state:
-    st.session_state.user_name = ""
-if "user_email" not in st.session_state:
-    st.session_state.user_email = ""
-if "user_cell" not in st.session_state:
-    st.session_state.user_cell = ""
+for _k, _v in [
+    ("user_name", ""), ("user_email", ""), ("user_cell", ""),
+    ("user_role", ""), ("user_status", ""), ("user_profile_loaded", False),
+]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 # Wizard state
 if "cr_active" not in st.session_state:
@@ -543,22 +593,36 @@ if "cr_member_row" not in st.session_state:
 if "cr_matches" not in st.session_state:
     st.session_state.cr_matches = []
 
-_id_col1, _id_col2, _id_col3 = st.columns(3)
-st.session_state.user_name = _id_col1.text_input(
-    "Your name",
-    value=st.session_state.user_name,
-    placeholder="Name",
-)
-st.session_state.user_email = _id_col2.text_input(
-    "Email",
-    value=st.session_state.user_email,
-    placeholder="Email",
-)
-st.session_state.user_cell = _id_col3.text_input(
-    "Cell group",
-    value=st.session_state.user_cell,
-    placeholder="Cell group",
-)
+# Auto-populate from Streamlit viewer auth (runs once per session)
+if not st.session_state.user_profile_loaded:
+    _viewer_email = _get_viewer_email()
+    if _viewer_email:
+        _member = _lookup_member_by_email(_viewer_email)
+        if _member:
+            st.session_state.user_name = _pick(_member, "name", "member")
+            st.session_state.user_email = _viewer_email
+            st.session_state.user_cell = _pick(_member, "cell", "group")
+            st.session_state.user_role = _pick(_member, "role")
+            st.session_state.user_status = _pick(_member, "status")
+    st.session_state.user_profile_loaded = True
+
+# Identity display: profile chip if auto-filled, else manual inputs
+if st.session_state.user_name and st.session_state.user_cell:
+    st.caption(
+        f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
+        + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
+    )
+else:
+    _id_col1, _id_col2, _id_col3 = st.columns(3)
+    st.session_state.user_name = _id_col1.text_input(
+        "Your name", value=st.session_state.user_name, placeholder="Name",
+    )
+    st.session_state.user_email = _id_col2.text_input(
+        "Email", value=st.session_state.user_email, placeholder="Email",
+    )
+    st.session_state.user_cell = _id_col3.text_input(
+        "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
+    )
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
@@ -653,9 +717,16 @@ if prompt:
         st.markdown(prompt)
 
 
-    # Build system message: static behaviour + live data context
+    # Build system message: static behaviour + user profile + live data context
     data_context = st.session_state.get("data_context", "")
     full_system = SYSTEM_PROMPT
+    if st.session_state.user_name and st.session_state.user_cell:
+        full_system += (
+            f"\n\nLOGGED IN USER: {st.session_state.user_name}"
+            f" · Cell: {st.session_state.user_cell}"
+            f" · Role: {st.session_state.user_role or '—'}"
+            f" · Status: {st.session_state.user_status or '—'}"
+        )
     if data_context:
         full_system += "\n\nCURRENT DATA:\n" + data_context
 
