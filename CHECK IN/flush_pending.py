@@ -50,6 +50,8 @@ try:
         get_unsynced_change_requests,
         mark_synced,
         mark_change_requests_synced,
+        CHATBOT_LOG_KEY_PREFIX,
+        CHANGE_REQ_KEY_PREFIX,
     )
     _chatbot_redis_available = True
 except ImportError:
@@ -1018,6 +1020,21 @@ def _ensure_change_req_worksheet(spreadsheet):
     return ws
 
 
+def _read_today_chatbot_items(rc, key_prefix: str, today_str: str) -> tuple[list, int]:
+    """Read new items from today's Redis list using a per-day offset to avoid duplicates."""
+    offset_key = f"{key_prefix}synced_offset:{today_str}"
+    raw_offset = rc.get(offset_key)
+    offset = int(raw_offset.decode() if isinstance(raw_offset, bytes) else (raw_offset or 0))
+    raw_items = rc.lrange(f"{key_prefix}{today_str}", offset, -1) or []
+    entries = []
+    for raw in raw_items:
+        s = raw.decode() if isinstance(raw, bytes) else raw
+        e = json.loads(s)
+        e.setdefault("date", today_str)
+        entries.append(e)
+    return entries, offset
+
+
 def _sync_chatbot_to_sheets(
     gsheet_client,
     chatbot_sheet_id: str,
@@ -1031,6 +1048,8 @@ def _sync_chatbot_to_sheets(
         return False, "Chatbot Upstash not configured (UPSTASH_CHATBOT_REST_URL / UPSTASH_CHATBOT_REST_TOKEN missing)."
 
     today_str = get_today_myt_date()
+    from datetime import date as _date, timedelta as _td
+    yesterday = (_date.fromisoformat(today_str) - _td(days=1)).isoformat()
 
     try:
         spreadsheet = gsheet_client.open_by_key(chatbot_sheet_id)
@@ -1039,38 +1058,56 @@ def _sync_chatbot_to_sheets(
 
     total = 0
 
-    logs = get_unsynced_logs(rc, today_str)
-    if logs:
+    # Chat logs — historical (up to yesterday) + today via offset
+    historical_logs = get_unsynced_logs(rc, today_str)
+    today_logs, today_log_offset = _read_today_chatbot_items(rc, "chatbot:logs:", today_str)
+    all_logs = historical_logs + today_logs
+    if all_logs:
         ws = _ensure_chatbot_log_worksheet(spreadsheet)
         rows = [[
             e.get("date", ""), e.get("timestamp", ""),
             e.get("user_name", ""), e.get("email", ""), e.get("cell", ""),
             e.get("question", ""), e.get("answer", ""), e.get("tokens_used", 0),
-        ] for e in logs]
+        ] for e in all_logs]
         ws.append_rows(rows)
-        from datetime import date as _date, timedelta as _td
-        yesterday = (_date.fromisoformat(today_str) - _td(days=1)).isoformat()
-        mark_synced(rc, yesterday)
-        total += len(logs)
-        _emit(f"  Chat logs: +{len(logs)} rows", log_lines, with_ts=False)
+        if historical_logs:
+            mark_synced(rc, yesterday)
+            cur = _date.fromisoformat(today_str) - _td(days=30)
+            end_d = _date.fromisoformat(yesterday)
+            while cur <= end_d:
+                rc.delete(f"{CHATBOT_LOG_KEY_PREFIX}{cur.isoformat()}")
+                cur += _td(days=1)
+        if today_logs:
+            rc.set(f"chatbot:logs:synced_offset:{today_str}", today_log_offset + len(today_logs), ex=2 * 86400)
+        total += len(all_logs)
+        _emit(f"  Chat logs: +{len(all_logs)} rows", log_lines, with_ts=False)
     else:
         _emit("  Chat logs: nothing to sync", log_lines, with_ts=False)
 
-    reqs = get_unsynced_change_requests(rc, today_str)
-    if reqs:
+    # Change requests — historical (up to yesterday) + today via offset
+    historical_reqs = get_unsynced_change_requests(rc, today_str)
+    today_reqs, today_req_offset = _read_today_chatbot_items(rc, "change_requests:", today_str)
+    all_reqs = historical_reqs + today_reqs
+    if all_reqs:
         ws2 = _ensure_change_req_worksheet(spreadsheet)
         rows2 = [[
             e.get("date", ""), e.get("timestamp", ""),
             e.get("requester", ""), e.get("member_name", ""), e.get("member_cell", ""),
             e.get("field", ""), e.get("current_value", ""), e.get("new_value", ""),
             e.get("reason", ""), e.get("status", "Pending"),
-        ] for e in reqs]
+        ] for e in all_reqs]
         ws2.append_rows(rows2)
-        from datetime import date as _date, timedelta as _td
-        yesterday = (_date.fromisoformat(today_str) - _td(days=1)).isoformat()
-        mark_change_requests_synced(rc, yesterday)
-        total += len(reqs)
-        _emit(f"  Change requests: +{len(reqs)} rows", log_lines, with_ts=False)
+        if historical_reqs:
+            mark_change_requests_synced(rc, yesterday)
+            cur = _date.fromisoformat(today_str) - _td(days=30)
+            end_d = _date.fromisoformat(yesterday)
+            while cur <= end_d:
+                rc.delete(f"{CHANGE_REQ_KEY_PREFIX}{cur.isoformat()}")
+                cur += _td(days=1)
+        if today_reqs:
+            rc.set(f"change_requests:synced_offset:{today_str}", today_req_offset + len(today_reqs), ex=2 * 86400)
+        total += len(all_reqs)
+        _emit(f"  Change requests: +{len(all_reqs)} rows", log_lines, with_ts=False)
     else:
         _emit("  Change requests: nothing to sync", log_lines, with_ts=False)
 
