@@ -313,9 +313,11 @@ def _render_cr_wizard() -> None:
     # Step 1 — Requester identity
     if step == "requester":
         _known_name = st.session_state.get("user_name", "")
+        _known_cell = st.session_state.get("user_cell", "")
         _known_role = st.session_state.get("user_role", "")
         _greeting = f"Hi {_known_name}!" if _known_name else "Hi!"
-        _prefill = f"{_known_name}{', ' + _known_role if _known_role else ''}" if _known_name else ""
+        _parts = [p for p in [_known_name, _known_cell, _known_role] if p]
+        _prefill = " - ".join(_parts)
         with st.chat_message("assistant"):
             st.markdown(f"{_greeting} Who is making this request? Please confirm your name and role.")
         _go = False
