@@ -127,16 +127,31 @@ def _get_openai_key() -> str:
     return key
 
 
-def _get_viewer_email() -> str:
-    """Return the Streamlit-authenticated viewer email (Community Cloud sharing auth)."""
+def _get_login_config() -> tuple[str, list[str]]:
+    """Return (password, allowed_emails) from Streamlit secrets or env."""
+    password = ""
+    raw_emails: object = ""
     try:
-        return (st.context.user.email or "").strip().lower()
-    except AttributeError:
-        pass
-    try:
-        return (st.experimental_user.email or "").strip().lower()  # type: ignore[attr-defined]
+        password = (st.secrets.get("CHATBOT_PASSWORD") or "").strip()
+        raw_emails = st.secrets.get("CHATBOT_ALLOWED_EMAILS") or ""
     except Exception:
-        return ""
+        pass
+    if not password:
+        password = os.getenv("CHATBOT_PASSWORD", "").strip()
+    if not raw_emails:
+        raw_emails = os.getenv("CHATBOT_ALLOWED_EMAILS", "")
+    if isinstance(raw_emails, (list, tuple)):
+        allowed = [e.strip().lower() for e in raw_emails if str(e).strip()]
+    else:
+        allowed = [e.strip().lower() for e in str(raw_emails).split(",") if e.strip()]
+    return password, allowed
+
+
+def _check_login(email: str, password: str) -> bool:
+    correct_pw, allowed = _get_login_config()
+    if not correct_pw or not allowed:
+        return False
+    return email.strip().lower() in allowed and password == correct_pw
 
 
 def _lookup_member_by_email(email: str) -> dict | None:
@@ -572,11 +587,12 @@ st.markdown(
 st.title("NWST Assistant")
 st.caption("Ask about cell health, check-in, members, or newcomers")
 
-# ── identity ───────────────────────────────────────────────────────────────────
+# ── identity + login gate ──────────────────────────────────────────────────────
 
 for _k, _v in [
     ("user_name", ""), ("user_email", ""), ("user_cell", ""),
     ("user_role", ""), ("user_status", ""), ("user_profile_loaded", False),
+    ("authenticated", False), ("login_email", ""),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -593,36 +609,58 @@ if "cr_member_row" not in st.session_state:
 if "cr_matches" not in st.session_state:
     st.session_state.cr_matches = []
 
-# Auto-populate from Streamlit viewer auth (runs once per session)
+# Login gate — show sign-in form and halt if not authenticated
+if not st.session_state.authenticated:
+    with st.form("login_form"):
+        _email_input = st.text_input("Email address", placeholder="your@email.com")
+        _pw_input = st.text_input("Password", type="password")
+        _sign_in = st.form_submit_button("Sign in", use_container_width=True)
+    if _sign_in:
+        if _check_login(_email_input, _pw_input):
+            st.session_state.authenticated = True
+            st.session_state.login_email = _email_input.strip().lower()
+            st.rerun()
+        else:
+            st.error("Incorrect email or password.")
+    st.stop()
+
+# Auto-populate from login email (runs once per session)
 if not st.session_state.user_profile_loaded:
-    _viewer_email = _get_viewer_email()
-    if _viewer_email:
-        _member = _lookup_member_by_email(_viewer_email)
-        if _member:
-            st.session_state.user_name = _pick(_member, "name", "member")
-            st.session_state.user_email = _viewer_email
-            st.session_state.user_cell = _pick(_member, "cell", "group")
-            st.session_state.user_role = _pick(_member, "role")
-            st.session_state.user_status = _pick(_member, "status")
+    _member = _lookup_member_by_email(st.session_state.login_email)
+    if _member:
+        st.session_state.user_name = _pick(_member, "name", "member")
+        st.session_state.user_email = st.session_state.login_email
+        st.session_state.user_cell = _pick(_member, "cell", "group")
+        st.session_state.user_role = _pick(_member, "role")
+        st.session_state.user_status = _pick(_member, "status")
     st.session_state.user_profile_loaded = True
 
-# Identity display: profile chip if auto-filled, else manual inputs
-if st.session_state.user_name and st.session_state.user_cell:
-    st.caption(
-        f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
-        + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
-    )
-else:
-    _id_col1, _id_col2, _id_col3 = st.columns(3)
-    st.session_state.user_name = _id_col1.text_input(
-        "Your name", value=st.session_state.user_name, placeholder="Name",
-    )
-    st.session_state.user_email = _id_col2.text_input(
-        "Email", value=st.session_state.user_email, placeholder="Email",
-    )
-    st.session_state.user_cell = _id_col3.text_input(
-        "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
-    )
+# Identity display
+_profile_col, _logout_col = st.columns([5, 1])
+with _profile_col:
+    if st.session_state.user_name and st.session_state.user_cell:
+        st.caption(
+            f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
+            + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
+        )
+    else:
+        _id_col1, _id_col2, _id_col3 = st.columns(3)
+        st.session_state.user_name = _id_col1.text_input(
+            "Your name", value=st.session_state.user_name, placeholder="Name",
+        )
+        st.session_state.user_email = _id_col2.text_input(
+            "Email", value=st.session_state.user_email, placeholder="Email",
+        )
+        st.session_state.user_cell = _id_col3.text_input(
+            "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
+        )
+with _logout_col:
+    if st.button("Sign out", use_container_width=True):
+        for _k in ["authenticated", "login_email", "user_name", "user_email",
+                   "user_cell", "user_role", "user_status", "user_profile_loaded"]:
+            st.session_state[_k] = "" if _k != "authenticated" else False
+        st.session_state.user_profile_loaded = False
+        st.rerun()
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
