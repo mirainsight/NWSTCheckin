@@ -21,10 +21,11 @@ try:
 except ImportError:
     pass
 
+import json
 import re
 
 import streamlit as st
-from chatbot_redis import get_redis_client, log_qa_to_redis
+from chatbot_redis import get_redis_client, log_qa_to_redis, submit_change_request
 from chatbot_data import build_data_context
 
 MYT = timezone(timedelta(hours=8))
@@ -150,6 +151,341 @@ def _call_openai(messages: list[dict]) -> SimpleNamespace:
         return SimpleNamespace(content=f"Error calling OpenAI: {e}", tokens=0)
 
 
+# ── change-request wizard ──────────────────────────────────────────────────────
+
+_CR_FIELDS = [
+    "Name", "Cell Group", "Role", "Ministry Department",
+    "Gender", "Birthday", "Phone / Contact", "School / Work", "Notes",
+]
+
+
+def _cr_normalize(s: str) -> str:
+    return " ".join(str(s).replace(" ", " ").strip().lower().split())
+
+
+def _cr_find_any(cols: list, keywords: list[str]) -> int:
+    for i, c in enumerate(cols):
+        cl = str(c).lower().strip()
+        if any(kw in cl for kw in keywords):
+            return i
+    return -1
+
+
+def _cr_find_all(cols: list, keywords: list[str]) -> int:
+    for i, c in enumerate(cols):
+        cl = str(c).lower().strip()
+        if all(kw in cl for kw in keywords):
+            return i
+    return -1
+
+
+def _cr_find_role(cols: list) -> int:
+    for i, c in enumerate(cols):
+        if str(c).lower().strip() in ("role", "member role"):
+            return i
+    return -1
+
+
+def _cr_field_col_idx(cols: list, field: str) -> int:
+    if field == "Name":
+        return _cr_find_any(cols, ["name", "member"])
+    if field == "Cell Group":
+        return _cr_find_any(cols, ["cell", "group"])
+    if field == "Role":
+        return _cr_find_role(cols)
+    if field == "Ministry Department":
+        return _cr_find_all(cols, ["ministry", "department"])
+    if field == "Gender":
+        return _cr_find_any(cols, ["gender"])
+    if field == "Birthday":
+        return _cr_find_any(cols, ["birthday"])
+    if field == "Phone / Contact":
+        return _cr_find_any(cols, ["phone", "contact", "mobile"])
+    if field == "School / Work":
+        return _cr_find_any(cols, ["school", "work"])
+    if field == "Notes":
+        return _cr_find_any(cols, ["notes", "remark"])
+    return -1
+
+
+def _cr_member_label(name: str, cell: str) -> str:
+    return f"{name} · {cell}" if cell else name
+
+
+def _cr_load_members():
+    """Returns (cols, rows, name_idx, cell_idx) from nwst_cg_combined_data Redis key."""
+    rc = get_redis_client()
+    if not rc:
+        return [], [], -1, -1
+    try:
+        raw = rc.get("nwst_cg_combined_data")
+        if not raw:
+            return [], [], -1, -1
+        s = raw.decode() if isinstance(raw, bytes) else raw
+        data = json.loads(s)
+        cols = data.get("columns", [])
+        rows = data.get("rows", [])
+        name_idx = _cr_find_any(cols, ["name", "member"])
+        cell_idx = _cr_find_any(cols, ["cell", "group"])
+        return cols, rows, name_idx, cell_idx
+    except Exception:
+        return [], [], -1, -1
+
+
+def _cr_reset() -> None:
+    st.session_state.cr_active = False
+    st.session_state.cr_step = "requester"
+    st.session_state.cr_data = {}
+    st.session_state.cr_member_row = None
+    st.session_state.cr_matches = []
+    st.session_state.pop("cr_search_error", None)
+
+
+def _render_cr_wizard() -> None:
+    step = st.session_state.cr_step
+    data = st.session_state.cr_data
+
+    # Step 1 — Requester identity
+    if step == "requester":
+        with st.chat_message("assistant"):
+            st.markdown("Hi! Who is making this request? Please enter your name and role.")
+        _go = False
+        with st.form("cr_requester"):
+            val = st.text_input("Your name and role", placeholder="e.g. Pastor John, Zone Leader Sarah")
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Next →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go and val.strip():
+            st.session_state.cr_data["requester"] = val.strip()
+            st.session_state.cr_step = "member_search"
+            st.rerun()
+
+    # Step 2 — Member name search
+    elif step == "member_search":
+        with st.chat_message("assistant"):
+            st.markdown(
+                f"**Requested by:** {data.get('requester', '')}  \n"
+                "Which member's information would you like to update? Type their name to search."
+            )
+        err = st.session_state.get("cr_search_error", "")
+        if err:
+            st.warning(err)
+        _go = False
+        with st.form("cr_member_search"):
+            val = st.text_input("Member name", placeholder="e.g. John Tan, Sarah")
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Search →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go and val.strip():
+            cols, rows, name_idx, cell_idx = _cr_load_members()
+            if name_idx == -1:
+                st.session_state.cr_search_error = "⚠️ Could not load member data. Please sync data first."
+                st.rerun()
+            else:
+                query = _cr_normalize(val.strip())
+                matches = []
+                for row in rows:
+                    raw_name = row[name_idx] if name_idx < len(row) else ""
+                    if not raw_name:
+                        continue
+                    raw_cell = (row[cell_idx] if cell_idx != -1 and cell_idx < len(row) else "") or ""
+                    if str(raw_cell).strip().lower() == "archive":
+                        continue
+                    if query in _cr_normalize(raw_name):
+                        matches.append({
+                            "label": _cr_member_label(str(raw_name), str(raw_cell).strip()),
+                            "row": dict(zip(cols, row)),
+                        })
+                st.session_state.pop("cr_search_error", None)
+                if not matches:
+                    st.session_state.cr_search_error = f"No member found matching \"{val.strip()}\". Please try again."
+                    st.rerun()
+                elif len(matches) == 1:
+                    st.session_state.cr_member_row = matches[0]["row"]
+                    st.session_state.cr_step = "show_info"
+                    st.rerun()
+                else:
+                    st.session_state.cr_matches = matches
+                    st.session_state.cr_step = "member_select"
+                    st.rerun()
+
+    # Step 2b — Select from multiple matches
+    elif step == "member_select":
+        matches = st.session_state.cr_matches or []
+        with st.chat_message("assistant"):
+            st.markdown(f"Found **{len(matches)}** members matching that name. Please select one:")
+        _go = False
+        with st.form("cr_member_select"):
+            labels = [m["label"] for m in matches]
+            choice = st.selectbox("Select member", labels)
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Select →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go:
+            idx = labels.index(choice)
+            st.session_state.cr_member_row = matches[idx]["row"]
+            st.session_state.cr_step = "show_info"
+            st.rerun()
+
+    # Step 3 — Show current info, pick field
+    elif step == "show_info":
+        member = st.session_state.cr_member_row or {}
+        mcols = list(member.keys())
+
+        name_val = ""
+        cell_val = ""
+        ni = _cr_find_any(mcols, ["name", "member"])
+        ci = _cr_find_any(mcols, ["cell", "group"])
+        if ni != -1:
+            name_val = str(member.get(mcols[ni], "") or "").strip()
+        if ci != -1:
+            cell_val = str(member.get(mcols[ci], "") or "").strip()
+
+        label = _cr_member_label(name_val, cell_val)
+        info_lines = [f"**Member found: {label}**", ""]
+        for field in _CR_FIELDS:
+            fi = _cr_field_col_idx(mcols, field)
+            if fi != -1:
+                v = str(member.get(mcols[fi], "") or "").strip()
+                info_lines.append(f"**{field}:** {v if v else '—'}")
+
+        with st.chat_message("assistant"):
+            st.markdown("\n".join(info_lines))
+            st.markdown("\nWhich field would you like to request a change for?")
+
+        field_options = []
+        for field in _CR_FIELDS:
+            fi = _cr_field_col_idx(mcols, field)
+            v = ""
+            if fi != -1:
+                v = str(member.get(mcols[fi], "") or "").strip()
+            field_options.append(f"{field}  (currently: {v if v else 'empty'})")
+
+        _go = False
+        with st.form("cr_show_info"):
+            choice = st.selectbox("Field to change", field_options)
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Next →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go:
+            field_name = choice.split("  (currently:")[0]
+            fi = _cr_field_col_idx(mcols, field_name)
+            current_val = ""
+            if fi != -1:
+                current_val = str(member.get(mcols[fi], "") or "").strip()
+            st.session_state.cr_data.update({
+                "field": field_name,
+                "current_value": current_val,
+                "member_name": name_val,
+                "member_cell": cell_val,
+            })
+            st.session_state.cr_step = "new_value"
+            st.rerun()
+
+    # Step 4 — New value
+    elif step == "new_value":
+        field = data.get("field", "")
+        current = data.get("current_value", "")
+        label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
+        with st.chat_message("assistant"):
+            st.markdown(
+                f"**Member:** {label}  \n"
+                f"**Field:** {field}  \n"
+                f"**Current value:** {current if current else '—'}  \n\n"
+                "What should it be changed to?"
+            )
+        _go = False
+        with st.form("cr_new_value"):
+            val = st.text_input("New value", value=current)
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Next →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go and val.strip():
+            st.session_state.cr_data["new_value"] = val.strip()
+            st.session_state.cr_step = "reason"
+            st.rerun()
+
+    # Step 5 — Reason (optional)
+    elif step == "reason":
+        with st.chat_message("assistant"):
+            st.markdown("Any reason for this change? *(optional — leave blank to skip)*")
+        _go = False
+        with st.form("cr_reason"):
+            val = st.text_input("Reason", placeholder="e.g. Member moved to a different cell group")
+            c1, c2 = st.columns([3, 1])
+            _go = c1.form_submit_button("Next →", use_container_width=True)
+            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.rerun()
+        if _go:
+            st.session_state.cr_data["reason"] = val.strip()
+            st.session_state.cr_step = "confirm"
+            st.rerun()
+
+    # Step 6 — Confirm and submit
+    elif step == "confirm":
+        label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
+        summary = (
+            "Please confirm this change request:\n\n"
+            "| | |\n|---|---|\n"
+            f"| **Requested by** | {data.get('requester', '')} |\n"
+            f"| **Member** | {label} |\n"
+            f"| **Field** | {data.get('field', '')} |\n"
+            f"| **Current value** | {data.get('current_value', '') or '—'} |\n"
+            f"| **New value** | {data.get('new_value', '')} |\n"
+            f"| **Reason** | {data.get('reason', '') or '—'} |"
+        )
+        with st.chat_message("assistant"):
+            st.markdown(summary)
+        _submit = False
+        _cancel = False
+        with st.form("cr_confirm"):
+            c1, c2 = st.columns([1, 1])
+            _submit = c1.form_submit_button("✅ Submit", use_container_width=True)
+            _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
+        if _cancel:
+            _cr_reset()
+            st.session_state.messages.append({
+                "role": "assistant", "content": "Change request cancelled.", "tokens": 0,
+            })
+            st.rerun()
+        if _submit:
+            rc = get_redis_client()
+            if rc:
+                submit_change_request(rc, {
+                    "requester": data.get("requester", ""),
+                    "member_name": data.get("member_name", ""),
+                    "member_cell": data.get("member_cell", ""),
+                    "field": data.get("field", ""),
+                    "current_value": data.get("current_value", ""),
+                    "new_value": data.get("new_value", ""),
+                    "reason": data.get("reason", ""),
+                })
+            _cr_reset()
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "✅ Change request submitted! It will be reviewed and updated shortly.",
+                "tokens": 0,
+            })
+            st.rerun()
+
+
 # ── page setup ─────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="NWST Assistant", page_icon="💬", layout="centered")
@@ -206,11 +542,38 @@ st.caption("Ask about cell health, check-in, members, or newcomers")
 
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+if "user_cell" not in st.session_state:
+    st.session_state.user_cell = ""
 
-st.session_state.user_name = st.text_input(
+# Wizard state
+if "cr_active" not in st.session_state:
+    st.session_state.cr_active = False
+if "cr_step" not in st.session_state:
+    st.session_state.cr_step = "requester"
+if "cr_data" not in st.session_state:
+    st.session_state.cr_data = {}
+if "cr_member_row" not in st.session_state:
+    st.session_state.cr_member_row = None
+if "cr_matches" not in st.session_state:
+    st.session_state.cr_matches = []
+
+_id_col1, _id_col2, _id_col3 = st.columns(3)
+st.session_state.user_name = _id_col1.text_input(
     "Your name",
     value=st.session_state.user_name,
-    placeholder="Enter your name before chatting",
+    placeholder="Name",
+)
+st.session_state.user_email = _id_col2.text_input(
+    "Email",
+    value=st.session_state.user_email,
+    placeholder="Email",
+)
+st.session_state.user_cell = _id_col3.text_input(
+    "Cell group",
+    value=st.session_state.user_cell,
+    placeholder="Cell group",
 )
 
 # ── data load + refresh ────────────────────────────────────────────────────────
@@ -282,30 +645,43 @@ for msg in st.session_state.messages:
                 unsafe_allow_html=True,
             )
 
-# Suggestion bubbles — only shown when chat is empty
-if not st.session_state.messages:
+# Wizard or suggestion bubbles
+if st.session_state.cr_active:
+    _render_cr_wizard()
+elif not st.session_state.messages:
     st.markdown("<p style='color:#555;font-size:0.85rem;margin-bottom:0.4rem;'>Try asking:</p>", unsafe_allow_html=True)
-    cols = st.columns(2)
+    _scols = st.columns(2)
     for i, suggestion in enumerate(_SUGGESTIONS):
-        if cols[i % 2].button(suggestion, key=f"suggestion_{i}", use_container_width=True):
+        if _scols[i % 2].button(suggestion, key=f"suggestion_{i}", use_container_width=True):
             st.session_state["pending_prompt"] = suggestion
             st.rerun()
 
-# ── context ring + new chat ────────────────────────────────────────────────────
+# ── context ring + new chat + info change ─────────────────────────────────────
 
-_col_new, _col_ring = st.columns([1, 3])
+_col_new, _col_cr, _col_ring = st.columns([1, 1.4, 2.6])
 with _col_new:
     if st.button("+ New Chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.pop("pending_prompt", None)
+        _cr_reset()
         st.rerun()
+with _col_cr:
+    if st.session_state.cr_active:
+        if st.button("✗ Cancel Request", use_container_width=True):
+            _cr_reset()
+            st.rerun()
+    else:
+        if st.button("📋 Info Change", use_container_width=True):
+            st.session_state.cr_active = True
+            st.session_state.cr_step = "requester"
+            st.rerun()
 with _col_ring:
     _ctx_used = min(len(st.session_state.messages), MAX_CONTEXT_MESSAGES)
     st.markdown(_context_ring_html(_ctx_used, MAX_CONTEXT_MESSAGES), unsafe_allow_html=True)
 
 # Consume any suggestion-button prompt queued from the previous rerun
 _pending = st.session_state.pop("pending_prompt", None)
-_typed = st.chat_input("Ask a question...")
+_typed = None if st.session_state.cr_active else st.chat_input("Ask a question...")
 prompt = _pending or _typed
 
 if prompt:
@@ -351,4 +727,6 @@ if prompt:
                 prompt,
                 stored,
                 result.tokens,
+                email=st.session_state.user_email or "",
+                cell=st.session_state.user_cell or "",
             )
