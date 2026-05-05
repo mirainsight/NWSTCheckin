@@ -514,22 +514,6 @@ st.markdown(
         color: #f0f0f0;
         border: 1px solid #333;
     }
-    /* Suggestion bubble buttons */
-    div[data-testid="stHorizontalBlock"] button[kind="secondary"] {
-        background-color: #1a1a1a !important;
-        color: #d0d0d0 !important;
-        border: 1px solid #333 !important;
-        border-radius: 20px !important;
-        font-size: 0.82rem !important;
-        padding: 0.3rem 0.8rem !important;
-        white-space: normal !important;
-        text-align: left !important;
-        line-height: 1.3 !important;
-    }
-    div[data-testid="stHorizontalBlock"] button[kind="secondary"]:hover {
-        border-color: #666 !important;
-        color: #fff !important;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -617,17 +601,6 @@ st.divider()
 
 # ── chat ───────────────────────────────────────────────────────────────────────
 
-_SUGGESTIONS = [
-    "How is overall cell health?",
-    "Which cells need the most attention?",
-    "Who checked in today?",
-    "Any newcomers this week?",
-    "Who are the CG Leaders?",
-    "Which members haven't attended recently?",
-    "Show ministry distribution",
-    "Summarise this week's check-in",
-]
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -645,16 +618,13 @@ for msg in st.session_state.messages:
                 unsafe_allow_html=True,
             )
 
-# Wizard or suggestion bubbles
 if st.session_state.cr_active:
     _render_cr_wizard()
 elif not st.session_state.messages:
-    st.markdown("<p style='color:#555;font-size:0.85rem;margin-bottom:0.4rem;'>Try asking:</p>", unsafe_allow_html=True)
-    _scols = st.columns(2)
-    for i, suggestion in enumerate(_SUGGESTIONS):
-        if _scols[i % 2].button(suggestion, key=f"suggestion_{i}", use_container_width=True):
-            st.session_state["pending_prompt"] = suggestion
-            st.rerun()
+    if st.button("📋 Change Member Info", key="suggestion_cr"):
+        st.session_state.cr_active = True
+        st.session_state.cr_step = "requester"
+        st.rerun()
 
 # ── context ring + new chat + info change ─────────────────────────────────────
 
@@ -679,10 +649,8 @@ with _col_ring:
     _ctx_used = min(len(st.session_state.messages), MAX_CONTEXT_MESSAGES)
     st.markdown(_context_ring_html(_ctx_used, MAX_CONTEXT_MESSAGES), unsafe_allow_html=True)
 
-# Consume any suggestion-button prompt queued from the previous rerun
-_pending = st.session_state.pop("pending_prompt", None)
 _typed = None if st.session_state.cr_active else st.chat_input("Ask a question...")
-prompt = _pending or _typed
+prompt = _typed
 
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
