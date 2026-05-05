@@ -36,12 +36,15 @@ def get_redis_client():
         return None
 
 
-def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: int) -> None:
+def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: int,
+                    email: str = "", cell: str = "") -> None:
     now = datetime.now(MYT)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S")
     payload = json.dumps({
+        "email": email,
         "user_name": user_name,
+        "cell": cell,
         "question": question,
         "answer": answer,
         "timestamp": time_str,
@@ -85,3 +88,59 @@ def get_unsynced_logs(r, today_myt_str: str) -> list[dict]:
 
 def mark_synced(r, date_str: str) -> None:
     r.set(CHATBOT_LAST_SYNCED_KEY, date_str)
+
+
+# ── Change requests ────────────────────────────────────────────────────────────
+
+CHANGE_REQ_KEY_PREFIX = "change_requests:"
+CHANGE_REQ_LAST_SYNCED_KEY = "change_requests:last_synced_date"
+CHANGE_REQ_TTL = 30 * 86400  # 30 days
+
+
+def submit_change_request(r, data: dict) -> None:
+    now = datetime.now(MYT)
+    date_str = now.strftime("%Y-%m-%d")
+    payload = json.dumps({
+        **data,
+        "date": date_str,
+        "timestamp": now.strftime("%H:%M:%S"),
+        "status": "Pending",
+    })
+    key = f"{CHANGE_REQ_KEY_PREFIX}{date_str}"
+    r.rpush(key, payload)
+    r.expire(key, CHANGE_REQ_TTL)
+
+
+def get_unsynced_change_requests(r, today_myt_str: str) -> list[dict]:
+    raw_last = r.get(CHANGE_REQ_LAST_SYNCED_KEY)
+    if isinstance(raw_last, bytes):
+        raw_last = raw_last.decode()
+    raw_last = (raw_last or "").strip()
+
+    today = date.fromisoformat(today_myt_str)
+    yesterday = today - timedelta(days=1)
+
+    if raw_last:
+        start = date.fromisoformat(raw_last) + timedelta(days=1)
+    else:
+        start = today - timedelta(days=30)
+
+    if start > yesterday:
+        return []
+
+    items = []
+    current = start
+    while current <= yesterday:
+        date_str = current.isoformat()
+        raw_items = r.lrange(f"{CHANGE_REQ_KEY_PREFIX}{date_str}", 0, -1) or []
+        for raw in raw_items:
+            s = raw.decode() if isinstance(raw, bytes) else raw
+            entry = json.loads(s)
+            entry["date"] = date_str
+            items.append(entry)
+        current += timedelta(days=1)
+    return items
+
+
+def mark_change_requests_synced(r, date_str: str) -> None:
+    r.set(CHANGE_REQ_LAST_SYNCED_KEY, date_str)
