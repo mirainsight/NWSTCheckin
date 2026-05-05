@@ -36,6 +36,31 @@ def get_redis_client():
         return None
 
 
+def get_chatbot_redis_client():
+    """Returns a Redis client for the dedicated chatbot logs database (UPSTASH_CHATBOT_REST_URL/TOKEN)."""
+    try:
+        from upstash_redis import Redis
+    except ImportError:
+        return None
+    url = os.getenv("UPSTASH_CHATBOT_REST_URL", "").strip()
+    token = os.getenv("UPSTASH_CHATBOT_REST_TOKEN", "").strip()
+    if not url or not token:
+        try:
+            import streamlit as st
+            if not url:
+                url = (st.secrets.get("UPSTASH_CHATBOT_REST_URL") or "").strip()
+            if not token:
+                token = (st.secrets.get("UPSTASH_CHATBOT_REST_TOKEN") or "").strip()
+        except Exception:
+            pass
+    if not url or not token:
+        return None
+    try:
+        return Redis(url=url, token=token)
+    except Exception:
+        return None
+
+
 def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: int,
                     email: str = "", cell: str = "") -> None:
     now = datetime.now(MYT)
