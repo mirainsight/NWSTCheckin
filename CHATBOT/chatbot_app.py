@@ -25,7 +25,7 @@ import json
 import re
 
 import streamlit as st
-from chatbot_redis import get_redis_client, log_qa_to_redis, submit_change_request
+from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
 from chatbot_data import build_data_context
 
 MYT = timezone(timedelta(hours=8))
@@ -466,7 +466,7 @@ def _render_cr_wizard() -> None:
             })
             st.rerun()
         if _submit:
-            rc = get_redis_client()
+            rc = get_chatbot_redis_client()
             if rc:
                 submit_change_request(rc, {
                     "requester": data.get("requester", ""),
@@ -682,7 +682,7 @@ if prompt:
     st.session_state.messages.append({"role": "assistant", "content": stored, "tokens": result.tokens})
 
     if result.tokens > 0:
-        rc = get_redis_client()
+        rc = get_chatbot_redis_client()
         if rc:
             log_qa_to_redis(
                 rc,
