@@ -312,11 +312,15 @@ def _render_cr_wizard() -> None:
 
     # Step 1 — Requester identity
     if step == "requester":
+        _known_name = st.session_state.get("user_name", "")
+        _known_role = st.session_state.get("user_role", "")
+        _greeting = f"Hi {_known_name}!" if _known_name else "Hi!"
+        _prefill = f"{_known_name}{', ' + _known_role if _known_role else ''}" if _known_name else ""
         with st.chat_message("assistant"):
-            st.markdown("Hi! Who is making this request? Please enter your name and role.")
+            st.markdown(f"{_greeting} Who is making this request? Please confirm your name and role.")
         _go = False
         with st.form("cr_requester"):
-            val = st.text_input("Your name and role", placeholder="e.g. Pastor John, Zone Leader Sarah")
+            val = st.text_input("Your name and role", value=_prefill, placeholder="e.g. Pastor John, Zone Leader Sarah")
             c1, c2 = st.columns([3, 1])
             _go = c1.form_submit_button("Next →", use_container_width=True)
             _cancel = c2.form_submit_button("Cancel", use_container_width=True)
