@@ -16,7 +16,13 @@ for _p in [str(_CHATBOT_DIR), str(_REPO_ROOT)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from chatbot_redis import get_redis_client, get_unsynced_logs, mark_synced
+from chatbot_redis import (
+    get_redis_client,
+    get_unsynced_logs,
+    mark_synced,
+    get_unsynced_change_requests,
+    mark_change_requests_synced,
+)
 
 
 def _get_sheet_id() -> str:
@@ -25,6 +31,18 @@ def _get_sheet_id() -> str:
         try:
             import streamlit as st
             sid = (st.secrets.get("ATTENDANCE_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    return sid
+
+
+def _get_bot_sheet_id() -> str:
+    """Sheet ID for the [NWST DATABASE] Chatbot workbook (BOT_SHEET_ID secret)."""
+    sid = os.getenv("BOT_SHEET_ID", "").strip()
+    if not sid:
+        try:
+            import streamlit as st
+            sid = (st.secrets.get("BOT_SHEET_ID") or "").strip()
         except Exception:
             pass
     return sid
@@ -88,14 +106,14 @@ def _ensure_chatbot_logs_worksheet(spreadsheet):
     except gspread.exceptions.WorksheetNotFound:
         ws = spreadsheet.add_worksheet("Chatbot Logs", rows=5000, cols=10)
         ws.append_row(
-            ["Date", "Time (MYT)", "User Name", "Question", "Answer", "Tokens Used"],
+            ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used"],
             value_input_option="USER_ENTERED",
         )
         return ws
 
     if not ws.row_values(1):
         ws.append_row(
-            ["Date", "Time (MYT)", "User Name", "Question", "Answer", "Tokens Used"],
+            ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used"],
             value_input_option="USER_ENTERED",
         )
     return ws
@@ -120,7 +138,7 @@ def sync_chatbot_logs() -> None:
     if not gc:
         return
 
-    sheet_id = _get_sheet_id()
+    sheet_id = _get_bot_sheet_id()
     if not sheet_id:
         return
 
@@ -131,7 +149,9 @@ def sync_chatbot_logs() -> None:
             [
                 entry.get("date", ""),
                 entry.get("timestamp", ""),
+                entry.get("email", ""),
                 entry.get("user_name", ""),
+                entry.get("cell", ""),
                 entry.get("question", ""),
                 entry.get("answer", ""),
                 entry.get("tokens_used", ""),
@@ -140,5 +160,75 @@ def sync_chatbot_logs() -> None:
         ]
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         mark_synced(r, yesterday_str)
+    except Exception:
+        pass  # retry on next sync
+
+
+def _ensure_change_requests_worksheet(spreadsheet):
+    import gspread
+
+    try:
+        ws = spreadsheet.worksheet("Change Requests")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet("Change Requests", rows=5000, cols=10)
+        ws.append_row(
+            ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
+             "Field", "Current Value", "New Value", "Reason", "Status"],
+            value_input_option="USER_ENTERED",
+        )
+        return ws
+
+    if not ws.row_values(1):
+        ws.append_row(
+            ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
+             "Field", "Current Value", "New Value", "Reason", "Status"],
+            value_input_option="USER_ENTERED",
+        )
+    return ws
+
+
+def sync_change_requests() -> None:
+    r = get_redis_client()
+    if not r:
+        return
+
+    now = datetime.now(MYT)
+    today_str = now.strftime("%Y-%m-%d")
+    yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    requests = get_unsynced_change_requests(r, today_str)
+
+    if not requests:
+        mark_change_requests_synced(r, yesterday_str)
+        return
+
+    gc = _gsheet_client()
+    if not gc:
+        return
+
+    sheet_id = _get_bot_sheet_id()
+    if not sheet_id:
+        return
+
+    try:
+        spreadsheet = gc.open_by_key(sheet_id)
+        ws = _ensure_change_requests_worksheet(spreadsheet)
+        rows = [
+            [
+                entry.get("date", ""),
+                entry.get("timestamp", ""),
+                entry.get("requester", ""),
+                entry.get("member_name", ""),
+                entry.get("member_cell", ""),
+                entry.get("field", ""),
+                entry.get("current_value", ""),
+                entry.get("new_value", ""),
+                entry.get("reason", ""),
+                entry.get("status", "Pending"),
+            ]
+            for entry in requests
+        ]
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        mark_change_requests_synced(r, yesterday_str)
     except Exception:
         pass  # retry on next sync
