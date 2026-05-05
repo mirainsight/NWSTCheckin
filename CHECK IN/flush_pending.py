@@ -38,6 +38,22 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+_CHATBOT_DIR = _REPO_ROOT / "CHATBOT"
+if str(_CHATBOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_CHATBOT_DIR))
+
+try:
+    from chatbot_redis import (
+        get_chatbot_redis_client,
+        get_unsynced_logs,
+        get_unsynced_change_requests,
+        mark_synced,
+        mark_change_requests_synced,
+    )
+    _chatbot_redis_available = True
+except ImportError:
+    _chatbot_redis_available = False
 from nwst_shared.paths import resolved_nwst_accent_config_path
 from nwst_shared.nwst_daily_palette import (
     generate_colors_for_date as _generate_colors_for_date,
@@ -965,6 +981,104 @@ def _refresh_cell_health_cache(
         return False
 
 
+def _resolve_chatbot_sheet_id(log_lines: list[str] | None = None) -> str:
+    sheet_id = os.getenv("CHATBOT_SHEET_ID", "").strip()
+    if not sheet_id:
+        try:
+            import streamlit as st
+            sheet_id = (st.secrets.get("CHATBOT_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    return sheet_id
+
+
+def _ensure_chatbot_log_worksheet(spreadsheet):
+    headers = ["Date", "Time", "User Name", "Email", "Cell", "Question", "Answer", "Tokens"]
+    try:
+        ws = spreadsheet.worksheet("Chatbot Logs")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title="Chatbot Logs", rows=5000, cols=len(headers))
+        ws.append_row(headers)
+        return ws
+    if not ws.row_values(1):
+        ws.append_row(headers)
+    return ws
+
+
+def _ensure_change_req_worksheet(spreadsheet):
+    headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Status"]
+    try:
+        ws = spreadsheet.worksheet("Change Requests")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title="Change Requests", rows=1000, cols=len(headers))
+        ws.append_row(headers)
+        return ws
+    if not ws.row_values(1):
+        ws.append_row(headers)
+    return ws
+
+
+def _sync_chatbot_to_sheets(
+    gsheet_client,
+    chatbot_sheet_id: str,
+    log_lines: list[str] | None,
+) -> tuple[bool, str]:
+    if not _chatbot_redis_available:
+        return False, "chatbot_redis module not found — check CHATBOT folder path."
+
+    rc = get_chatbot_redis_client()
+    if not rc:
+        return False, "Chatbot Upstash not configured (UPSTASH_CHATBOT_REST_URL / UPSTASH_CHATBOT_REST_TOKEN missing)."
+
+    today_str = get_today_myt_date()
+
+    try:
+        spreadsheet = gsheet_client.open_by_key(chatbot_sheet_id)
+    except Exception as e:
+        return False, f"Could not open chatbot sheet: {e}"
+
+    total = 0
+
+    logs = get_unsynced_logs(rc, today_str)
+    if logs:
+        ws = _ensure_chatbot_log_worksheet(spreadsheet)
+        rows = [[
+            e.get("date", ""), e.get("timestamp", ""),
+            e.get("user_name", ""), e.get("email", ""), e.get("cell", ""),
+            e.get("question", ""), e.get("answer", ""), e.get("tokens_used", 0),
+        ] for e in logs]
+        ws.append_rows(rows)
+        from datetime import date as _date, timedelta as _td
+        yesterday = (_date.fromisoformat(today_str) - _td(days=1)).isoformat()
+        mark_synced(rc, yesterday)
+        total += len(logs)
+        _emit(f"  Chat logs: +{len(logs)} rows", log_lines, with_ts=False)
+    else:
+        _emit("  Chat logs: nothing to sync", log_lines, with_ts=False)
+
+    reqs = get_unsynced_change_requests(rc, today_str)
+    if reqs:
+        ws2 = _ensure_change_req_worksheet(spreadsheet)
+        rows2 = [[
+            e.get("date", ""), e.get("timestamp", ""),
+            e.get("requester", ""), e.get("member_name", ""), e.get("member_cell", ""),
+            e.get("field", ""), e.get("current_value", ""), e.get("new_value", ""),
+            e.get("reason", ""), e.get("status", "Pending"),
+        ] for e in reqs]
+        ws2.append_rows(rows2)
+        from datetime import date as _date, timedelta as _td
+        yesterday = (_date.fromisoformat(today_str) - _td(days=1)).isoformat()
+        mark_change_requests_synced(rc, yesterday)
+        total += len(reqs)
+        _emit(f"  Change requests: +{len(reqs)} rows", log_lines, with_ts=False)
+    else:
+        _emit("  Change requests: nothing to sync", log_lines, with_ts=False)
+
+    if total == 0:
+        return True, "nothing to sync"
+    return True, f"+{total} rows synced to sheet"
+
+
 def _progress_set(bar, value: float, text: str) -> None:
     """Streamlit progress bar; ``text=`` is supported in newer Streamlit versions."""
     if bar is None:
@@ -1032,8 +1146,19 @@ def run_full_sheet_resync(
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing cell health...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.90, "Refreshing cell health data (NWST Health)…")
+    _progress_set(progress_bar, 0.88, "Refreshing cell health data (NWST Health)…")
     _refresh_cell_health_cache(redis_client, client, log_lines)
+
+    _emit("", log_lines, with_ts=False)
+    _emit("Syncing chatbot logs...", log_lines, with_ts=False)
+    _progress_set(progress_bar, 0.94, "Syncing chatbot logs and change requests…")
+    chatbot_sheet_id = _resolve_chatbot_sheet_id(log_lines)
+    if chatbot_sheet_id:
+        _ok_cb, _msg_cb = _sync_chatbot_to_sheets(client, chatbot_sheet_id, log_lines)
+        if not _ok_cb:
+            _emit(f"  Chatbot sync skipped: {_msg_cb}", log_lines, with_ts=False)
+    else:
+        _emit("  Chatbot sync skipped: CHATBOT_SHEET_ID not set", log_lines, with_ts=False)
 
     _save_last_sync_timestamp()
     _progress_set(progress_bar, 1.0, "All done.")
