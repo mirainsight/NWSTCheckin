@@ -560,6 +560,10 @@ def _render_cr_wizard() -> None:
         if ci != -1:
             cell_val = str(member.get(mcols[ci], "") or "").strip()
 
+        pending = data.get("pending_changes", [])
+        queued_fields = {ch["field"] for ch in pending}
+        available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
+
         label = _cr_member_label(name_val, cell_val)
         info_lines = [f"**Member found: {label}**", ""]
         for field in _CR_FIELDS + _CR_INFO_ONLY_FIELDS:
@@ -568,41 +572,68 @@ def _render_cr_wizard() -> None:
                 v = str(member.get(mcols[fi], "") or "").strip()
                 info_lines.append(f"**{field}:** {v if v else '—'}")
 
+        if pending:
+            info_lines.append("")
+            info_lines.append(f"**{len(pending)} change(s) queued:**")
+            for ch in pending:
+                info_lines.append(
+                    f"- **{ch['field']}**: {ch.get('current_value','') or '—'} → {ch['new_value']}"
+                )
+
         with st.chat_message("assistant"):
             st.markdown("\n".join(info_lines))
-            st.markdown("\nWhich field would you like to request a change for?")
+            if available_fields:
+                st.markdown("\nWhich field would you like to request a change for?")
+            else:
+                st.markdown("\nAll fields have been queued. Ready to review.")
 
-        field_options = []
-        for field in _CR_FIELDS:
-            fi = _cr_field_col_idx(mcols, field)
-            v = ""
-            if fi != -1:
-                v = str(member.get(mcols[fi], "") or "").strip()
-            field_options.append(f"{field}  (currently: {v if v else 'empty'})")
+        if available_fields:
+            field_options = []
+            for field in available_fields:
+                fi = _cr_field_col_idx(mcols, field)
+                v = ""
+                if fi != -1:
+                    v = str(member.get(mcols[fi], "") or "").strip()
+                field_options.append(f"{field}  (currently: {v if v else 'empty'})")
 
-        _go = False
-        with st.form("cr_show_info"):
-            choice = st.selectbox("Field to change", field_options)
-            c1, c2 = st.columns([3, 1])
-            _go = c1.form_submit_button("Next →", use_container_width=True)
-            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
-        if _cancel:
-            _cr_reset()
-            st.rerun()
-        if _go:
-            field_name = choice.split("  (currently:")[0]
-            fi = _cr_field_col_idx(mcols, field_name)
-            current_val = ""
-            if fi != -1:
-                current_val = str(member.get(mcols[fi], "") or "").strip()
-            st.session_state.cr_data.update({
-                "field": field_name,
-                "current_value": current_val,
-                "member_name": name_val,
-                "member_cell": cell_val,
-            })
-            st.session_state.cr_step = "new_value"
-            st.rerun()
+            _go = False
+            with st.form("cr_show_info"):
+                choice = st.selectbox("Field to change", field_options)
+                c1, c2 = st.columns([3, 1])
+                _go = c1.form_submit_button("Next →", use_container_width=True)
+                _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+            if _cancel:
+                _cr_reset()
+                st.rerun()
+            if _go:
+                field_name = choice.split("  (currently:")[0]
+                fi = _cr_field_col_idx(mcols, field_name)
+                current_val = ""
+                if fi != -1:
+                    current_val = str(member.get(mcols[fi], "") or "").strip()
+                st.session_state.cr_data.update({
+                    "field": field_name,
+                    "current_value": current_val,
+                    "member_name": name_val,
+                    "member_cell": cell_val,
+                })
+                st.session_state.cr_step = "new_value"
+                st.rerun()
+        else:
+            with st.form("cr_show_info_done"):
+                c1, c2 = st.columns([3, 1])
+                _review = c1.form_submit_button("Review & Submit →", use_container_width=True)
+                _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+            if _cancel:
+                _cr_reset()
+                st.rerun()
+            if _review:
+                st.session_state.cr_data.update({
+                    "member_name": name_val,
+                    "member_cell": cell_val,
+                })
+                st.session_state.cr_step = "reason"
+                st.rerun()
 
     # Step 4 — New value
     elif step == "new_value":
@@ -638,13 +669,14 @@ def _render_cr_wizard() -> None:
                 hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
                 if hint:
                     st.caption(hint)
-            c1, c2 = st.columns([3, 1])
-            _go = c1.form_submit_button("Next →", use_container_width=True)
-            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
+            c1, c2, c3 = st.columns([2, 2, 1])
+            _add_more = c1.form_submit_button("+ Add another field", use_container_width=True)
+            _review   = c2.form_submit_button("Review & Submit →",   use_container_width=True)
+            _cancel   = c3.form_submit_button("Cancel",              use_container_width=True)
         if _cancel:
             _cr_reset()
             st.rerun()
-        if _go:
+        if _add_more or _review:
             str_val = val if not isinstance(val, str) else val.strip()
             if str_val:
                 err = _cr_validate_field(field, str_val)
@@ -654,8 +686,15 @@ def _render_cr_wizard() -> None:
                 else:
                     if field == "Birthday":
                         str_val = _cr_parse_birthday(str_val) or str_val
-                    st.session_state.cr_data["new_value"] = str_val
-                    st.session_state.cr_step = "reason"
+                    st.session_state.cr_data.setdefault("pending_changes", []).append({
+                        "field": field,
+                        "current_value": current,
+                        "new_value": str_val,
+                    })
+                    if _add_more:
+                        st.session_state.cr_step = "show_info"
+                    else:
+                        st.session_state.cr_step = "reason"
                     st.rerun()
 
     # Step 5 — Reason (optional)
@@ -679,15 +718,18 @@ def _render_cr_wizard() -> None:
     # Step 6 — Confirm and submit
     elif step == "confirm":
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
+        pending = data.get("pending_changes", [])
+        rows_md = "\n".join(
+            f"| **{ch['field']}** | {ch.get('current_value', '') or '—'} | {ch['new_value']} |"
+            for ch in pending
+        )
         summary = (
-            "Please confirm this change request:\n\n"
-            "| | |\n|---|---|\n"
-            f"| **Requested by** | {data.get('requester', '')} |\n"
-            f"| **Member** | {label} |\n"
-            f"| **Field** | {data.get('field', '')} |\n"
-            f"| **Current value** | {data.get('current_value', '') or '—'} |\n"
-            f"| **New value** | {data.get('new_value', '')} |\n"
-            f"| **Reason** | {data.get('reason', '') or '—'} |"
+            "Please confirm these change requests:\n\n"
+            f"**Requested by:** {data.get('requester', '')}  \n"
+            f"**Member:** {label}  \n\n"
+            "| Field | Current | New |\n|---|---|---|\n"
+            + rows_md
+            + f"\n\n**Reason:** {data.get('reason', '') or '—'}"
         )
         with st.chat_message("assistant"):
             st.markdown(summary)
@@ -695,7 +737,7 @@ def _render_cr_wizard() -> None:
         _cancel = False
         with st.form("cr_confirm"):
             c1, c2 = st.columns([1, 1])
-            _submit = c1.form_submit_button("✅ Submit", use_container_width=True)
+            _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
             _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
         if _cancel:
             _cr_reset()
@@ -706,19 +748,21 @@ def _render_cr_wizard() -> None:
         if _submit:
             rc = get_chatbot_redis_client()
             if rc:
-                submit_change_request(rc, {
-                    "requester": data.get("requester", ""),
-                    "member_name": data.get("member_name", ""),
-                    "member_cell": data.get("member_cell", ""),
-                    "field": data.get("field", ""),
-                    "current_value": data.get("current_value", ""),
-                    "new_value": data.get("new_value", ""),
-                    "reason": data.get("reason", ""),
-                })
+                for ch in pending:
+                    submit_change_request(rc, {
+                        "requester":     data.get("requester", ""),
+                        "member_name":   data.get("member_name", ""),
+                        "member_cell":   data.get("member_cell", ""),
+                        "field":         ch["field"],
+                        "current_value": ch["current_value"],
+                        "new_value":     ch["new_value"],
+                        "reason":        data.get("reason", ""),
+                    })
+            n = len(pending)
             _cr_reset()
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "✅ Change request submitted! It will be reviewed and updated shortly.",
+                "content": f"✅ {n} change request(s) submitted! They will be reviewed and updated shortly.",
                 "tokens": 0,
             })
             st.rerun()
