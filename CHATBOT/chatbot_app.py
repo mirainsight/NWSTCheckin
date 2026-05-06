@@ -135,6 +135,17 @@ def _token_stat_html(this_t: int, session_tokens: list) -> str:
     )
 
 
+def _status_style(v: str) -> str:
+    """Inline CSS matching NWST HEALTH status colours."""
+    if v.startswith("Regular:"):   return "color:#2ecc71;font-weight:700"
+    if v.startswith("Irregular:"): return "color:#e67e22;font-weight:700"
+    if v.startswith("New"):        return "color:#3498db;font-weight:700"
+    if v.startswith("Follow Up:"): return "color:#f39c12;font-weight:700"
+    if v.startswith("Red:"):       return "color:#e74c3c;font-weight:700"
+    if v.startswith("Graduated:"): return "color:#9b59b6;font-weight:700"
+    return "color:#ffffff;font-weight:700"
+
+
 def _member_info_html(member: dict, mcols: list, label: str, pending: list, palette: dict | None = None) -> str:
     """Render the member profile as a grouped HTML card using the daily colour palette."""
     if palette is None:
@@ -191,7 +202,7 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
             v = ""
             if fi != -1:
                 v = str(member.get(mcols[fi], "") or "").strip()
-            val_style = "color:#ffffff" if v else "color:#333333"
+            val_style = (_status_style(v) if field == "Status" and v else ("color:#ffffff" if v else "color:#333333"))
             val_text = v if v else "—"
             rows += (
                 f'<tr style="border-top:1px solid #141414;">'
