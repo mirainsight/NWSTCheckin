@@ -383,6 +383,8 @@ _CR_FIELD_ALIASES: dict[str, str] = {
     "vs": "VS Role", "volunteer": "VS Role",
     "note": "Notes", "notes": "Notes", "remark": "Notes", "remarks": "Notes",
     "sex": "Gender",
+    "archive": "Cell", "transfer": "Cell", "move": "Cell",
+    "duplicate": "Status",
 }
 
 
@@ -589,9 +591,47 @@ def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, c
         "member_cell": cell_val,
     })
     st.session_state.pop("cr_field_group", None)
-    st.session_state["cr_field_search"] = ""
+    st.session_state["cr_field_candidates"] = []
+    st.session_state["cr_field_query"] = ""
     st.session_state.cr_step = "new_value"
     st.rerun()
+
+
+def _cr_infer_field_llm(query: str, available_fields: list[str], chat_history: list[dict]) -> list[str]:
+    key = _get_openai_key()
+    if not key:
+        return []
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        fields_str = ", ".join(available_fields)
+        history_lines = []
+        for msg in chat_history:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            history_lines.append(f"{role}: {str(msg.get('content', ''))[:300]}")
+        history_block = ("\n\nRecent conversation:\n" + "\n".join(history_lines)) if history_lines else ""
+        content = (
+            f"Fields: {fields_str}{history_block}\n\n"
+            f'User said: "{query}"\n\n'
+            "Which field(s) from the list is the user most likely referring to? "
+            "Reply with field name(s) from the list exactly, comma-separated, max 3. "
+            "If none match, reply 'none'."
+        )
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": content}],
+            max_tokens=40,
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.lower() in ("none", "unclear", ""):
+            return []
+        return [
+            f.strip().strip("\"'") for f in raw.split(",")
+            if f.strip().strip("\"'") in available_fields
+        ]
+    except Exception:
+        return []
 
 
 def _cr_member_label(name: str, cell: str) -> str:
@@ -627,6 +667,8 @@ def _cr_reset() -> None:
     st.session_state.pop("cr_search_error", None)
     st.session_state["cr_field_group"] = None
     st.session_state["cr_field_search"] = ""
+    st.session_state["cr_field_candidates"] = []
+    st.session_state["cr_field_query"] = ""
     st.session_state.pop("cr_val_error", None)
 
 
@@ -763,40 +805,63 @@ def _render_cr_wizard() -> None:
             avail_set = set(available_fields)
             _CHIP_GROUPS = [
                 ("Identity",   [f for f in ["Name", "Cell"] if f in avail_set]),
-                ("Health",     [f for f in ["Prev Cell"] if f in avail_set]),
+                ("Health",     [f for f in ["Status", "Prev Cell"] if f in avail_set]),
                 ("Leadership", [f for f in ["Role"] if f in avail_set]),
                 ("Ministry",   [f for f in ["Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"] if f in avail_set]),
                 ("Personal",   [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in avail_set]),
                 ("Contact",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail_set]),
             ]
             active_groups = [(g, fs) for g, fs in _CHIP_GROUPS if fs]
+            _ministry_fields = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department", "Role"}
 
-            search_val = st.text_input(
-                "field_search", placeholder="Type a field… e.g. phone, birthday, email",
-                label_visibility="collapsed", key="cr_field_search",
-            )
-            selected_group = st.session_state.get("cr_field_group")
+            # ── Common shortcuts ──────────────────────────────────────────
+            _shortcuts = []
+            if "Cell" in avail_set:
+                _shortcuts.append(("Change Cell", "Cell"))
+            if "Status" in avail_set:
+                _shortcuts.append(("Change Status", "Status"))
+            if "Cell" in avail_set:
+                _shortcuts.append(("Archive", "Cell"))
+            _has_ministry = any(f in avail_set for f in _ministry_fields)
+            if _has_ministry:
+                _shortcuts.append(("Add Role →", None))  # None = open Ministry group
 
-            if search_val.strip():
-                hits = _cr_fuzzy_match_fields(search_val.strip(), available_fields)
-                if hits:
-                    hit_cols = st.columns(min(len(hits), 3))
-                    for i, f in enumerate(hits):
-                        if hit_cols[i % 3].button(f, key=f"cr_hit_{f}", use_container_width=True):
-                            _cr_advance_to_field(f, member, mcols, name_val, cell_val)
-                else:
-                    st.caption("No match — try a group below or check your spelling.")
-                    g_cols = st.columns(len(active_groups))
-                    for i, (g_name, _) in enumerate(active_groups):
-                        if g_cols[i].button(g_name, key=f"cr_grp_{g_name}", use_container_width=True):
-                            st.session_state.cr_field_group = g_name
-                            st.session_state["cr_field_search"] = ""
+            if _shortcuts:
+                sc_cols = st.columns(len(_shortcuts))
+                for i, (sc_label, sc_field) in enumerate(_shortcuts):
+                    if sc_cols[i].button(sc_label, key=f"cr_sc_{i}", use_container_width=True):
+                        if sc_field is not None:
+                            _cr_advance_to_field(sc_field, member, mcols, name_val, cell_val)
+                        else:
+                            st.session_state.cr_field_group = "Ministry"
+                            st.session_state["cr_field_candidates"] = []
                             st.rerun()
-            elif selected_group is None:
+
+            st.divider()
+
+            # ── LLM-suggested candidates ──────────────────────────────────
+            _candidates = st.session_state.get("cr_field_candidates", [])
+            _cq = st.session_state.get("cr_field_query", "")
+            if _candidates:
+                st.caption(f'Suggested for "{_cq}":')
+                cand_cols = st.columns(min(len(_candidates), 3))
+                for i, f in enumerate(_candidates):
+                    fi = _cr_field_col_idx(mcols, f)
+                    cv = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
+                    if cand_cols[i % 3].button(
+                        f"{f}  ({cv if cv else 'empty'})", key=f"cr_cand_{f}", use_container_width=True
+                    ):
+                        _cr_advance_to_field(f, member, mcols, name_val, cell_val)
+                st.write("")
+
+            # ── Group / field chips ───────────────────────────────────────
+            selected_group = st.session_state.get("cr_field_group")
+            if selected_group is None:
                 g_cols = st.columns(len(active_groups))
                 for i, (g_name, _) in enumerate(active_groups):
                     if g_cols[i].button(g_name, key=f"cr_grp_{g_name}", use_container_width=True):
                         st.session_state.cr_field_group = g_name
+                        st.session_state["cr_field_candidates"] = []
                         st.rerun()
             else:
                 group_fields = next((fs for g, fs in active_groups if g == selected_group), [])
@@ -810,6 +875,7 @@ def _render_cr_wizard() -> None:
                         _cr_advance_to_field(f, member, mcols, name_val, cell_val)
                 if st.button("← Back", key="cr_back_grp"):
                     st.session_state.cr_field_group = None
+                    st.session_state["cr_field_candidates"] = []
                     st.rerun()
 
             if st.button("Cancel", key="cr_cancel_show_info"):
@@ -1023,6 +1089,10 @@ if "cr_matches" not in st.session_state:
     st.session_state.cr_matches = []
 if "cr_field_group" not in st.session_state:
     st.session_state.cr_field_group = None
+if "cr_field_candidates" not in st.session_state:
+    st.session_state.cr_field_candidates = []
+if "cr_field_query" not in st.session_state:
+    st.session_state.cr_field_query = ""
 
 # Login gate — show sign-in form and halt if not authenticated
 if not st.session_state.authenticated:
@@ -1138,8 +1208,26 @@ with _col_ring:
     _ctx_used = min(len(st.session_state.messages), MAX_CONTEXT_MESSAGES)
     st.markdown(_context_ring_html(_ctx_used, MAX_CONTEXT_MESSAGES), unsafe_allow_html=True)
 
-_typed = None if st.session_state.cr_active else st.chat_input("Ask a question...")
+if st.session_state.cr_active and st.session_state.cr_step == "show_info":
+    _typed = st.chat_input("Describe which field to change…")
+elif st.session_state.cr_active:
+    _typed = None
+else:
+    _typed = st.chat_input("Ask a question...")
 prompt = _typed
+
+# Field inference: intercept chat input during show_info step
+if _typed and st.session_state.get("cr_active") and st.session_state.get("cr_step") == "show_info":
+    _m = st.session_state.get("cr_member_row") or {}
+    _queued = {ch["field"] for ch in (st.session_state.cr_data or {}).get("pending_changes", [])}
+    _avail = [f for f in _CR_FIELDS if f not in _queued]
+    _q = _typed.strip()
+    _cands = _cr_fuzzy_match_fields(_q, _avail)
+    if not _cands:
+        _cands = _cr_infer_field_llm(_q, _avail, st.session_state.get("messages", []))
+    st.session_state["cr_field_candidates"] = _cands
+    st.session_state["cr_field_query"] = _q
+    prompt = None
 
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
