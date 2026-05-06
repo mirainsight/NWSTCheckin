@@ -169,7 +169,7 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
     ministry_fields = sorted_roles + ["Ministry Department"]
     has_lm = any(_hv(f) for f in _LM_ALL)
 
-    lm_groups = [("LEADERSHIP", ["Role"]), ("MINISTRY", ministry_fields)]
+    lm_groups = [("LEADERSHIP", ["Role", "Role Last Updated"]), ("MINISTRY", ministry_fields)]
     fixed_top = [("IDENTITY", ["Name", "Cell"]), ("HEALTH", ["Status", "New Since", "Prev Cell"])]
     fixed_bot = [
         ("PERSONAL", ["Gender", "Age", "School / Work", "Notes", "Birthday"]),
@@ -349,7 +349,7 @@ _CR_FIELDS = [
     # HEALTH
     "Status", "Prev Cell",
     # LEADERSHIP
-    "Role",
+    "Role", "Role Last Updated",
     # MINISTRY
     "Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department",
     # PERSONAL
@@ -434,6 +434,7 @@ def _load_key_values_dropdowns() -> dict:
 _CR_FIELD_FORMAT_HINTS = {
     "Name":              "Title case  e.g. John Tan Wei Ming",
     "Birthday":          "DD Mon YYYY  e.g. 28 Sep 2012",
+    "Role Last Updated": "DD Mon YYYY  e.g. 01 Jan 2024",
     "Contact No.":       "Digits only  e.g. +60123456789 or 60123456789",
     "Email Address":     "Must contain @  e.g. name@email.com",
     "Emergency Contact": "Digits only  e.g. +60123456789",
@@ -464,7 +465,7 @@ def _cr_validate_field(field: str, value: str) -> "str | None":
         stripped = re.sub(r"[\s+\-()\.]", "", v)
         if stripped and not stripped.isdigit():
             return "Contact number should only contain digits, +, -, spaces, or parentheses"
-    if field == "Birthday":
+    if field in ("Birthday", "Role Last Updated"):
         if _cr_parse_birthday(v) is None:
             return "Use format DD Mon YYYY  (e.g. 28 Sep 2012)"
     return None
@@ -550,6 +551,9 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
         return _cr_find_any(cols, ["status"])
     if f == "attendance":
         return _cr_find_any(cols, ["attendance"])
+    if f == "role last updated":
+        i = _cr_find_all(cols, ["role", "updated"])
+        return i if i != -1 else _cr_find_any(cols, ["role last", "last updated"])
     return -1
 
 
@@ -806,7 +810,7 @@ def _render_cr_wizard() -> None:
             _CHIP_GROUPS = [
                 ("Identity",   [f for f in ["Name", "Cell"] if f in avail_set]),
                 ("Health",     [f for f in ["Status", "Prev Cell"] if f in avail_set]),
-                ("Leadership", [f for f in ["Role"] if f in avail_set]),
+                ("Leadership", [f for f in ["Role", "Role Last Updated"] if f in avail_set]),
                 ("Ministry",   [f for f in ["Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"] if f in avail_set]),
                 ("Personal",   [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in avail_set]),
                 ("Contact",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail_set]),
@@ -946,7 +950,7 @@ def _render_cr_wizard() -> None:
                     st.session_state.cr_val_error = err
                     st.rerun()
                 else:
-                    if field == "Birthday":
+                    if field in ("Birthday", "Role Last Updated"):
                         str_val = _cr_parse_birthday(str_val) or str_val
                     st.session_state.cr_data.setdefault("pending_changes", []).append({
                         "field": field,
