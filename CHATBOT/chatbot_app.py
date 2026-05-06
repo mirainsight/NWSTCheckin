@@ -147,12 +147,24 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
     except (ValueError, IndexError):
         pr, pg, pb = 91, 192, 235
 
-    groups = [
-        ("IDENTITY", ["Name", "Cell", "Prev Cell"]),
-        ("MINISTRY", ["Role", "Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"]),
-        ("PERSONAL", ["Gender", "Birthday", "Age", "Status", "Attendance"]),
-        ("CONTACT", ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship", "School / Work", "Notes"]),
+    _MR = ["Hype Role", "Frontlines Role", "VS Role", "Worship Role"]
+    _LM_ALL = ["Role"] + _MR + ["Ministry Department"]
+
+    def _hv(f):
+        fi = _cr_field_col_idx(mcols, f)
+        return fi != -1 and bool(str(member.get(mcols[fi], "") or "").strip())
+
+    sorted_roles = sorted(_MR, key=lambda f: (not _hv(f), _MR.index(f)))
+    ministry_fields = sorted_roles + ["Ministry Department"]
+    has_lm = any(_hv(f) for f in _LM_ALL)
+
+    lm_groups = [("LEADERSHIP", ["Role"]), ("MINISTRY", ministry_fields)]
+    fixed_top = [("IDENTITY", ["Name", "Cell"]), ("HEALTH", ["Status", "New Since", "Prev Cell"])]
+    fixed_bot = [
+        ("PERSONAL", ["Gender", "Age", "School / Work", "Notes", "Birthday"]),
+        ("CONTACT",  ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"]),
     ]
+    groups = fixed_top + lm_groups + fixed_bot if has_lm else fixed_top + fixed_bot + lm_groups
 
     parts = label.split(" · ", 1)
     name_part = parts[0]
@@ -321,32 +333,27 @@ def _call_openai(messages: list[dict]) -> SimpleNamespace:
 # ── change-request wizard ──────────────────────────────────────────────────────
 
 _CR_FIELDS = [
-    "Name",
-    "Cell",
+    # IDENTITY
+    "Name", "Cell",
+    # HEALTH
+    "Status", "Prev Cell",
+    # LEADERSHIP
     "Role",
-    "Hype Role",
-    "Frontlines Role",
-    "VS Role",
-    "Worship Role",
-    "Ministry Department",
-    "Gender",
-    "Birthday",
-    "Contact No.",
-    "Email Address",
-    "Emergency Contact",
-    "Emergency Relationship",
-    "School / Work",
-    "Notes",
-    "Prev Cell",
+    # MINISTRY
+    "Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department",
+    # PERSONAL
+    "Gender", "Birthday", "School / Work", "Notes",
+    # CONTACT
+    "Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship",
 ]
 
 _CR_DROPDOWN_FIELDS = {
     "Cell", "Role", "Hype Role", "Frontlines Role",
     "VS Role", "Worship Role", "Ministry Department",
-    "Gender", "Prev Cell",
+    "Status", "Gender", "Prev Cell",
 }
 
-_CR_INFO_ONLY_FIELDS = ["Age", "Status", "Attendance"]
+_CR_INFO_ONLY_FIELDS = ["Age", "Attendance", "New Since"]
 
 
 def _get_health_sheet_id() -> str:
@@ -380,6 +387,7 @@ def _load_key_values_dropdowns() -> dict:
             "Cell":                cells,
             "Prev Cell":           cells,
             "Role":                _col(1),
+            "Status":              _col(2),
             "Ministry Department": _col(6),
             "Hype Role":           _col(10),
             "Frontlines Role":     _col(10),
@@ -511,6 +519,32 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
     if f == "attendance":
         return _cr_find_any(cols, ["attendance"])
     return -1
+
+
+def _cr_ordered_fields(member: dict, mcols: list, available: list) -> list:
+    """Return available fields in grouped order; Leadership/Ministry before Personal/Contact if any has a value."""
+    _MR = ["Hype Role", "Frontlines Role", "VS Role", "Worship Role"]
+    _LM_ALL = ["Role"] + _MR + ["Ministry Department"]
+
+    def _val(f):
+        fi = _cr_field_col_idx(mcols, f)
+        return fi != -1 and bool(str(member.get(mcols[fi], "") or "").strip())
+
+    sorted_roles = sorted(
+        [f for f in _MR if f in available],
+        key=lambda f: (not _val(f), _MR.index(f)),
+    )
+    identity   = [f for f in ["Name", "Cell"] if f in available]
+    health     = [f for f in ["Status", "Prev Cell"] if f in available]
+    leadership = [f for f in ["Role"] if f in available]
+    ministry   = sorted_roles + [f for f in ["Ministry Department"] if f in available]
+    personal   = [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in available]
+    contact    = [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in available]
+    lm         = leadership + ministry
+
+    if any(_val(f) for f in _LM_ALL if f in available):
+        return identity + health + lm + personal + contact
+    return identity + health + personal + contact + lm
 
 
 def _cr_member_label(name: str, cell: str) -> str:
@@ -664,7 +698,9 @@ def _render_cr_wizard() -> None:
 
         pending = data.get("pending_changes", [])
         queued_fields = {ch["field"] for ch in pending}
-        available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
+        available_fields = _cr_ordered_fields(
+            member, mcols, [f for f in _CR_FIELDS if f not in queued_fields]
+        )
 
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
