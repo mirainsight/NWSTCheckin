@@ -532,30 +532,54 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
     return -1
 
 
-def _cr_ordered_fields(member: dict, mcols: list, available: list) -> list:
-    """Return available fields in grouped order; Leadership/Ministry before Personal/Contact if any has a value."""
-    _MR = ["Hype Role", "Frontlines Role", "VS Role", "Worship Role"]
+def _cr_build_grouped_options(member: dict, mcols: list, available: list) -> "tuple[list, set]":
+    """Return (options, header_indices) for the grouped field selectbox.
+
+    options       — flat list mixing '── SECTION ──' headers with '  Field  (currently: …)' entries
+    header_indices — set of indices in options that are section headers (not selectable)
+    Leadership/Ministry sections float before Personal/Contact when any field has a value.
+    Ministry roles are ordered non-empty first.
+    """
+    _MR    = ["Hype Role", "Frontlines Role", "VS Role", "Worship Role"]
     _LM_ALL = ["Role"] + _MR + ["Ministry Department"]
+    avail  = set(available)
 
     def _val(f):
         fi = _cr_field_col_idx(mcols, f)
         return fi != -1 and bool(str(member.get(mcols[fi], "") or "").strip())
 
+    def _opt(f):
+        fi = _cr_field_col_idx(mcols, f)
+        v  = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
+        return f"  {f}  (currently: {v if v else 'empty'})"
+
     sorted_roles = sorted(
-        [f for f in _MR if f in available],
+        [f for f in _MR if f in avail],
         key=lambda f: (not _val(f), _MR.index(f)),
     )
-    identity   = [f for f in ["Name", "Cell"] if f in available]
-    health     = [f for f in ["Status", "Prev Cell"] if f in available]
-    leadership = [f for f in ["Role"] if f in available]
-    ministry   = sorted_roles + [f for f in ["Ministry Department"] if f in available]
-    personal   = [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in available]
-    contact    = [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in available]
-    lm         = leadership + ministry
+    sections = [
+        ("IDENTITY",   [f for f in ["Name", "Cell"] if f in avail]),
+        ("HEALTH",     [f for f in ["Status", "Prev Cell"] if f in avail]),
+        ("LEADERSHIP", [f for f in ["Role"] if f in avail]),
+        ("MINISTRY",   sorted_roles + [f for f in ["Ministry Department"] if f in avail]),
+        ("PERSONAL",   [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in avail]),
+        ("CONTACT",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail]),
+    ]
+    if not any(_val(f) for f in _LM_ALL if f in avail):
+        lm, rest = sections[2:4], sections[:2] + sections[4:]
+        sections = rest + lm
 
-    if any(_val(f) for f in _LM_ALL if f in available):
-        return identity + health + lm + personal + contact
-    return identity + health + personal + contact + lm
+    options: list = []
+    header_indices: set = set()
+    for section_name, fields in sections:
+        if not fields:
+            continue
+        header_indices.add(len(options))
+        options.append(f"── {section_name}")
+        for f in fields:
+            options.append(_opt(f))
+
+    return options, header_indices
 
 
 def _cr_member_label(name: str, cell: str) -> str:
@@ -709,9 +733,8 @@ def _render_cr_wizard() -> None:
 
         pending = data.get("pending_changes", [])
         queued_fields = {ch["field"] for ch in pending}
-        available_fields = _cr_ordered_fields(
-            member, mcols, [f for f in _CR_FIELDS if f not in queued_fields]
-        )
+        available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
+        field_options, header_indices = _cr_build_grouped_options(member, mcols, available_fields)
 
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
@@ -724,17 +747,11 @@ def _render_cr_wizard() -> None:
                 st.markdown("\nAll fields have been queued. Ready to review.")
 
         if available_fields:
-            field_options = []
-            for field in available_fields:
-                fi = _cr_field_col_idx(mcols, field)
-                v = ""
-                if fi != -1:
-                    v = str(member.get(mcols[fi], "") or "").strip()
-                field_options.append(f"{field}  (currently: {v if v else 'empty'})")
+            default_idx = next((i for i in range(len(field_options)) if i not in header_indices), 0)
 
             _go = False
             with st.form("cr_show_info"):
-                choice = st.selectbox("Field to change", field_options)
+                choice = st.selectbox("Field to change", field_options, index=default_idx)
                 c1, c2 = st.columns([3, 1])
                 _go = c1.form_submit_button("Next →", use_container_width=True)
                 _cancel = c2.form_submit_button("Cancel", use_container_width=True)
@@ -742,7 +759,10 @@ def _render_cr_wizard() -> None:
                 _cr_reset()
                 st.rerun()
             if _go:
-                field_name = choice.split("  (currently:")[0]
+                if field_options.index(choice) in header_indices:
+                    st.warning("Please select a field, not a section header.")
+                    st.stop()
+                field_name = choice.strip().split("  (currently:")[0].strip()
                 fi = _cr_field_col_idx(mcols, field_name)
                 current_val = ""
                 if fi != -1:
