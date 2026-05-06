@@ -27,8 +27,26 @@ import re
 import streamlit as st
 from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
 from chatbot_data import build_data_context
+from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
+from nwst_shared.nwst_accent_config import get_accent_override_by_date, resolve_latest_cached_theme_row
+from nwst_shared.nwst_accent_redis import theme_overrides_from_redis
 
 MYT = timezone(timedelta(hours=8))
+
+
+def _get_daily_palette() -> dict:
+    today_str = datetime.now(MYT).strftime("%Y-%m-%d")
+    try:
+        rc = get_redis_client()
+        sheet_map = theme_overrides_from_redis(rc)
+        file_map = get_accent_override_by_date()
+        row = resolve_latest_cached_theme_row(file_map, sheet_map)
+        pn = normalize_primary_hex(row.get("primary"))
+        if pn:
+            return theme_from_primary_hex(pn)
+    except Exception:
+        pass
+    return generate_colors_for_date(today_str)
 
 MAX_RESPONSE_TOKENS = 800  # increased to accommodate <thinking> block + answer
 MAX_CONTEXT_MESSAGES = 6   # last 3 human + 3 assistant turns
@@ -117,8 +135,18 @@ def _token_stat_html(this_t: int, session_tokens: list) -> str:
     )
 
 
-def _member_info_html(member: dict, mcols: list, label: str, pending: list) -> str:
-    """Render the member profile as a grouped dark-themed HTML card."""
+def _member_info_html(member: dict, mcols: list, label: str, pending: list, palette: dict | None = None) -> str:
+    """Render the member profile as a grouped HTML card using the daily colour palette."""
+    if palette is None:
+        palette = _get_daily_palette()
+
+    primary = palette.get("primary", "#5bc0eb")
+    light = palette.get("light", "#8dd4f0")
+    try:
+        pr, pg, pb = int(primary[1:3], 16), int(primary[3:5], 16), int(primary[5:7], 16)
+    except (ValueError, IndexError):
+        pr, pg, pb = 91, 192, 235
+
     groups = [
         ("IDENTITY", ["Name", "Cell", "Prev Cell"]),
         ("MINISTRY", ["Role", "Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"]),
@@ -129,15 +157,17 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list) -> s
     parts = label.split(" · ", 1)
     name_part = parts[0]
     cell_part = (
-        f' <span style="color:#888;font-size:0.88rem;">· {parts[1]}</span>'
+        f' <span style="color:#999999;font-size:0.88rem;">· {parts[1]}</span>'
         if len(parts) > 1 else ""
     )
 
     card = (
-        '<div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;'
-        'overflow:hidden;margin:4px 0;font-family:\'Inter\',-apple-system,sans-serif;">'
-        f'<div style="background:#242424;padding:12px 16px;border-bottom:1px solid #2a2a2a;">'
-        f'<span style="font-size:1.0rem;font-weight:700;color:#f0f0f0;">👤 {name_part}</span>'
+        f'<div style="background:#0a0a0a;border:1px solid rgba({pr},{pg},{pb},0.25);'
+        f'border-top:3px solid {primary};border-radius:10px;overflow:hidden;margin:4px 0;'
+        f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+        f'box-shadow:0 8px 32px rgba({pr},{pg},{pb},0.15);">'
+        f'<div style="background:#111111;padding:12px 16px;border-bottom:1px solid rgba({pr},{pg},{pb},0.15);">'
+        f'<span style="font-size:1.0rem;font-weight:700;color:{primary};">👤 {name_part}</span>'
         f'{cell_part}</div>'
     )
 
@@ -149,18 +179,18 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list) -> s
             v = ""
             if fi != -1:
                 v = str(member.get(mcols[fi], "") or "").strip()
-            val_style = "color:#f0f0f0" if v else "color:#3a3a3a"
+            val_style = "color:#ffffff" if v else "color:#333333"
             val_text = v if v else "—"
             rows += (
-                f'<tr style="border-top:1px solid #1e1e1e;">'
-                f'<td style="padding:5px 8px 5px 16px;color:#666;font-size:0.82rem;width:38%;white-space:nowrap;">{field}</td>'
+                f'<tr style="border-top:1px solid #141414;">'
+                f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:38%;white-space:nowrap;">{field}</td>'
                 f'<td style="padding:5px 16px 5px 0;{val_style};font-size:0.82rem;">{val_text}</td>'
                 f'</tr>'
             )
-        top_border = "" if first_group else "border-top:1px solid #222;"
+        top_border = "" if first_group else f"border-top:1px solid rgba({pr},{pg},{pb},0.12);"
         card += (
-            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:#444;'
-            f'letter-spacing:0.09em;text-transform:uppercase;{top_border}">{section_label}</div>'
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{primary};'
+            f'letter-spacing:0.12em;text-transform:uppercase;{top_border}">{section_label}</div>'
             f'<table style="width:100%;border-collapse:collapse;">{rows}</table>'
         )
         first_group = False
@@ -171,16 +201,16 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list) -> s
             old = ch.get("current_value", "") or "—"
             new = ch["new_value"]
             rows += (
-                f'<tr style="border-top:1px solid #2a2a1a;">'
-                f'<td style="padding:5px 8px 5px 16px;color:#a08030;font-size:0.82rem;width:38%;">{ch["field"]}</td>'
-                f'<td style="padding:5px 16px 5px 0;color:#c8a84b;font-size:0.82rem;">'
-                f'{old} <span style="color:#666;">→</span> {new}</td>'
+                f'<tr style="border-top:1px solid rgba({pr},{pg},{pb},0.1);">'
+                f'<td style="padding:5px 8px 5px 16px;color:{light};font-size:0.82rem;width:38%;">{ch["field"]}</td>'
+                f'<td style="padding:5px 16px 5px 0;color:{light};font-size:0.82rem;">'
+                f'{old} <span style="color:#555;">→</span> {new}</td>'
                 f'</tr>'
             )
         n = len(pending)
         card += (
-            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:#7a5f20;'
-            f'letter-spacing:0.09em;text-transform:uppercase;border-top:1px solid #2a2a1a;">'
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{light};'
+            f'letter-spacing:0.12em;text-transform:uppercase;border-top:1px solid rgba({pr},{pg},{pb},0.2);">'
             f'{n} QUEUED CHANGE{"S" if n != 1 else ""}</div>'
             f'<table style="width:100%;border-collapse:collapse;">{rows}</table>'
         )
@@ -637,7 +667,7 @@ def _render_cr_wizard() -> None:
         available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
 
         label = _cr_member_label(name_val, cell_val)
-        html = _member_info_html(member, mcols, label, pending)
+        html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
 
         with st.chat_message("assistant"):
             st.markdown(html, unsafe_allow_html=True)
