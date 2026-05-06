@@ -219,9 +219,113 @@ def _call_openai(messages: list[dict]) -> SimpleNamespace:
 # ── change-request wizard ──────────────────────────────────────────────────────
 
 _CR_FIELDS = [
-    "Name", "Cell Group", "Role", "Ministry Department",
-    "Gender", "Birthday", "Phone / Contact", "School / Work", "Notes",
+    "Name",
+    "Cell",
+    "Role",
+    "Hype Role",
+    "Frontlines Role",
+    "VS Role",
+    "Worship Role",
+    "Ministry Department",
+    "Gender",
+    "Birthday",
+    "Contact No.",
+    "Email Address",
+    "Emergency Contact",
+    "Emergency Relationship",
+    "School / Work",
+    "Notes",
+    "Prev Cell",
 ]
+
+_CR_DROPDOWN_FIELDS = {
+    "Cell", "Role", "Hype Role", "Frontlines Role",
+    "VS Role", "Worship Role", "Ministry Department",
+    "Gender", "Prev Cell",
+}
+
+_CR_INFO_ONLY_FIELDS = ["Age", "Status", "Attendance"]
+
+
+def _get_health_sheet_id() -> str:
+    sid = os.getenv("NWST_HEALTH_SHEET_ID", "").strip()
+    if not sid:
+        try:
+            sid = (st.secrets.get("NWST_HEALTH_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    return sid
+
+
+@st.cache_data(ttl=86400)
+def _load_key_values_dropdowns() -> dict:
+    from chatbot_sync import _gsheet_client
+    gc = _gsheet_client()
+    sid = _get_health_sheet_id()
+    if not gc or not sid:
+        return {}
+    try:
+        ws = gc.open_by_key(sid).worksheet("Key Values")
+        rows = ws.get_all_values()
+        if len(rows) < 2:
+            return {}
+
+        def _col(idx):
+            return [r[idx].strip() for r in rows[1:] if idx < len(r) and r[idx].strip()]
+
+        cells = _col(0)
+        return {
+            "Cell":                cells,
+            "Prev Cell":           cells,
+            "Role":                _col(1),
+            "Ministry Department": _col(6),
+            "Hype Role":           _col(10),
+            "Frontlines Role":     _col(10),
+            "VS Role":             _col(10),
+            "Worship Role":        _col(10),
+            "Gender":              ["Male", "Female"],
+        }
+    except Exception:
+        return {}
+
+
+_CR_FIELD_FORMAT_HINTS = {
+    "Name":              "Title case  e.g. John Tan Wei Ming",
+    "Birthday":          "DD Mon YYYY  e.g. 28 Sep 2012",
+    "Contact No.":       "Digits only  e.g. +60123456789 or 60123456789",
+    "Email Address":     "Must contain @  e.g. name@email.com",
+    "Emergency Contact": "Digits only  e.g. +60123456789",
+}
+
+_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _cr_parse_birthday(v: str) -> "str | None":
+    for fmt in ("%d %b %Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d %B %Y"):
+        try:
+            dt = datetime.strptime(v.strip(), fmt)
+            return f"{dt.day:02d} {_MONTH_ABBR[dt.month - 1]} {dt.year}"
+        except ValueError:
+            pass
+    return None
+
+
+def _cr_validate_field(field: str, value: str) -> "str | None":
+    v = value.strip()
+    if not v:
+        return None
+    if field == "Email Address":
+        if "@" not in v or "." not in v.split("@")[-1]:
+            return "Enter a valid email address (must contain @)"
+    if field in ("Contact No.", "Emergency Contact"):
+        stripped = re.sub(r"[\s+\-()\.]", "", v)
+        if stripped and not stripped.isdigit():
+            return "Contact number should only contain digits, +, -, spaces, or parentheses"
+    if field == "Birthday":
+        if _cr_parse_birthday(v) is None:
+            return "Use format DD Mon YYYY  (e.g. 28 Sep 2012)"
+    return None
 
 
 def _cr_normalize(s: str) -> str:
@@ -252,24 +356,58 @@ def _cr_find_role(cols: list) -> int:
 
 
 def _cr_field_col_idx(cols: list, field: str) -> int:
-    if field == "Name":
+    f = field.lower().strip()
+    if f == "name":
         return _cr_find_any(cols, ["name", "member"])
-    if field == "Cell Group":
-        return _cr_find_any(cols, ["cell", "group"])
-    if field == "Role":
+    if f == "cell":
+        for i, c in enumerate(cols):
+            if str(c).lower().strip() == "cell":
+                return i
+        return _cr_find_any(cols, ["cell"])
+    if f == "role":
         return _cr_find_role(cols)
-    if field == "Ministry Department":
+    if f == "hype role":
+        return _cr_find_any(cols, ["hype"])
+    if f == "frontlines role":
+        return _cr_find_any(cols, ["frontlines"])
+    if f == "vs role":
+        return _cr_find_any(cols, ["vs"])
+    if f == "worship role":
+        return _cr_find_any(cols, ["worship"])
+    if f == "ministry department":
         return _cr_find_all(cols, ["ministry", "department"])
-    if field == "Gender":
+    if f == "gender":
         return _cr_find_any(cols, ["gender"])
-    if field == "Birthday":
+    if f == "birthday":
         return _cr_find_any(cols, ["birthday"])
-    if field == "Phone / Contact":
-        return _cr_find_any(cols, ["phone", "contact", "mobile"])
-    if field == "School / Work":
+    if f == "contact no.":
+        for i, c in enumerate(cols):
+            cl = str(c).lower().strip()
+            if cl in ("contact no.", "contact no", "contact number"):
+                return i
+        return _cr_find_any(cols, ["contact no"])
+    if f == "email address":
+        return _cr_find_any(cols, ["email"])
+    if f == "emergency contact":
+        for i, c in enumerate(cols):
+            cl = str(c).lower().strip()
+            if "emergency" in cl and "relationship" not in cl:
+                return i
+        return -1
+    if f == "emergency relationship":
+        return _cr_find_all(cols, ["emergency", "relationship"])
+    if f == "school / work":
         return _cr_find_any(cols, ["school", "work"])
-    if field == "Notes":
+    if f == "notes":
         return _cr_find_any(cols, ["notes", "remark"])
+    if f == "prev cell":
+        return _cr_find_any(cols, ["prev"])
+    if f == "age":
+        return _cr_find_any(cols, ["age"])
+    if f == "status":
+        return _cr_find_any(cols, ["status"])
+    if f == "attendance":
+        return _cr_find_any(cols, ["attendance"])
     return -1
 
 
@@ -304,6 +442,7 @@ def _cr_reset() -> None:
     st.session_state.cr_member_row = None
     st.session_state.cr_matches = []
     st.session_state.pop("cr_search_error", None)
+    st.session_state.pop("cr_val_error", None)
 
 
 def _render_cr_wizard() -> None:
@@ -423,7 +562,7 @@ def _render_cr_wizard() -> None:
 
         label = _cr_member_label(name_val, cell_val)
         info_lines = [f"**Member found: {label}**", ""]
-        for field in _CR_FIELDS:
+        for field in _CR_FIELDS + _CR_INFO_ONLY_FIELDS:
             fi = _cr_field_col_idx(mcols, field)
             if fi != -1:
                 v = str(member.get(mcols[fi], "") or "").strip()
@@ -478,18 +617,46 @@ def _render_cr_wizard() -> None:
                 "What should it be changed to?"
             )
         _go = False
+        _val_error = st.session_state.pop("cr_val_error", None)
+        if _val_error:
+            st.error(_val_error)
         with st.form("cr_new_value"):
-            val = st.text_input("New value", value=current)
+            if field in _CR_DROPDOWN_FIELDS:
+                dropdowns = _load_key_values_dropdowns()
+                options = dropdowns.get(field, [])
+                if options:
+                    default_idx = options.index(current) if current in options else 0
+                    val = st.selectbox("New value", options, index=default_idx)
+                else:
+                    val = st.text_input("New value", value=current)
+                    hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
+                    if hint:
+                        st.caption(hint)
+            else:
+                prefill = current.title() if field == "Name" else current
+                val = st.text_input("New value", value=prefill)
+                hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
+                if hint:
+                    st.caption(hint)
             c1, c2 = st.columns([3, 1])
             _go = c1.form_submit_button("Next →", use_container_width=True)
             _cancel = c2.form_submit_button("Cancel", use_container_width=True)
         if _cancel:
             _cr_reset()
             st.rerun()
-        if _go and val.strip():
-            st.session_state.cr_data["new_value"] = val.strip()
-            st.session_state.cr_step = "reason"
-            st.rerun()
+        if _go:
+            str_val = val if not isinstance(val, str) else val.strip()
+            if str_val:
+                err = _cr_validate_field(field, str_val)
+                if err:
+                    st.session_state.cr_val_error = err
+                    st.rerun()
+                else:
+                    if field == "Birthday":
+                        str_val = _cr_parse_birthday(str_val) or str_val
+                    st.session_state.cr_data["new_value"] = str_val
+                    st.session_state.cr_step = "reason"
+                    st.rerun()
 
     # Step 5 — Reason (optional)
     elif step == "reason":
