@@ -117,6 +117,78 @@ def _token_stat_html(this_t: int, session_tokens: list) -> str:
     )
 
 
+def _member_info_html(member: dict, mcols: list, label: str, pending: list) -> str:
+    """Render the member profile as a grouped dark-themed HTML card."""
+    groups = [
+        ("IDENTITY", ["Name", "Cell", "Prev Cell"]),
+        ("MINISTRY", ["Role", "Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"]),
+        ("PERSONAL", ["Gender", "Birthday", "Age", "Status", "Attendance"]),
+        ("CONTACT", ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship", "School / Work", "Notes"]),
+    ]
+
+    parts = label.split(" · ", 1)
+    name_part = parts[0]
+    cell_part = (
+        f' <span style="color:#888;font-size:0.88rem;">· {parts[1]}</span>'
+        if len(parts) > 1 else ""
+    )
+
+    card = (
+        '<div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;'
+        'overflow:hidden;margin:4px 0;font-family:\'Inter\',-apple-system,sans-serif;">'
+        f'<div style="background:#242424;padding:12px 16px;border-bottom:1px solid #2a2a2a;">'
+        f'<span style="font-size:1.0rem;font-weight:700;color:#f0f0f0;">👤 {name_part}</span>'
+        f'{cell_part}</div>'
+    )
+
+    first_group = True
+    for section_label, fields in groups:
+        rows = ""
+        for field in fields:
+            fi = _cr_field_col_idx(mcols, field)
+            v = ""
+            if fi != -1:
+                v = str(member.get(mcols[fi], "") or "").strip()
+            val_style = "color:#f0f0f0" if v else "color:#3a3a3a"
+            val_text = v if v else "—"
+            rows += (
+                f'<tr style="border-top:1px solid #1e1e1e;">'
+                f'<td style="padding:5px 8px 5px 16px;color:#666;font-size:0.82rem;width:38%;white-space:nowrap;">{field}</td>'
+                f'<td style="padding:5px 16px 5px 0;{val_style};font-size:0.82rem;">{val_text}</td>'
+                f'</tr>'
+            )
+        top_border = "" if first_group else "border-top:1px solid #222;"
+        card += (
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:#444;'
+            f'letter-spacing:0.09em;text-transform:uppercase;{top_border}">{section_label}</div>'
+            f'<table style="width:100%;border-collapse:collapse;">{rows}</table>'
+        )
+        first_group = False
+
+    if pending:
+        rows = ""
+        for ch in pending:
+            old = ch.get("current_value", "") or "—"
+            new = ch["new_value"]
+            rows += (
+                f'<tr style="border-top:1px solid #2a2a1a;">'
+                f'<td style="padding:5px 8px 5px 16px;color:#a08030;font-size:0.82rem;width:38%;">{ch["field"]}</td>'
+                f'<td style="padding:5px 16px 5px 0;color:#c8a84b;font-size:0.82rem;">'
+                f'{old} <span style="color:#666;">→</span> {new}</td>'
+                f'</tr>'
+            )
+        n = len(pending)
+        card += (
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:#7a5f20;'
+            f'letter-spacing:0.09em;text-transform:uppercase;border-top:1px solid #2a2a1a;">'
+            f'{n} QUEUED CHANGE{"S" if n != 1 else ""}</div>'
+            f'<table style="width:100%;border-collapse:collapse;">{rows}</table>'
+        )
+
+    card += '</div>'
+    return card
+
+
 def _get_openai_key() -> str:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
@@ -565,23 +637,10 @@ def _render_cr_wizard() -> None:
         available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
 
         label = _cr_member_label(name_val, cell_val)
-        info_lines = [f"**Member found: {label}**", ""]
-        for field in _CR_FIELDS + _CR_INFO_ONLY_FIELDS:
-            fi = _cr_field_col_idx(mcols, field)
-            if fi != -1:
-                v = str(member.get(mcols[fi], "") or "").strip()
-                info_lines.append(f"**{field}:** {v if v else '—'}")
-
-        if pending:
-            info_lines.append("")
-            info_lines.append(f"**{len(pending)} change(s) queued:**")
-            for ch in pending:
-                info_lines.append(
-                    f"- **{ch['field']}**: {ch.get('current_value','') or '—'} → {ch['new_value']}"
-                )
+        html = _member_info_html(member, mcols, label, pending)
 
         with st.chat_message("assistant"):
-            st.markdown("\n".join(info_lines))
+            st.markdown(html, unsafe_allow_html=True)
             if available_fields:
                 st.markdown("\nWhich field would you like to request a change for?")
             else:
