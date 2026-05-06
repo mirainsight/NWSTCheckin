@@ -366,6 +366,25 @@ _CR_DROPDOWN_FIELDS = {
 
 _CR_INFO_ONLY_FIELDS = ["Age", "Attendance", "New Since"]
 
+_CR_FIELD_ALIASES: dict[str, str] = {
+    "phone": "Contact No.", "mobile": "Contact No.", "hp": "Contact No.",
+    "handphone": "Contact No.", "number": "Contact No.",
+    "bday": "Birthday", "birth": "Birthday", "born": "Birthday", "dob": "Birthday",
+    "mail": "Email Address",
+    "emergency": "Emergency Contact", "ec": "Emergency Contact",
+    "relationship": "Emergency Relationship",
+    "school": "School / Work", "work": "School / Work",
+    "job": "School / Work", "occupation": "School / Work",
+    "prev": "Prev Cell", "previous": "Prev Cell",
+    "ministry": "Ministry Department", "dept": "Ministry Department",
+    "department": "Ministry Department",
+    "worship": "Worship Role", "hype": "Hype Role",
+    "frontline": "Frontlines Role", "frontlines": "Frontlines Role",
+    "vs": "VS Role", "volunteer": "VS Role",
+    "note": "Notes", "notes": "Notes", "remark": "Notes", "remarks": "Notes",
+    "sex": "Gender",
+}
+
 
 def _get_health_sheet_id() -> str:
     sid = os.getenv("NWST_HEALTH_SHEET_ID", "").strip()
@@ -532,54 +551,47 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
     return -1
 
 
-def _cr_build_grouped_options(member: dict, mcols: list, available: list) -> "tuple[list, set]":
-    """Return (options, header_indices) for the grouped field selectbox.
 
-    options       — flat list mixing '── SECTION ──' headers with '  Field  (currently: …)' entries
-    header_indices — set of indices in options that are section headers (not selectable)
-    Leadership/Ministry sections float before Personal/Contact when any field has a value.
-    Ministry roles are ordered non-empty first.
-    """
-    _MR    = ["Hype Role", "Frontlines Role", "VS Role", "Worship Role"]
-    _LM_ALL = ["Role"] + _MR + ["Ministry Department"]
-    avail  = set(available)
+def _cr_fuzzy_match_fields(query: str, available_fields: list[str]) -> list[str]:
+    q = query.lower().strip()
+    avail = set(available_fields)
+    seen: set[str] = set()
+    results: list[str] = []
 
-    def _val(f):
-        fi = _cr_field_col_idx(mcols, f)
-        return fi != -1 and bool(str(member.get(mcols[fi], "") or "").strip())
+    # Exact alias hit — return immediately
+    if q in _CR_FIELD_ALIASES:
+        t = _CR_FIELD_ALIASES[q]
+        if t in avail:
+            return [t]
 
-    def _opt(f):
-        fi = _cr_field_col_idx(mcols, f)
-        v  = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
-        return f"  {f}  (currently: {v if v else 'empty'})"
+    # Alias partial match (query is substring of alias key)
+    for alias, field in _CR_FIELD_ALIASES.items():
+        if q in alias and field in avail and field not in seen:
+            results.append(field)
+            seen.add(field)
 
-    sorted_roles = sorted(
-        [f for f in _MR if f in avail],
-        key=lambda f: (not _val(f), _MR.index(f)),
-    )
-    sections = [
-        ("IDENTITY",   [f for f in ["Name", "Cell"] if f in avail]),
-        ("HEALTH",     [f for f in ["Status", "Prev Cell"] if f in avail]),
-        ("LEADERSHIP", [f for f in ["Role"] if f in avail]),
-        ("MINISTRY",   sorted_roles + [f for f in ["Ministry Department"] if f in avail]),
-        ("PERSONAL",   [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in avail]),
-        ("CONTACT",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail]),
-    ]
-    if not any(_val(f) for f in _LM_ALL if f in avail):
-        lm, rest = sections[2:4], sections[:2] + sections[4:]
-        sections = rest + lm
+    # Field name substring match
+    for field in available_fields:
+        if q in field.lower() and field not in seen:
+            results.append(field)
+            seen.add(field)
 
-    options: list = []
-    header_indices: set = set()
-    for section_name, fields in sections:
-        if not fields:
-            continue
-        header_indices.add(len(options))
-        options.append(f"── {section_name}")
-        for f in fields:
-            options.append(_opt(f))
+    return results
 
-    return options, header_indices
+
+def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
+    fi = _cr_field_col_idx(mcols, field)
+    current_val = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
+    st.session_state.cr_data.update({
+        "field": field,
+        "current_value": current_val,
+        "member_name": name_val,
+        "member_cell": cell_val,
+    })
+    st.session_state.pop("cr_field_group", None)
+    st.session_state["cr_field_search"] = ""
+    st.session_state.cr_step = "new_value"
+    st.rerun()
 
 
 def _cr_member_label(name: str, cell: str) -> str:
@@ -613,6 +625,8 @@ def _cr_reset() -> None:
     st.session_state.cr_member_row = None
     st.session_state.cr_matches = []
     st.session_state.pop("cr_search_error", None)
+    st.session_state["cr_field_group"] = None
+    st.session_state["cr_field_search"] = ""
     st.session_state.pop("cr_val_error", None)
 
 
@@ -734,7 +748,6 @@ def _render_cr_wizard() -> None:
         pending = data.get("pending_changes", [])
         queued_fields = {ch["field"] for ch in pending}
         available_fields = [f for f in _CR_FIELDS if f not in queued_fields]
-        field_options, header_indices = _cr_build_grouped_options(member, mcols, available_fields)
 
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
@@ -742,38 +755,65 @@ def _render_cr_wizard() -> None:
         with st.chat_message("assistant"):
             st.markdown(html, unsafe_allow_html=True)
             if available_fields:
-                st.markdown("\nWhich field would you like to request a change for?")
+                st.markdown("\nWhich field would you like to change?")
             else:
                 st.markdown("\nAll fields have been queued. Ready to review.")
 
         if available_fields:
-            default_idx = next((i for i in range(len(field_options)) if i not in header_indices), 0)
+            avail_set = set(available_fields)
+            _CHIP_GROUPS = [
+                ("Identity",   [f for f in ["Name", "Cell"] if f in avail_set]),
+                ("Health",     [f for f in ["Prev Cell"] if f in avail_set]),
+                ("Leadership", [f for f in ["Role"] if f in avail_set]),
+                ("Ministry",   [f for f in ["Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"] if f in avail_set]),
+                ("Personal",   [f for f in ["Gender", "Birthday", "School / Work", "Notes"] if f in avail_set]),
+                ("Contact",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail_set]),
+            ]
+            active_groups = [(g, fs) for g, fs in _CHIP_GROUPS if fs]
 
-            _go = False
-            with st.form("cr_show_info"):
-                choice = st.selectbox("Field to change", field_options, index=default_idx)
-                c1, c2 = st.columns([3, 1])
-                _go = c1.form_submit_button("Next →", use_container_width=True)
-                _cancel = c2.form_submit_button("Cancel", use_container_width=True)
-            if _cancel:
+            search_val = st.text_input(
+                "field_search", placeholder="Type a field… e.g. phone, birthday, email",
+                label_visibility="collapsed", key="cr_field_search",
+            )
+            selected_group = st.session_state.get("cr_field_group")
+
+            if search_val.strip():
+                hits = _cr_fuzzy_match_fields(search_val.strip(), available_fields)
+                if hits:
+                    hit_cols = st.columns(min(len(hits), 3))
+                    for i, f in enumerate(hits):
+                        if hit_cols[i % 3].button(f, key=f"cr_hit_{f}", use_container_width=True):
+                            _cr_advance_to_field(f, member, mcols, name_val, cell_val)
+                else:
+                    st.caption("No match — try a group below or check your spelling.")
+                    g_cols = st.columns(len(active_groups))
+                    for i, (g_name, _) in enumerate(active_groups):
+                        if g_cols[i].button(g_name, key=f"cr_grp_{g_name}", use_container_width=True):
+                            st.session_state.cr_field_group = g_name
+                            st.session_state["cr_field_search"] = ""
+                            st.rerun()
+            elif selected_group is None:
+                g_cols = st.columns(len(active_groups))
+                for i, (g_name, _) in enumerate(active_groups):
+                    if g_cols[i].button(g_name, key=f"cr_grp_{g_name}", use_container_width=True):
+                        st.session_state.cr_field_group = g_name
+                        st.rerun()
+            else:
+                group_fields = next((fs for g, fs in active_groups if g == selected_group), [])
+                f_cols = st.columns(2)
+                for i, f in enumerate(group_fields):
+                    fi = _cr_field_col_idx(mcols, f)
+                    cv = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
+                    if f_cols[i % 2].button(
+                        f"{f}  ({cv if cv else 'empty'})", key=f"cr_field_{f}", use_container_width=True
+                    ):
+                        _cr_advance_to_field(f, member, mcols, name_val, cell_val)
+                if st.button("← Back", key="cr_back_grp"):
+                    st.session_state.cr_field_group = None
+                    st.rerun()
+
+            if st.button("Cancel", key="cr_cancel_show_info"):
                 _cr_reset()
-                st.rerun()
-            if _go:
-                if field_options.index(choice) in header_indices:
-                    st.warning("Please select a field, not a section header.")
-                    st.stop()
-                field_name = choice.strip().split("  (currently:")[0].strip()
-                fi = _cr_field_col_idx(mcols, field_name)
-                current_val = ""
-                if fi != -1:
-                    current_val = str(member.get(mcols[fi], "") or "").strip()
-                st.session_state.cr_data.update({
-                    "field": field_name,
-                    "current_value": current_val,
-                    "member_name": name_val,
-                    "member_cell": cell_val,
-                })
-                st.session_state.cr_step = "new_value"
                 st.rerun()
         else:
             with st.form("cr_show_info_done"):
@@ -981,6 +1021,8 @@ if "cr_member_row" not in st.session_state:
     st.session_state.cr_member_row = None
 if "cr_matches" not in st.session_state:
     st.session_state.cr_matches = []
+if "cr_field_group" not in st.session_state:
+    st.session_state.cr_field_group = None
 
 # Login gate — show sign-in form and halt if not authenticated
 if not st.session_state.authenticated:
@@ -1009,31 +1051,22 @@ if not st.session_state.user_profile_loaded:
     st.session_state.user_profile_loaded = True
 
 # Identity display
-_profile_col, _logout_col = st.columns([5, 1])
-with _profile_col:
-    if st.session_state.user_name and st.session_state.user_cell:
-        st.caption(
-            f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
-            + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
-        )
-    else:
-        _id_col1, _id_col2, _id_col3 = st.columns(3)
-        st.session_state.user_name = _id_col1.text_input(
-            "Your name", value=st.session_state.user_name, placeholder="Name",
-        )
-        st.session_state.user_email = _id_col2.text_input(
-            "Email", value=st.session_state.user_email, placeholder="Email",
-        )
-        st.session_state.user_cell = _id_col3.text_input(
-            "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
-        )
-with _logout_col:
-    if st.button("Sign out", use_container_width=True):
-        for _k in ["authenticated", "login_email", "user_name", "user_email",
-                   "user_cell", "user_role", "user_status", "user_profile_loaded"]:
-            st.session_state[_k] = "" if _k != "authenticated" else False
-        st.session_state.user_profile_loaded = False
-        st.rerun()
+if st.session_state.user_name and st.session_state.user_cell:
+    st.caption(
+        f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
+        + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
+    )
+else:
+    _id_col1, _id_col2, _id_col3 = st.columns(3)
+    st.session_state.user_name = _id_col1.text_input(
+        "Your name", value=st.session_state.user_name, placeholder="Name",
+    )
+    st.session_state.user_email = _id_col2.text_input(
+        "Email", value=st.session_state.user_email, placeholder="Email",
+    )
+    st.session_state.user_cell = _id_col3.text_input(
+        "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
+    )
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
@@ -1057,20 +1090,6 @@ if _sync_changed or _should_refresh_data():
         _load_data(cache_buster=1)
     else:
         _load_data()
-
-col_info, col_btn = st.columns([5, 1])
-with col_info:
-    fetched_at = st.session_state.get("data_fetched_at")
-    if fetched_at:
-        has_data = bool(st.session_state.get("data_context", "").strip())
-        label = f"Data as of {fetched_at.strftime('%H:%M')} MYT"
-        label += "" if has_data else " · no data (run Update Names first)"
-        st.caption(label)
-with col_btn:
-    if st.button("↺", help="Refresh live data", use_container_width=True):
-        build_data_context.clear()
-        _load_data(cache_buster=1)
-        st.rerun()
 
 st.divider()
 
