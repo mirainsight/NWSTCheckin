@@ -789,37 +789,42 @@ def _render_cr_wizard() -> None:
                     st.rerun()
 
             else:
-                # ── Level 0: shortcuts + LLM suggestions + Browse all ─────
-                _shortcuts = []
-                if "Cell" in avail_set:
-                    _shortcuts.append(("Change Cell", "Cell"))
-                if "Status" in avail_set:
-                    _shortcuts.append(("Change Status", "Status"))
-                if "Notes" in avail_set:
-                    _shortcuts.append(("Add Notes", "Notes"))
-                _has_ministry = any(f in avail_set for f in _ministry_fields)
-                if _has_ministry:
-                    _shortcuts.append(("Change Role", None))
+                # ── Level 0: shortcuts + Browse all (hidden once user has searched) ─────
+                if not st.session_state.get("cr_field_query", ""):
+                    _shortcuts = []
+                    if "Cell" in avail_set:
+                        _shortcuts.append(("Change Cell", "Cell"))
+                    if "Status" in avail_set:
+                        _shortcuts.append(("Change Status", "Status"))
+                    if "Notes" in avail_set:
+                        _shortcuts.append(("Add Notes", "Notes"))
+                    _has_ministry = any(f in avail_set for f in _ministry_fields)
+                    if _has_ministry:
+                        _shortcuts.append(("Change Role", None))
 
-                if _shortcuts:
-                    sc_cols = st.columns(len(_shortcuts))
-                    for i, (sc_label, sc_field) in enumerate(_shortcuts):
-                        if sc_cols[i].button(sc_label, key=f"cr_sc_{i}", use_container_width=True):
-                            if sc_field is not None:
-                                _cr_advance_to_field(sc_field, member, mcols, name_val, cell_val)
-                            else:
-                                st.session_state.cr_field_group = "Ministry"
-                                st.session_state["cr_field_candidates"] = []
-                                st.rerun()
+                    if _shortcuts:
+                        sc_cols = st.columns(len(_shortcuts))
+                        for i, (sc_label, sc_field) in enumerate(_shortcuts):
+                            if sc_cols[i].button(sc_label, key=f"cr_sc_{i}", use_container_width=True):
+                                if sc_field is not None:
+                                    _cr_advance_to_field(sc_field, member, mcols, name_val, cell_val)
+                                else:
+                                    st.session_state.cr_field_group = "Ministry"
+                                    st.session_state["cr_field_candidates"] = []
+                                    st.rerun()
 
-                col_browse, col_cancel = st.columns([3, 1])
-                if col_browse.button("Browse all →", key="cr_browse_all", use_container_width=True):
-                    st.session_state.cr_field_group = "__browse__"
-                    st.session_state["cr_field_candidates"] = []
-                    st.rerun()
-                if col_cancel.button("Cancel", key="cr_cancel_l0"):
-                    _cr_reset()
-                    st.rerun()
+                    col_browse, col_cancel = st.columns([3, 1])
+                    if col_browse.button("Browse all →", key="cr_browse_all", use_container_width=True):
+                        st.session_state.cr_field_group = "__browse__"
+                        st.session_state["cr_field_candidates"] = []
+                        st.rerun()
+                    if col_cancel.button("Cancel", key="cr_cancel_l0"):
+                        _cr_reset()
+                        st.rerun()
+                else:
+                    if st.button("Cancel", key="cr_cancel_searched"):
+                        _cr_reset()
+                        st.rerun()
         else:
             with st.form("cr_show_info_done"):
                 c1, c2 = st.columns([3, 1])
