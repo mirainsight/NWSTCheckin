@@ -540,7 +540,8 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
             f"Available fields:\n{fields_block}\n\n"
             f'User said: "{query}"\n\n'
             "Which field(s) from the list is the user most likely referring to? "
-            "Reply in this exact format: REASON: <one short sentence, written in second person as the chatbot speaking directly to the user, e.g. 'Sounds like you want to update your role!' or 'You're probably looking for their contact info.'> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
+            "Include ALL fields that are a reasonable match — if the query is broad (e.g. 'serve', 'ministry', 'role'), list every relevant field, not just the top 3. "
+            "Reply in this exact format: REASON: <one short sentence, written in second person as the chatbot speaking directly to the user, e.g. 'Sounds like you want to update your role!' or 'You're probably looking for their contact info.'> | FIELDS: <field1>, <field2>, ... (exact names from the list, as many as relevant). "
             "If nothing matches, reply: REASON: Hmm, not sure what you mean — try again? | FIELDS: none"
         )
         resp = client.chat.completions.create(
@@ -1228,11 +1229,12 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         )
         _m_row = st.session_state.get("cr_member_row") or {}
         _mcols_s = list(_m_row.keys())
-        _cand_cols = st.columns(min(len(_candidates), 3))
+        _ncols = min(len(_candidates), 3)
+        _cand_cols = st.columns(_ncols)
         for _i, _f in enumerate(_candidates):
             _fi = _cr_field_col_idx(_mcols_s, _f)
             _cv = str(_m_row.get(_mcols_s[_fi], "") or "").strip() if _fi != -1 else ""
-            if _cand_cols[_i % 3].button(
+            if _cand_cols[_i % _ncols].button(
                 f"{_f}  ({_cv if _cv else 'empty'})", key=f"cr_cand_{_f}", use_container_width=True
             ):
                 _ni = _cr_find_any(_mcols_s, ["name", "member"])
