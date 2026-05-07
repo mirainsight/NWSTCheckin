@@ -640,10 +640,10 @@ def _render_cr_wizard() -> None:
 
     # Step 2 — Member name search
     elif step == "member_search":
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
             st.markdown(
                 f"**Requested by:** {data.get('requester', '')}  \n"
-                "Which member's information would you like to update? Type their name to search."
+                "Who are we looking up today? Drop their name and I'll track them down! 👀"
             )
         err = st.session_state.get("cr_search_error", "")
         if err:
@@ -693,8 +693,8 @@ def _render_cr_wizard() -> None:
     # Step 2b — Select from multiple matches
     elif step == "member_select":
         matches = st.session_state.cr_matches or []
-        with st.chat_message("assistant"):
-            st.markdown(f"Found **{len(matches)}** members matching that name. Please select one:")
+        with st.chat_message("assistant", avatar="🤖"):
+            st.markdown(f"Ooh, I found **{len(matches)}** people with that name — which one are we talking about?")
         _go = False
         with st.form("cr_member_select"):
             labels = [m["label"] for m in matches]
@@ -737,12 +737,12 @@ def _render_cr_wizard() -> None:
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
             st.markdown(html, unsafe_allow_html=True)
             if available_fields:
-                st.markdown("\nWhich field would you like to change?")
+                st.markdown(f"\nHere's everything I've got on **{name_val}**! So, what are we changing today?")
             else:
-                st.markdown("\nAll fields have been queued. Ready to review.")
+                st.markdown("\nAll fields have been queued up — we're good to go! Ready to review.")
 
         if available_fields:
             avail_set = set(available_fields)
@@ -852,12 +852,12 @@ def _render_cr_wizard() -> None:
         field = data.get("field", "")
         current = data.get("current_value", "")
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
+            _member_name = data.get("member_name", "") or label
             st.markdown(
-                f"**Member:** {label}  \n"
-                f"**Field:** {field}  \n"
-                f"**Current value:** {current if current else '—'}  \n\n"
-                "What should it be changed to?"
+                f"A **{field}** for {_member_name}? Let's see — "
+                f"currently sitting at **{current if current else 'empty'}**. "
+                f"What should I change it to?"
             )
         _go = False
         _val_error = st.session_state.pop("cr_val_error", None)
@@ -911,8 +911,8 @@ def _render_cr_wizard() -> None:
 
     # Step 5 — Reason (optional)
     elif step == "reason":
-        with st.chat_message("assistant"):
-            st.markdown("Any reason for this change? *(optional — leave blank to skip)*")
+        with st.chat_message("assistant", avatar="🤖"):
+            st.markdown("Any reason behind this change? No pressure — spill the tea or just skip it! *(optional)*")
         _go = False
         with st.form("cr_reason"):
             val = st.text_input("Reason", placeholder="e.g. Member moved to a different cell group")
@@ -936,14 +936,14 @@ def _render_cr_wizard() -> None:
             for ch in pending
         )
         summary = (
-            "Please confirm these change requests:\n\n"
+            "Okay! Here's the rundown — double-check and let's make it happen:\n\n"
             f"**Requested by:** {data.get('requester', '')}  \n"
             f"**Member:** {label}  \n\n"
             "| Field | Current | New |\n|---|---|---|\n"
             + rows_md
             + f"\n\n**Reason:** {data.get('reason', '') or '—'}"
         )
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🤖"):
             st.markdown(summary)
         _submit = False
         _cancel = False
