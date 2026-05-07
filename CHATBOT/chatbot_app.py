@@ -22,6 +22,7 @@ except ImportError:
     pass
 
 import json
+import random
 import re
 
 import streamlit as st
@@ -568,6 +569,40 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
         return []
 
 
+_CARD_QUIPS = [
+    "",
+    "",
+    "did you even read the identity card? 👀",
+    "make sure to read through ah~",
+    "scroll up a bit, it's all there 😌",
+    "just a lil peek before you edit, yeah?",
+    "__llm__",
+]
+
+
+def _get_card_llm_quip(name: str) -> str:
+    key = _get_openai_key()
+    if not key:
+        return ""
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": (
+                f"You're a sassy, youthful church app assistant. "
+                f"A user just pulled up {name}'s identity card. "
+                "Give ONE short playful nudge (max 10 words) telling them to actually read it "
+                "before making changes. Be fun and warm, not rude. You may use one emoji."
+            )}],
+            max_tokens=30,
+            temperature=1.1,
+        )
+        return resp.choices[0].message.content.strip().strip('"')
+    except Exception:
+        return ""
+
+
 def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
     fi = _cr_field_col_idx(mcols, field)
     current_val = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
@@ -737,12 +772,29 @@ def _render_cr_wizard() -> None:
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
 
+        # Pick a quip once per member and cache it so rerenders stay stable
+        _quip_cache_key = f"_card_quip__{name_val}"
+        if st.session_state.get("_card_quip_member") != name_val:
+            st.session_state["_card_quip_member"] = name_val
+            st.session_state[_quip_cache_key] = random.choice(_CARD_QUIPS)
+            st.session_state.pop("_card_llm_quip", None)
+        _chosen_quip = st.session_state.get(_quip_cache_key, "")
+
+        if _chosen_quip == "__llm__" and "_card_llm_quip" not in st.session_state:
+            st.session_state["_card_llm_quip"] = _get_card_llm_quip(name_val)
+
         with st.chat_message("assistant", avatar="🤖"):
             st.markdown(html, unsafe_allow_html=True)
             if available_fields:
                 st.markdown(f"\nHere's everything I've got on **{name_val}**! So, what are we changing today?")
             else:
                 st.markdown("\nAll fields have been queued up — we're good to go! Ready to review.")
+            if _chosen_quip == "__llm__":
+                _llm_quip = st.session_state.get("_card_llm_quip", "")
+                if _llm_quip:
+                    st.caption(f"*{_llm_quip}*")
+            elif _chosen_quip:
+                st.caption(f"*{_chosen_quip}*")
 
         if available_fields:
             avail_set = set(available_fields)
@@ -881,10 +933,14 @@ def _render_cr_wizard() -> None:
                 hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
                 if hint:
                     st.caption(hint)
-            c1, c2, c3 = st.columns([2, 2, 1])
+            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
             _add_more = c1.form_submit_button("+ Add another field", use_container_width=True)
             _review   = c2.form_submit_button("Review & Submit →",   use_container_width=True)
-            _cancel   = c3.form_submit_button("Cancel",              use_container_width=True)
+            _back     = c3.form_submit_button("← Back",              use_container_width=True)
+            _cancel   = c4.form_submit_button("Cancel",              use_container_width=True)
+        if _back:
+            st.session_state.cr_step = "show_info"
+            st.rerun()
         if _cancel:
             _cr_reset()
             st.rerun()
