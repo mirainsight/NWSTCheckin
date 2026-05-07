@@ -1142,10 +1142,21 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
             _pr, _pg, _pb = 91, 192, 235
         _reason_html = f'<span style="color:#aaaaaa;font-size:0.82rem;"> — {_cr_reason}</span>' if _cr_reason else ""
         st.markdown(
+            f'<style>'
+            f'.cr-cand-marker ~ div[data-testid="stHorizontalBlock"] .stButton > button {{'
+            f'  border: 1px solid {_pc} !important;'
+            f'  color: {_pc} !important;'
+            f'  background: rgba({_pr},{_pg},{_pb},0.08) !important;'
+            f'}}'
+            f'.cr-cand-marker ~ div[data-testid="stHorizontalBlock"] .stButton > button:hover {{'
+            f'  background: rgba({_pr},{_pg},{_pb},0.2) !important;'
+            f'}}'
+            f'</style>'
             f'<div style="border-left:3px solid {_pc};padding:6px 14px;margin:10px 0 6px;'
             f'background:rgba({_pr},{_pg},{_pb},0.08);border-radius:0 6px 6px 0;">'
             f'<span style="color:{_pc};font-size:0.85rem;font-weight:700;">Suggested for &ldquo;{_cq}&rdquo;</span>'
-            f'{_reason_html}</div>',
+            f'{_reason_html}</div>'
+            f'<span class="cr-cand-marker"></span>',
             unsafe_allow_html=True,
         )
         _m_row = st.session_state.get("cr_member_row") or {}
