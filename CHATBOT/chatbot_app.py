@@ -1243,6 +1243,7 @@ if _typed and st.session_state.get("cr_active") and st.session_state.get("cr_ste
     st.session_state["cr_field_candidates"] = _cands
     st.session_state["cr_field_query"] = _q
     prompt = None
+    st.rerun()
 
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
