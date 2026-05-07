@@ -1241,6 +1241,14 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
                 _cv2 = str(_m_row.get(_mcols_s[_ci], "") or "").strip() if _ci != -1 else ""
                 _cr_advance_to_field(_f, _m_row, _mcols_s, _nv, _cv2)
 
+    elif _cq:
+        _no_match_reason = _cr_reason if _cr_reason and _cr_reason.lower() not in ("no clear match",) else ""
+        _no_match_msg = (
+            f"Hmm, **\"{_cq}\"** doesn't match any field 🤔"
+            + (f" — {_no_match_reason}" if _no_match_reason else " — try something like \"Name\", \"Cell\", or \"Status\"!")
+        )
+        st.markdown(f"*{_no_match_msg}*")
+
     _typed = st.chat_input('Not what you need? Try "Change Name" or "School"…')
     if _typed:
         _m = st.session_state.get("cr_member_row") or {}
