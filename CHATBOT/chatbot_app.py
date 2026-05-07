@@ -540,8 +540,8 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
             f"Available fields:\n{fields_block}\n\n"
             f'User said: "{query}"\n\n'
             "Which field(s) from the list is the user most likely referring to? "
-            "Reply in this exact format: REASON: <one sentence> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
-            "If nothing matches, reply: REASON: no clear match | FIELDS: none"
+            "Reply in this exact format: REASON: <one short sentence, written in second person as the chatbot speaking directly to the user, e.g. 'Sounds like you want to update your role!' or 'You're probably looking for their contact info.'> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
+            "If nothing matches, reply: REASON: Hmm, not sure what you mean — try again? | FIELDS: none"
         )
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
