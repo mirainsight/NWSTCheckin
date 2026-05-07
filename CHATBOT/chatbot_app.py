@@ -882,11 +882,11 @@ def _render_cr_wizard() -> None:
                     _shortcuts.append(("Change Cell", "Cell"))
                 if "Status" in avail_set:
                     _shortcuts.append(("Change Status", "Status"))
-                if "Cell" in avail_set:
-                    _shortcuts.append(("Archive", "Cell"))
+                if "Notes" in avail_set:
+                    _shortcuts.append(("Add Notes", "Notes"))
                 _has_ministry = any(f in avail_set for f in _ministry_fields)
                 if _has_ministry:
-                    _shortcuts.append(("Add Role →", None))
+                    _shortcuts.append(("Change Role →", None))
 
                 if _shortcuts:
                     sc_cols = st.columns(len(_shortcuts))
