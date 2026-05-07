@@ -25,7 +25,7 @@ import json
 import re
 
 import streamlit as st
-from chatbot_redis import get_redis_client, get_chatbot_redis_client, submit_change_request
+from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
 from nwst_shared.nwst_accent_config import get_accent_override_by_date, resolve_latest_cached_theme_row
@@ -503,6 +503,70 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
 
 
 
+def _cr_fuzzy_match_fields(query: str, available_fields: list[str]) -> list[str]:
+    q = query.lower().strip()
+    avail = set(available_fields)
+    seen: set[str] = set()
+    results: list[str] = []
+    if q in _CR_FIELD_ALIASES:
+        t = _CR_FIELD_ALIASES[q]
+        if t in avail:
+            return [t]
+    for alias, field in _CR_FIELD_ALIASES.items():
+        if q in alias and field in avail and field not in seen:
+            results.append(field)
+            seen.add(field)
+    for field in available_fields:
+        if q in field.lower() and field not in seen:
+            results.append(field)
+            seen.add(field)
+    return results
+
+
+def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
+    key = _get_openai_key()
+    if not key:
+        return []
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        fields_block = "\n".join(
+            f"- {f}: {_CR_FIELD_DESCRIPTIONS[f]}" if f in _CR_FIELD_DESCRIPTIONS else f"- {f}"
+            for f in available_fields
+        )
+        content = (
+            f"Available fields:\n{fields_block}\n\n"
+            f'User said: "{query}"\n\n'
+            "Which field(s) from the list is the user most likely referring to? "
+            "Reply in this exact format: REASON: <one sentence> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
+            "If nothing matches, reply: REASON: no clear match | FIELDS: none"
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": content}],
+            max_tokens=80,
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        reason = ""
+        fields_part = raw
+        if "|" in raw:
+            left, right = raw.split("|", 1)
+            if left.upper().startswith("REASON:"):
+                reason = left[7:].strip()
+            if right.upper().strip().startswith("FIELDS:"):
+                fields_part = right.strip()[7:].strip()
+        st.session_state["cr_field_reason"] = reason
+        if fields_part.lower() in ("none", "unclear", ""):
+            return []
+        return [
+            f.strip().strip("\"'") for f in fields_part.split(",")
+            if f.strip().strip("\"'") in available_fields
+        ]
+    except Exception:
+        return []
+
+
 def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
     fi = _cr_field_col_idx(mcols, field)
     current_val = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
@@ -735,7 +799,7 @@ def _render_cr_wizard() -> None:
                     _shortcuts.append(("Add Notes", "Notes"))
                 _has_ministry = any(f in avail_set for f in _ministry_fields)
                 if _has_ministry:
-                    _shortcuts.append(("Change Role →", None))
+                    _shortcuts.append(("Change Role", None))
 
                 if _shortcuts:
                     sc_cols = st.columns(len(_shortcuts))
@@ -1078,4 +1142,41 @@ else:
     if st.button("Yes", use_container_width=False):
         st.session_state.cr_active = True
         st.session_state.cr_step = "requester"
+        st.rerun()
+
+# ── field inference chat input (show_info step only) ──────────────────────────
+
+if st.session_state.cr_active and st.session_state.cr_step == "show_info":
+    _typed = st.chat_input('Not what you need? Try "Change Name" or "School"…')
+    if _typed:
+        _m = st.session_state.get("cr_member_row") or {}
+        _queued = {ch["field"] for ch in (st.session_state.cr_data or {}).get("pending_changes", [])}
+        _avail = [f for f in _CR_FIELDS if f not in _queued]
+        _q = _typed.strip()
+        _cands = _cr_fuzzy_match_fields(_q, _avail)
+        if len(_cands) != 1:
+            _llm_cands = _cr_infer_field_llm(_q, _avail)
+            if _llm_cands:
+                _cands = _llm_cands
+        if len(_cands) == 1:
+            _mcols = list(_m.keys())
+            _ni = _cr_find_any(_mcols, ["name", "member"])
+            _ci = _cr_find_any(_mcols, ["cell", "group"])
+            _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
+            _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
+            _cr_advance_to_field(_cands[0], _m, _mcols, _name_val, _cell_val)
+        st.session_state["cr_field_candidates"] = _cands
+        st.session_state["cr_field_query"] = _q
+        _resolved = _cands[0] if len(_cands) == 1 else (", ".join(_cands) if _cands else "no match")
+        _rc_log = get_chatbot_redis_client()
+        if _rc_log:
+            log_qa_to_redis(
+                _rc_log,
+                st.session_state.user_name or "Anonymous",
+                _q,
+                f"[field search] → {_resolved}",
+                0,
+                email=st.session_state.user_email or "",
+                cell=st.session_state.user_cell or "",
+            )
         st.rerun()
