@@ -680,29 +680,15 @@ def _render_cr_wizard() -> None:
     step = st.session_state.cr_step
     data = st.session_state.cr_data
 
-    # Step 1 — Requester identity
+    # Step 1 — Requester identity (auto-populated from login, no form shown)
     if step == "requester":
         _known_name = st.session_state.get("user_name", "")
         _known_cell = st.session_state.get("user_cell", "")
         _known_role = st.session_state.get("user_role", "")
-        _greeting = f"Hi {_known_name}!" if _known_name else "Hi!"
         _parts = [p for p in [_known_name, _known_cell, _known_role] if p]
-        _prefill = " - ".join(_parts)
-        with st.chat_message("assistant"):
-            st.markdown(f"{_greeting} Who is making this request? Please confirm your name and role.")
-        _go = False
-        with st.form("cr_requester"):
-            val = st.text_input("Your name and role", value=_prefill, placeholder="e.g. Pastor John, Zone Leader Sarah")
-            c1, c2 = st.columns([3, 1])
-            _go = c1.form_submit_button("Next →", use_container_width=True)
-            _cancel = c2.form_submit_button("Cancel", use_container_width=True)
-        if _cancel:
-            _cr_reset()
-            st.rerun()
-        if _go and val.strip():
-            st.session_state.cr_data["requester"] = val.strip()
-            st.session_state.cr_step = "member_search"
-            st.rerun()
+        st.session_state.cr_data["requester"] = " - ".join(_parts) if _parts else "Unknown"
+        st.session_state.cr_step = "member_search"
+        st.rerun()
 
     # Step 2 — Member name search
     elif step == "member_search":
