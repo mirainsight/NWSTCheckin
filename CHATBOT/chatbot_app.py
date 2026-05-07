@@ -25,7 +25,7 @@ import json
 import re
 
 import streamlit as st
-from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
+from chatbot_redis import get_redis_client, get_chatbot_redis_client, submit_change_request
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
 from nwst_shared.nwst_accent_config import get_accent_override_by_date, resolve_latest_cached_theme_row
@@ -79,60 +79,6 @@ def _load_data(cache_buster: int = 0) -> None:
     week_start_str = _get_week_start()
     st.session_state["data_context"] = build_data_context(today_str, week_start_str, cache_buster)
     st.session_state["data_fetched_at"] = datetime.now(MYT)
-
-
-def _context_ring_html(current: int, total: int) -> str:
-    """SVG circular progress showing context window usage."""
-    pct = current / total if total > 0 else 0
-    fill = round(pct * 100, 1)
-    color = "#2ecc71" if pct < 0.5 else ("#e67e22" if pct < 1.0 else "#e74c3c")
-    left = total - current
-    label = f"{left} msg{'s' if left != 1 else ''} left" if left > 0 else "rolling — oldest dropped"
-    return (
-        f'<div style="display:flex;align-items:center;gap:8px;padding:2px 0;">'
-        f'<svg width="26" height="26" viewBox="0 0 36 36" style="transform:rotate(-90deg);flex-shrink:0;">'
-        f'<circle cx="18" cy="18" r="15.9" fill="none" stroke="#2a2a2a" stroke-width="3.5"/>'
-        f'<circle cx="18" cy="18" r="15.9" fill="none" stroke="{color}" stroke-width="3.5"'
-        f' stroke-dasharray="{fill} 100" stroke-linecap="round"/>'
-        f'</svg>'
-        f'<span style="color:#666;font-size:0.78rem;">Context {current}/{total} &nbsp;·&nbsp; {label}</span>'
-        f'</div>'
-    )
-
-
-def _parse_response(content: str) -> tuple[str, str]:
-    """Split model output into (thinking, answer). Returns ('', content) if no <thinking> block."""
-    match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
-    if match:
-        thinking = match.group(1).strip()
-        answer = content[match.end():].strip()
-        return thinking, answer
-    return "", content
-
-
-def _token_stat_html(this_t: int, session_tokens: list) -> str:
-    """Format the token stat line shown below an assistant reply."""
-    total = sum(session_tokens)
-    count = len(session_tokens)
-    if total == 0 or this_t == 0:
-        return ""
-    pct = this_t / total * 100
-    avg = total / count
-    delta = this_t - avg
-    pct_str = f"{pct:.0f}% of session"
-    if count == 1:
-        delta_str = "first reply"
-    elif delta > 0:
-        delta_str = f"+{delta:.0f} vs avg"
-    elif delta < 0:
-        delta_str = f"{delta:.0f} vs avg"
-    else:
-        delta_str = "= avg"
-    return (
-        f"<p style='font-size:0.72rem;color:#555;font-style:italic;margin:2px 0 0 0;'>"
-        f"+{this_t:,} tokens &nbsp;·&nbsp; {pct_str} &nbsp;·&nbsp; {delta_str}"
-        f"</p>"
-    )
 
 
 def _status_style(v: str) -> str:
@@ -316,29 +262,6 @@ def _pick(member: dict, *keywords: str) -> str:
                 return str(v).strip()
     return ""
 
-
-def _call_openai(messages: list[dict]) -> SimpleNamespace:
-    api_key = _get_openai_key()
-    if not api_key:
-        return SimpleNamespace(
-            content="OPENAI_API_KEY is not configured. Add it to your Streamlit secrets.",
-            tokens=0,
-        )
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            max_tokens=MAX_RESPONSE_TOKENS,
-            temperature=0.4,
-        )
-        return SimpleNamespace(
-            content=resp.choices[0].message.content,
-            tokens=resp.usage.total_tokens,
-        )
-    except Exception as e:
-        return SimpleNamespace(content=f"Error calling OpenAI: {e}", tokens=0)
 
 
 # ── change-request wizard ──────────────────────────────────────────────────────
@@ -580,33 +503,6 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
 
 
 
-def _cr_fuzzy_match_fields(query: str, available_fields: list[str]) -> list[str]:
-    q = query.lower().strip()
-    avail = set(available_fields)
-    seen: set[str] = set()
-    results: list[str] = []
-
-    # Exact alias hit — return immediately
-    if q in _CR_FIELD_ALIASES:
-        t = _CR_FIELD_ALIASES[q]
-        if t in avail:
-            return [t]
-
-    # Alias partial match (query is substring of alias key)
-    for alias, field in _CR_FIELD_ALIASES.items():
-        if q in alias and field in avail and field not in seen:
-            results.append(field)
-            seen.add(field)
-
-    # Field name substring match
-    for field in available_fields:
-        if q in field.lower() and field not in seen:
-            results.append(field)
-            seen.add(field)
-
-    return results
-
-
 def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
     fi = _cr_field_col_idx(mcols, field)
     current_val = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
@@ -623,53 +519,6 @@ def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, c
     st.rerun()
 
 
-def _cr_infer_field_llm(query: str, available_fields: list[str], chat_history: list[dict]) -> list[str]:
-    key = _get_openai_key()
-    if not key:
-        return []
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        fields_block = "\n".join(
-            f"- {f}: {_CR_FIELD_DESCRIPTIONS[f]}" if f in _CR_FIELD_DESCRIPTIONS else f"- {f}"
-            for f in available_fields
-        )
-        history_lines = []
-        for msg in chat_history:
-            role = "User" if msg.get("role") == "user" else "Assistant"
-            history_lines.append(f"{role}: {str(msg.get('content', ''))[:300]}")
-        history_block = ("\n\nRecent conversation:\n" + "\n".join(history_lines)) if history_lines else ""
-        content = (
-            f"Available fields:\n{fields_block}{history_block}\n\n"
-            f'User said: "{query}"\n\n'
-            "Which field(s) from the list is the user most likely referring to? "
-            "Reply in this exact format: REASON: <one sentence> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
-            "If nothing matches, reply: REASON: no clear match | FIELDS: none"
-        )
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": content}],
-            max_tokens=80,
-            temperature=0,
-        )
-        raw = resp.choices[0].message.content.strip()
-        reason = ""
-        fields_part = raw
-        if "|" in raw:
-            left, right = raw.split("|", 1)
-            if left.upper().startswith("REASON:"):
-                reason = left[7:].strip()
-            if right.upper().strip().startswith("FIELDS:"):
-                fields_part = right.strip()[7:].strip()
-        st.session_state["cr_field_reason"] = reason
-        if fields_part.lower() in ("none", "unclear", ""):
-            return []
-        return [
-            f.strip().strip("\"'") for f in fields_part.split(",")
-            if f.strip().strip("\"'") in available_fields
-        ]
-    except Exception:
-        return []
 
 
 def _cr_member_label(name: str, cell: str) -> str:
@@ -1206,133 +1055,27 @@ if _sync_changed or _should_refresh_data():
 
 st.divider()
 
-# ── chat ───────────────────────────────────────────────────────────────────────
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-_session_tokens = [
-    m["tokens"] for m in st.session_state.messages
-    if m["role"] == "assistant" and m.get("tokens", 0) > 0
-]
-
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg["role"] == "assistant" and msg.get("tokens", 0) > 0:
-            st.markdown(
-                _token_stat_html(msg["tokens"], _session_tokens),
-                unsafe_allow_html=True,
-            )
+# ── greeting + info change wizard ─────────────────────────────────────────────
 
 if st.session_state.cr_active:
     _render_cr_wizard()
-
-# ── context ring + new chat + info change ─────────────────────────────────────
-
-_col_new, _col_cr, _col_ring = st.columns([1, 1.4, 2.6])
-with _col_new:
-    if st.button("+ New Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.pop("pending_prompt", None)
-        _cr_reset()
-        st.rerun()
-with _col_cr:
-    if st.session_state.cr_active:
-        if st.button("✗ Cancel Request", use_container_width=True):
-            _cr_reset()
-            st.rerun()
-    else:
-        if st.button("📋 Info Change", use_container_width=True):
-            st.session_state.cr_active = True
-            st.session_state.cr_step = "requester"
-            st.rerun()
-with _col_ring:
-    _ctx_used = min(len(st.session_state.messages), MAX_CONTEXT_MESSAGES)
-    st.markdown(_context_ring_html(_ctx_used, MAX_CONTEXT_MESSAGES), unsafe_allow_html=True)
-
-if st.session_state.cr_active and st.session_state.cr_step == "show_info":
-    _typed = st.chat_input('Not what you need? Try "Change Name" or "School"…')
-elif st.session_state.cr_active:
-    _typed = None
 else:
-    _typed = st.chat_input("Ask a question...")
-prompt = _typed
+    _hour = datetime.now(MYT).hour
+    if 5 <= _hour < 12:
+        _greeting = "Good morning"
+    elif 12 <= _hour < 17:
+        _greeting = "Good afternoon"
+    elif 17 <= _hour < 21:
+        _greeting = "Good evening"
+    else:
+        _greeting = "Good night"
 
-# Field inference: intercept chat input during show_info step
-if _typed and st.session_state.get("cr_active") and st.session_state.get("cr_step") == "show_info":
-    _m = st.session_state.get("cr_member_row") or {}
-    _queued = {ch["field"] for ch in (st.session_state.cr_data or {}).get("pending_changes", [])}
-    _avail = [f for f in _CR_FIELDS if f not in _queued]
-    _q = _typed.strip()
-    _cands = _cr_fuzzy_match_fields(_q, _avail)
-    if len(_cands) != 1:
-        # fuzzy was ambiguous or found nothing — ask LLM for a confident answer
-        _llm_cands = _cr_infer_field_llm(_q, _avail, st.session_state.get("messages", []))
-        if _llm_cands:
-            _cands = _llm_cands
-    if len(_cands) == 1:
-        _mcols = list(_m.keys())
-        _ni = _cr_find_any(_mcols, ["name", "member"])
-        _ci = _cr_find_any(_mcols, ["cell", "group"])
-        _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
-        _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
-        _cr_advance_to_field(_cands[0], _m, _mcols, _name_val, _cell_val)
-    st.session_state["cr_field_candidates"] = _cands
-    st.session_state["cr_field_query"] = _q
-    prompt = None
-    st.rerun()
+    _display_name = st.session_state.user_name or st.session_state.login_email or "there"
 
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-
-    # Build system message: static behaviour + user profile + live data context
-    data_context = st.session_state.get("data_context", "")
-    full_system = SYSTEM_PROMPT
-    if st.session_state.user_name and st.session_state.user_cell:
-        full_system += (
-            f"\n\nLOGGED IN USER: {st.session_state.user_name}"
-            f" · Cell: {st.session_state.user_cell}"
-            f" · Role: {st.session_state.user_role or '—'}"
-            f" · Status: {st.session_state.user_status or '—'}"
-        )
-    if data_context:
-        full_system += "\n\nCURRENT DATA:\n" + data_context
-
-    context = st.session_state.messages[-MAX_CONTEXT_MESSAGES:]
-    api_messages = [{"role": "system", "content": full_system}] + context
-
-    with st.chat_message("assistant"):
-        with st.status("Thinking...", expanded=True) as status:
-            result = _call_openai(api_messages)
-            thinking, answer = _parse_response(result.content)
-            if thinking:
-                st.markdown(thinking)
-            status.update(label="Reasoning", state="complete", expanded=False)
-        st.markdown(answer or result.content)
-        if result.tokens > 0:
-            _live_session_tokens = _session_tokens + [result.tokens]
-            st.markdown(
-                _token_stat_html(result.tokens, _live_session_tokens),
-                unsafe_allow_html=True,
-            )
-
-    # Store only the clean answer in chat history (not the <thinking> block)
-    stored = answer if answer else result.content
-    st.session_state.messages.append({"role": "assistant", "content": stored, "tokens": result.tokens})
-
-    if result.tokens > 0:
-        rc = get_chatbot_redis_client()
-        if rc:
-            log_qa_to_redis(
-                rc,
-                st.session_state.user_name or "Anonymous",
-                prompt,
-                stored,
-                result.tokens,
-                email=st.session_state.user_email or "",
-                cell=st.session_state.user_cell or "",
-            )
+    st.markdown(
+        f"## {_greeting}, {_display_name}  \nReady to change your or someone's info?"
+    )
+    if st.button("Yes", use_container_width=False):
+        st.session_state.cr_active = True
+        st.session_state.cr_step = "requester"
+        st.rerun()
