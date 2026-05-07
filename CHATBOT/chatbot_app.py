@@ -1242,8 +1242,18 @@ if _typed and st.session_state.get("cr_active") and st.session_state.get("cr_ste
     _avail = [f for f in _CR_FIELDS if f not in _queued]
     _q = _typed.strip()
     _cands = _cr_fuzzy_match_fields(_q, _avail)
-    if not _cands:
-        _cands = _cr_infer_field_llm(_q, _avail, st.session_state.get("messages", []))
+    if len(_cands) != 1:
+        # fuzzy was ambiguous or found nothing — ask LLM for a confident answer
+        _llm_cands = _cr_infer_field_llm(_q, _avail, st.session_state.get("messages", []))
+        if _llm_cands:
+            _cands = _llm_cands
+    if len(_cands) == 1:
+        _mcols = list(_m.keys())
+        _ni = _cr_find_any(_mcols, ["name", "member"])
+        _ci = _cr_find_any(_mcols, ["cell", "group"])
+        _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
+        _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
+        _cr_advance_to_field(_cands[0], _m, _mcols, _name_val, _cell_val)
     st.session_state["cr_field_candidates"] = _cands
     st.session_state["cr_field_query"] = _q
     prompt = None
