@@ -25,6 +25,7 @@ import json
 import re
 
 import streamlit as st
+import streamlit.components.v1 as _st_components
 from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
@@ -712,6 +713,11 @@ def _render_cr_wizard() -> None:
 
     # Step 3 — Show current info, pick field
     elif step == "show_info":
+        _st_components.html(
+            "<script>var el=window.parent.document.querySelector('section[data-testid=\"stMain\"]');"
+            "if(!el)el=window.parent.document.querySelector('.main');if(el)el.scrollTop=0;</script>",
+            height=0,
+        )
         member = st.session_state.cr_member_row or {}
         mcols = list(member.keys())
 
