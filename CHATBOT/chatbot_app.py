@@ -387,6 +387,28 @@ _CR_FIELD_ALIASES: dict[str, str] = {
     "duplicate": "Status",
 }
 
+_CR_FIELD_DESCRIPTIONS: dict[str, str] = {
+    "Name":                   "member or individual or youth's full name (could be someone filing on behalf of another, typically a mentor like leader or pastor or zone leader)",
+    "Cell":                   "cell group/cell that the individual currently belongs to",
+    "Status":                 "attendance health — tracks how regularly a member attends (Regular 75% or more attendance for past 12 services, Irregular less than 75% attendance but attends for past 12 services, New Member, Follow Up 0% for past 12 services, Red as no longer comes to church, Graduated as moved on to another ministry)",
+    "Prev Cell":              "previous cell group before a transfer",
+    "Role":                   "leadership or ministry serving role, includes: 1. CG Leader, 2. Assistant CG Leader, 3. CG Core, 4. Potential CG Core, 5. Ministry Leader, 6. Assistant Ministry Leader, 7. Ministry Core, 8. Potential Ministry Core, 9. Zone Leader",
+    "Role Last Updated":      "date the role was last changed",
+    "Hype Role":              "role within Hype ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
+    "Frontlines Role":        "role within Frontlines ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
+    "VS Role":                "role within VS (visual storyteller; media team) ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
+    "Worship Role":           "role within Worship ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
+    "Ministry Department":    "ministry or department the member serves in: mainly related to worship such as Band, LCD, Dance, Sound, Vocals, Lights",
+    "Gender":                 "Male or Female",
+    "Birthday":               "date of birth",
+    "School / Work":          "school name or current workplace",
+    "Notes":                  "general notes or remarks about the member",
+    "Contact No.":            "phone / mobile number",
+    "Email Address":          "email address",
+    "Emergency Contact":      "emergency contact phone number",
+    "Emergency Relationship": "relationship of emergency contact to the member",
+}
+
 
 def _get_health_sheet_id() -> str:
     sid = os.getenv("NWST_HEALTH_SHEET_ID", "").strip()
@@ -608,30 +630,42 @@ def _cr_infer_field_llm(query: str, available_fields: list[str], chat_history: l
     try:
         from openai import OpenAI
         client = OpenAI(api_key=key)
-        fields_str = ", ".join(available_fields)
+        fields_block = "\n".join(
+            f"- {f}: {_CR_FIELD_DESCRIPTIONS[f]}" if f in _CR_FIELD_DESCRIPTIONS else f"- {f}"
+            for f in available_fields
+        )
         history_lines = []
         for msg in chat_history:
             role = "User" if msg.get("role") == "user" else "Assistant"
             history_lines.append(f"{role}: {str(msg.get('content', ''))[:300]}")
         history_block = ("\n\nRecent conversation:\n" + "\n".join(history_lines)) if history_lines else ""
         content = (
-            f"Fields: {fields_str}{history_block}\n\n"
+            f"Available fields:\n{fields_block}{history_block}\n\n"
             f'User said: "{query}"\n\n'
             "Which field(s) from the list is the user most likely referring to? "
-            "Reply with field name(s) from the list exactly, comma-separated, max 3. "
-            "If none match, reply 'none'."
+            "Reply in this exact format: REASON: <one sentence> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
+            "If nothing matches, reply: REASON: no clear match | FIELDS: none"
         )
         resp = client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": content}],
-            max_tokens=40,
+            max_tokens=80,
             temperature=0,
         )
         raw = resp.choices[0].message.content.strip()
-        if raw.lower() in ("none", "unclear", ""):
+        reason = ""
+        fields_part = raw
+        if "|" in raw:
+            left, right = raw.split("|", 1)
+            if left.upper().startswith("REASON:"):
+                reason = left[7:].strip()
+            if right.upper().strip().startswith("FIELDS:"):
+                fields_part = right.strip()[7:].strip()
+        st.session_state["cr_field_reason"] = reason
+        if fields_part.lower() in ("none", "unclear", ""):
             return []
         return [
-            f.strip().strip("\"'") for f in raw.split(",")
+            f.strip().strip("\"'") for f in fields_part.split(",")
             if f.strip().strip("\"'") in available_fields
         ]
     except Exception:
@@ -867,8 +901,12 @@ def _render_cr_wizard() -> None:
 
                 _candidates = st.session_state.get("cr_field_candidates", [])
                 _cq = st.session_state.get("cr_field_query", "")
+                _cr_reason = st.session_state.get("cr_field_reason", "")
                 if _candidates:
-                    st.caption(f'Suggested for "{_cq}":')
+                    _caption = f'Suggested for "{_cq}"'
+                    if _cr_reason:
+                        _caption += f" — {_cr_reason}"
+                    st.caption(_caption)
                     cand_cols = st.columns(min(len(_candidates), 3))
                     for i, f in enumerate(_candidates):
                         fi = _cr_field_col_idx(mcols, f)
