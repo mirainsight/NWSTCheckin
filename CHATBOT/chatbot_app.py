@@ -50,7 +50,7 @@ def _get_daily_palette() -> dict:
         pass
     return generate_colors_for_date(today_str)
 
-MAX_RESPONSE_TOKENS = 800  # increased to accommodate <thinking> block + answer
+MAX_RESPONSE_TOKENS = 2000
 MAX_CONTEXT_MESSAGES = 6   # last 3 human + 3 assistant turns
 MODEL = "gpt-4o-mini"
 DATA_TTL_SECONDS = 300     # auto-refresh data every 5 minutes
@@ -546,7 +546,7 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": content}],
-            max_tokens=80,
+            max_tokens=150,
             temperature=0,
         )
         raw = resp.choices[0].message.content.strip()
