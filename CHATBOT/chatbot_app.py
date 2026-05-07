@@ -812,23 +812,6 @@ def _render_cr_wizard() -> None:
                                 st.session_state["cr_field_candidates"] = []
                                 st.rerun()
 
-                _candidates = st.session_state.get("cr_field_candidates", [])
-                _cq = st.session_state.get("cr_field_query", "")
-                _cr_reason = st.session_state.get("cr_field_reason", "")
-                if _candidates:
-                    _caption = f'Suggested for "{_cq}"'
-                    if _cr_reason:
-                        _caption += f" — {_cr_reason}"
-                    st.caption(_caption)
-                    cand_cols = st.columns(min(len(_candidates), 3))
-                    for i, f in enumerate(_candidates):
-                        fi = _cr_field_col_idx(mcols, f)
-                        cv = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
-                        if cand_cols[i % 3].button(
-                            f"{f}  ({cv if cv else 'empty'})", key=f"cr_cand_{f}", use_container_width=True
-                        ):
-                            _cr_advance_to_field(f, member, mcols, name_val, cell_val)
-
                 col_browse, col_cancel = st.columns([3, 1])
                 if col_browse.button("Browse all →", key="cr_browse_all", use_container_width=True):
                     st.session_state.cr_field_group = "__browse__"
@@ -1144,9 +1127,42 @@ else:
         st.session_state.cr_step = "requester"
         st.rerun()
 
-# ── field inference chat input (show_info step only) ──────────────────────────
+# ── field inference suggestions + chat input (show_info step only) ────────────
 
 if st.session_state.cr_active and st.session_state.cr_step == "show_info":
+    _candidates = st.session_state.get("cr_field_candidates", [])
+    _cq = st.session_state.get("cr_field_query", "")
+    _cr_reason = st.session_state.get("cr_field_reason", "")
+    if _candidates:
+        _pal = _get_daily_palette()
+        _pc = _pal.get("primary", "#5bc0eb")
+        try:
+            _pr, _pg, _pb = int(_pc[1:3], 16), int(_pc[3:5], 16), int(_pc[5:7], 16)
+        except (ValueError, IndexError):
+            _pr, _pg, _pb = 91, 192, 235
+        _reason_html = f'<span style="color:#aaaaaa;font-size:0.82rem;"> — {_cr_reason}</span>' if _cr_reason else ""
+        st.markdown(
+            f'<div style="border-left:3px solid {_pc};padding:6px 14px;margin:10px 0 6px;'
+            f'background:rgba({_pr},{_pg},{_pb},0.08);border-radius:0 6px 6px 0;">'
+            f'<span style="color:{_pc};font-size:0.85rem;font-weight:700;">Suggested for &ldquo;{_cq}&rdquo;</span>'
+            f'{_reason_html}</div>',
+            unsafe_allow_html=True,
+        )
+        _m_row = st.session_state.get("cr_member_row") or {}
+        _mcols_s = list(_m_row.keys())
+        _cand_cols = st.columns(min(len(_candidates), 3))
+        for _i, _f in enumerate(_candidates):
+            _fi = _cr_field_col_idx(_mcols_s, _f)
+            _cv = str(_m_row.get(_mcols_s[_fi], "") or "").strip() if _fi != -1 else ""
+            if _cand_cols[_i % 3].button(
+                f"{_f}  ({_cv if _cv else 'empty'})", key=f"cr_cand_{_f}", use_container_width=True
+            ):
+                _ni = _cr_find_any(_mcols_s, ["name", "member"])
+                _ci = _cr_find_any(_mcols_s, ["cell", "group"])
+                _nv = str(_m_row.get(_mcols_s[_ni], "") or "").strip() if _ni != -1 else ""
+                _cv2 = str(_m_row.get(_mcols_s[_ci], "") or "").strip() if _ci != -1 else ""
+                _cr_advance_to_field(_f, _m_row, _mcols_s, _nv, _cv2)
+
     _typed = st.chat_input('Not what you need? Try "Change Name" or "School"…')
     if _typed:
         _m = st.session_state.get("cr_member_row") or {}
