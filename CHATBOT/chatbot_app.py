@@ -21,6 +21,7 @@ try:
 except ImportError:
     pass
 
+import base64
 import json
 import random
 import re
@@ -188,6 +189,32 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
 
     card += '</div>'
     return card
+
+
+def _show_thinking_overlay() -> None:
+    gif_path = _CHATBOT_DIR / "bunny_loading.gif"
+    gif_tag = ""
+    if gif_path.exists():
+        gif_b64 = base64.b64encode(gif_path.read_bytes()).decode()
+        gif_tag = (
+            f'<img src="data:image/gif;base64,{gif_b64}" '
+            f'style="width:160px;height:auto;margin-bottom:20px;image-rendering:pixelated;" />'
+        )
+    st.markdown(
+        f'<div style="'
+        f'position:fixed;top:0;left:0;width:100vw;height:100vh;'
+        f'background:rgba(13,13,13,0.90);'
+        f'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);'
+        f'z-index:999999;'
+        f'display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+        f'{gif_tag}'
+        f'<p style="'
+        f'color:#f0f0f0;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+        f'font-size:1.05rem;font-weight:600;letter-spacing:0.08em;margin:0;">'
+        f'Thinking.. please hold</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _get_openai_key() -> str:
@@ -1257,6 +1284,7 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         _q = _typed.strip()
         _cands = _cr_fuzzy_match_fields(_q, _avail)
         if len(_cands) != 1:
+            _show_thinking_overlay()
             _llm_cands = _cr_infer_field_llm(_q, _avail)
             if _llm_cands:
                 _cands = _llm_cands
