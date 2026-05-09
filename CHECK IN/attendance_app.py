@@ -2561,6 +2561,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
                         st.session_state['last_processed_checkin'] = None
+                        st.session_state[f'{form_key}_reset_selectbox'] = True
                         st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                         st.session_state['show_undo_success'] = message
                         st.rerun()
@@ -2843,6 +2844,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
                         st.session_state['last_processed_ministry_checkin'] = None
+                        st.session_state[f'{form_key}_reset_selectbox'] = True
                         st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                         st.session_state['show_undo_success'] = message
                         st.rerun()
