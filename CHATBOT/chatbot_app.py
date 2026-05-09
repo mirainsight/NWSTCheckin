@@ -28,7 +28,7 @@ import re
 
 import streamlit as st
 import streamlit.components.v1 as _st_components
-from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis, submit_change_request
+from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
 from nwst_shared.nwst_accent_config import get_accent_override_by_date, resolve_latest_cached_theme_row
@@ -1310,22 +1310,62 @@ def _render_cr_wizard() -> None:
             })
             st.rerun()
         if _submit:
-            rc = get_chatbot_redis_client()
-            if rc:
-                for ch in pending:
-                    submit_change_request(rc, {
-                        "requester":     data.get("requester", ""),
-                        "member_name":   data.get("member_name", ""),
-                        "member_cell":   data.get("member_cell", ""),
-                        "field":         ch["field"],
-                        "current_value": ch["current_value"],
-                        "new_value":     ch["new_value"],
-                        "reason":        data.get("reason", ""),
-                    })
-            n = len(pending)
-            _cr_reset()
-            st.session_state.cr_flash = f"✅ Request submitted! Waiting for NWST admin to approve."
-            st.rerun()
+            _cr_written = False
+            _cr_err = ""
+            try:
+                import gspread as _gspread
+                from chatbot_sync import _gsheet_client as _cr_gsheet_client
+                _cr_gc = _cr_gsheet_client()
+                _cr_sid = os.getenv("CHANGE_REQ_SHEET_ID", "").strip()
+                if not _cr_sid:
+                    try:
+                        _cr_sid = (st.secrets.get("CHANGE_REQ_SHEET_ID") or "").strip()
+                    except Exception:
+                        pass
+                if not _cr_sid:
+                    _cr_sid = os.getenv("CHATBOT_SHEET_ID", "").strip()
+                    if not _cr_sid:
+                        try:
+                            _cr_sid = (st.secrets.get("CHATBOT_SHEET_ID") or "").strip()
+                        except Exception:
+                            pass
+                if _cr_gc and _cr_sid:
+                    _cr_sp = _cr_gc.open_by_key(_cr_sid)
+                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Status"]
+                    try:
+                        _cr_ws = _cr_sp.worksheet("Change Requests")
+                    except _gspread.exceptions.WorksheetNotFound:
+                        _cr_ws = _cr_sp.add_worksheet(title="Change Requests", rows=1000, cols=len(_cr_headers))
+                        _cr_ws.append_row(_cr_headers)
+                    if not _cr_ws.row_values(1):
+                        _cr_ws.append_row(_cr_headers)
+                    _myt_now = datetime.now(MYT)
+                    _rows_cr = []
+                    for ch in pending:
+                        _rows_cr.append([
+                            _myt_now.strftime("%Y-%m-%d"),
+                            _myt_now.strftime("%H:%M:%S"),
+                            data.get("requester", ""),
+                            data.get("member_name", ""),
+                            data.get("member_cell", ""),
+                            ch["field"],
+                            ch.get("current_value", ""),
+                            ch["new_value"],
+                            data.get("reason", ""),
+                            "Pending",
+                        ])
+                    _cr_ws.append_rows(_rows_cr)
+                    _cr_written = True
+                else:
+                    _cr_err = "CHANGE_REQ_SHEET_ID / CHATBOT_SHEET_ID not configured."
+            except Exception as _e:
+                _cr_err = str(_e)
+            if _cr_written:
+                _cr_reset()
+                st.session_state.cr_flash = "✅ Request submitted! Waiting for NWST admin to approve."
+                st.rerun()
+            else:
+                st.error(f"⚠️ Could not submit change request: {_cr_err or 'unknown error'}")
 
 
 # ── page setup ─────────────────────────────────────────────────────────────────
