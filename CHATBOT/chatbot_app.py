@@ -1031,17 +1031,21 @@ def _render_cr_wizard() -> None:
                     st.markdown('<div id="cr-btns-end"></div>', unsafe_allow_html=True)
 
                     _chips_one = "".join(
-                        f'<button class="chip{"  chip-cancel" if d[2] == "__cancel__" else ""}" '
-                        f'onclick="cbk(\'{d[1]}\',\'{d[0]}\')">{d[0]}</button>'
-                        for d in _sc_data
+                        f'<button class="chip" onclick="cbk(\'{d[1]}\',\'{d[0]}\')">{d[0]}</button>'
+                        for d in _sc_data if d[2] != "__cancel__"
+                    )
+                    _cancel_d = next((d for d in _sc_data if d[2] == "__cancel__"), None)
+                    _cancel_chip = (
+                        f'<button class="chip chip-cancel" onclick="cbk(\'{_cancel_d[1]}\',\'{_cancel_d[0]}\')">{_cancel_d[0]}</button>'
+                        if _cancel_d else ""
                     )
                     _st_components.html(
                         f'<style>'
                         f'*{{box-sizing:border-box;margin:0;padding:0;}}'
                         f'body{{background:transparent;overflow:hidden;'
                         f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;}}'
-                        f'.wrap{{'
-                        f'  overflow:hidden;padding:4px 0 8px;'
+                        f'.outer{{display:flex;align-items:center;gap:10px;padding:4px 0 8px;}}'
+                        f'.wrap{{flex:1;min-width:0;overflow:hidden;'
                         f'  mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);'
                         f'  -webkit-mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);'
                         f'}}'
@@ -1056,14 +1060,16 @@ def _render_cr_wizard() -> None:
                         f'transition:border-color 0.15s,color 0.15s,background 0.15s;}}'
                         f'.chip:hover{{border-color:{_pc_si};color:{_pc_si};'
                         f'background:rgba({_pr_si},{_pg_si},{_pb_si},0.1);}}'
-                        f'.chip-cancel{{border-color:rgba(255,255,255,0.1)!important;color:#555555!important;}}'
+                        f'.chip-cancel{{flex-shrink:0;border-color:rgba(255,255,255,0.1)!important;color:#555555!important;}}'
                         f'.chip-cancel:hover{{border-color:#e74c3c!important;color:#e74c3c!important;'
                         f'background:rgba(231,76,60,0.08)!important;}}'
                         f'</style>'
-                        f'<div class="wrap">'
-                        f'<div class="track">'
+                        f'<div class="outer">'
+                        f'<div class="wrap"><div class="track">'
                         + _chips_one + _chips_one +
                         f'</div></div>'
+                        + _cancel_chip +
+                        f'</div>'
                         f'<script>'
                         f'function hideRange(){{'
                         f'  var pdoc=window.parent.document;'
