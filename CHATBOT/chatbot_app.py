@@ -900,6 +900,40 @@ def _render_cr_wizard() -> None:
         )
 
         # ── Full card in expander ─────────────────────────────────────────
+        st.markdown(
+            f'<style>'
+            f'div[data-testid="stExpander"] {{'
+            f'  border: 1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25) !important;'
+            f'  border-top: 3px solid {_pc_si} !important;'
+            f'  border-radius: 10px !important;'
+            f'  background: #111111 !important;'
+            f'  box-shadow: 0 4px 20px rgba({_pr_si},{_pg_si},{_pb_si},0.10) !important;'
+            f'  overflow: hidden !important;'
+            f'}}'
+            f'div[data-testid="stExpander"] details summary {{'
+            f'  background: #111111 !important;'
+            f'  padding: 12px 16px !important;'
+            f'}}'
+            f'div[data-testid="stExpander"] details summary span,'
+            f'div[data-testid="stExpander"] details summary p {{'
+            f'  color: {_pc_si} !important;'
+            f'  font-family: Inter,-apple-system,BlinkMacSystemFont,sans-serif !important;'
+            f'  font-size: 0.88rem !important;'
+            f'  font-weight: 700 !important;'
+            f'  letter-spacing: 0.04em !important;'
+            f'}}'
+            f'div[data-testid="stExpander"] details summary svg {{'
+            f'  fill: {_pc_si} !important;'
+            f'  color: {_pc_si} !important;'
+            f'}}'
+            f'div[data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {{'
+            f'  background: #0a0a0a !important;'
+            f'  border-top: 1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.15) !important;'
+            f'  padding: 0 !important;'
+            f'}}'
+            f'</style>',
+            unsafe_allow_html=True,
+        )
         with st.expander("View full identity card"):
             st.markdown(html, unsafe_allow_html=True)
 
