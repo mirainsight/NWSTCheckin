@@ -828,23 +828,6 @@ def _render_cr_wizard() -> None:
 
     # Step 3 — Show current info, pick field
     elif step == "show_info":
-        _st_components.html(
-            "<script>"
-            "(function(){"
-            "  var n=0;"
-            "  function s(){"
-            "    var el=window.parent.document.querySelector('section[data-testid=\"stMain\"]')"
-            "         ||window.parent.document.querySelector('.main')"
-            "         ||window.parent.document.querySelector('[data-testid=\"stAppViewContainer\"]');"
-            "    if(el){el.scrollTop=0;}"
-            "    window.parent.scrollTo(0,0);"
-            "    if(++n<6)setTimeout(s,120);"
-            "  }"
-            "  s();"
-            "})();"
-            "</script>",
-            height=0,
-        )
         member = st.session_state.cr_member_row or {}
         mcols = list(member.keys())
 
@@ -875,12 +858,57 @@ def _render_cr_wizard() -> None:
         if _chosen_quip == "__llm__" and "_card_llm_quip" not in st.session_state:
             st.session_state["_card_llm_quip"] = _get_card_llm_quip(name_val)
 
-        with st.chat_message("assistant", avatar="🤖"):
+        # ── Compact peek row (always visible, outside chat_message) ──────
+        _pal_si = _get_daily_palette()
+        _pc_si = _pal_si.get("primary", "#5bc0eb")
+        try:
+            _pr_si, _pg_si, _pb_si = int(_pc_si[1:3], 16), int(_pc_si[3:5], 16), int(_pc_si[5:7], 16)
+        except (ValueError, IndexError):
+            _pr_si, _pg_si, _pb_si = 91, 192, 235
+
+        _st_idx = _cr_field_col_idx(mcols, "Status")
+        _status_val = str(member.get(mcols[_st_idx], "") or "").strip() if _st_idx != -1 else ""
+        _status_color = (
+            "#2ecc71" if _status_val.startswith("Regular") else
+            "#e67e22" if _status_val.startswith("Irregular") else
+            "#3498db" if _status_val.startswith("New") else
+            "#f39c12" if _status_val.startswith("Follow Up") else
+            "#e74c3c" if _status_val.startswith("Red") else
+            "#9b59b6" if _status_val.startswith("Graduated") else "#555555"
+        )
+        _status_label = _status_val.split(":")[0].strip() if ":" in _status_val else _status_val
+        _badge = (
+            f'<span style="margin-left:auto;background:{_status_color}22;'
+            f'border:1px solid {_status_color}66;color:{_status_color};'
+            f'font-size:0.70rem;font-weight:700;letter-spacing:0.08em;'
+            f'text-transform:uppercase;padding:3px 10px;border-radius:999px;">'
+            f'{_status_label}</span>'
+        ) if _status_val else ""
+
+        st.markdown(
+            f'<div style="background:#111111;border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25);'
+            f'border-top:3px solid {_pc_si};border-radius:10px;padding:12px 16px;margin:4px 0;'
+            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+            f'box-shadow:0 4px 20px rgba({_pr_si},{_pg_si},{_pb_si},0.12);'
+            f'display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+            f'<span style="color:{_pc_si};font-size:1.0rem;font-weight:700;">👤 {name_val}</span>'
+            f'<span style="color:#555;font-size:0.9rem;">·</span>'
+            f'<span style="color:#aaaaaa;font-size:0.88rem;">{cell_val}</span>'
+            f'{_badge}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Full card in expander ─────────────────────────────────────────
+        with st.expander("View full identity card"):
             st.markdown(html, unsafe_allow_html=True)
+
+        # ── Bot message with prompt + quip ────────────────────────────────
+        with st.chat_message("assistant", avatar="🤖"):
             if available_fields:
-                st.markdown(f"\nHere's everything I've got on **{name_val}**! So, what are we changing today?")
+                st.markdown(f"What are we changing for **{name_val}** today?")
             else:
-                st.markdown("\nAll fields have been queued up — we're good to go! Ready to review.")
+                st.markdown("All fields have been queued up — we're good to go! Ready to review.")
             if _chosen_quip == "__llm__":
                 _llm_quip = st.session_state.get("_card_llm_quip", "")
                 if _llm_quip:
