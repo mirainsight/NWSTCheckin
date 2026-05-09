@@ -2504,9 +2504,9 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                     # Already processed this selection, skip
                     pass
                 elif original_name in checked_in_today:
-                    # Check if already checked in
-                    st.warning(f"{original_name} has already checked in today.")
+                    st.session_state[f'{form_key}_remove_target'] = {'name': original_name, 'tab_name': tab_name}
                 else:
+                    st.session_state[f'{form_key}_remove_target'] = None
                     # Mark as being processed
                     st.session_state['last_processed_checkin'] = original_name
 
@@ -2551,24 +2551,21 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                         st.session_state['last_processed_checkin'] = None
                         st.error(f"{message}")
 
-            # Show undo button BELOW the selectbox (with spacing)
-            if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
-                last_checkin = st.session_state['last_checkin']
-                # Only show undo for this form type
-                if last_checkin.get('form_type') == 'attendance':
-                    st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
-                    checkin_display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
-                    if st.button(f"Undo check-in for {checkin_display_name}", key=f"{form_key}_undo", type="secondary"):
-                        success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
-                        if success:
-                            st.session_state['last_checkin'] = None
-                            st.session_state['show_checkin_success'] = None
-                            st.session_state['last_processed_checkin'] = None  # Allow re-checking in
-                            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.session_state['show_undo_success'] = undo_message
-                            st.rerun()
-                        else:
-                            st.error(undo_message)
+            # Show remove attendance button when an already-checked-in name is selected
+            remove_target = st.session_state.get(f'{form_key}_remove_target')
+            if remove_target:
+                display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
+                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                if st.button(f"Remove attendance for {display_name}", key=f"{form_key}_remove", type="secondary"):
+                    success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
+                    if success:
+                        st.session_state[f'{form_key}_remove_target'] = None
+                        st.session_state['last_processed_checkin'] = None
+                        st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                        st.session_state['show_undo_success'] = message
+                        st.rerun()
+                    else:
+                        st.error(message)
 
     # Close background GIF container if it was opened
     if background_gif:
@@ -2788,9 +2785,9 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                     # Already processed this selection, skip
                     pass
                 elif original_name in checked_in_today:
-                    # Check if already checked in
-                    st.warning(f"{original_name} has already checked in today.")
+                    st.session_state[f'{form_key}_remove_target'] = {'name': original_name, 'tab_name': MINISTRY_ATTENDANCE_TAB_NAME}
                 else:
+                    st.session_state[f'{form_key}_remove_target'] = None
                     # Mark as being processed
                     st.session_state['last_processed_ministry_checkin'] = original_name
 
@@ -2836,24 +2833,21 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                         st.session_state['last_processed_ministry_checkin'] = None
                         st.error(f"{message}")
 
-            # Show undo button BELOW the selectbox (with spacing)
-            if 'last_checkin' in st.session_state and st.session_state['last_checkin']:
-                last_checkin = st.session_state['last_checkin']
-                # Only show undo for ministry form type
-                if last_checkin.get('form_type') == 'ministry':
-                    st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
-                    checkin_display_name = last_checkin['name'].split(" - ")[0] if " - " in last_checkin['name'] else last_checkin['name']
-                    if st.button(f"Undo check-in for {checkin_display_name}", key=f"{form_key}_undo", type="secondary"):
-                        success, undo_message = undo_last_checkin(client, last_checkin['name'], last_checkin['tab_name'])
-                        if success:
-                            st.session_state['last_checkin'] = None
-                            st.session_state['show_checkin_success'] = None
-                            st.session_state['last_processed_ministry_checkin'] = None  # Allow re-checking in
-                            st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
-                            st.session_state['show_undo_success'] = undo_message
-                            st.rerun()
-                        else:
-                            st.error(undo_message)
+            # Show remove attendance button when an already-checked-in name is selected
+            remove_target = st.session_state.get(f'{form_key}_remove_target')
+            if remove_target:
+                display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
+                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                if st.button(f"Remove attendance for {display_name}", key=f"{form_key}_remove", type="secondary"):
+                    success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
+                    if success:
+                        st.session_state[f'{form_key}_remove_target'] = None
+                        st.session_state['last_processed_ministry_checkin'] = None
+                        st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
+                        st.session_state['show_undo_success'] = message
+                        st.rerun()
+                    else:
+                        st.error(message)
 
     # Close background GIF container if it was opened
     if background_gif:
