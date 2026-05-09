@@ -1118,16 +1118,18 @@ def _render_cr_wizard() -> None:
         current = data.get("current_value", "")
         prefill_value = data.get("prefill_value", "")
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
+
+        _pal_nv = _get_daily_palette()
+        _pc_nv = _pal_nv.get("primary", "#5bc0eb")
+        try:
+            _pr_nv, _pg_nv, _pb_nv = int(_pc_nv[1:3], 16), int(_pc_nv[3:5], 16), int(_pc_nv[5:7], 16)
+        except (ValueError, IndexError):
+            _pr_nv, _pg_nv, _pb_nv = 91, 192, 235
+
         with st.chat_message("assistant", avatar="🤖"):
             _member_name = data.get("member_name", "") or label
             st.markdown(f"What should we change **{_member_name}**'s **{field}** to?")
         if current:
-            _pal_nv = _get_daily_palette()
-            _pc_nv = _pal_nv.get("primary", "#5bc0eb")
-            try:
-                _pr_nv, _pg_nv, _pb_nv = int(_pc_nv[1:3], 16), int(_pc_nv[3:5], 16), int(_pc_nv[5:7], 16)
-            except (ValueError, IndexError):
-                _pr_nv, _pg_nv, _pb_nv = 91, 192, 235
             st.markdown(
                 f'<div style="'
                 f'background:#111111;'
@@ -1148,46 +1150,114 @@ def _render_cr_wizard() -> None:
         if prefill_value and current and prefill_value.strip().lower() == current.strip().lower():
             st.info(f"💡 Already set to **{current}** — did you mean something else?")
             prefill_value = ""
-        _go = False
         _val_error = st.session_state.pop("cr_val_error", None)
         if _val_error:
             st.error(_val_error)
-        with st.form("cr_new_value"):
-            if field in _CR_DROPDOWN_FIELDS:
-                dropdowns = _load_key_values_dropdowns()
-                options = dropdowns.get(field, [])
-                if options:
-                    prefill_lower = prefill_value.strip().lower()
-                    if prefill_lower:
-                        # exact match first, then strip leading "N. " prefix for numbered options
-                        prefill_idx = next((i for i, o in enumerate(options) if o.lower() == prefill_lower), None)
-                        if prefill_idx is None:
-                            import re as _re
-                            prefill_idx = next(
-                                (i for i, o in enumerate(options)
-                                 if _re.sub(r'^\d+\.\s*', '', o).strip().lower() == prefill_lower),
-                                None,
-                            )
-                    else:
-                        prefill_idx = None
-                    default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
-                    val = st.selectbox("New value", options, index=default_idx)
+
+        # Input widget (no form — actions are chips below)
+        if field in _CR_DROPDOWN_FIELDS:
+            dropdowns = _load_key_values_dropdowns()
+            options = dropdowns.get(field, [])
+            if options:
+                prefill_lower = prefill_value.strip().lower()
+                if prefill_lower:
+                    prefill_idx = next((i for i, o in enumerate(options) if o.lower() == prefill_lower), None)
+                    if prefill_idx is None:
+                        prefill_idx = next(
+                            (i for i, o in enumerate(options)
+                             if re.sub(r'^\d+\.\s*', '', o).strip().lower() == prefill_lower),
+                            None,
+                        )
                 else:
-                    val = st.text_input("New value", value=prefill_value or current)
-                    hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
-                    if hint:
-                        st.caption(hint)
+                    prefill_idx = None
+                default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
+                val = st.selectbox("New value", options, index=default_idx)
             else:
-                prefill = prefill_value or (current.title() if field == "Name" else current)
-                val = st.text_input("New value", value=prefill)
+                val = st.text_input("New value", value=prefill_value or current)
                 hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
                 if hint:
                     st.caption(hint)
-            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-            _add_more = c1.form_submit_button("+ Add another field", use_container_width=True)
-            _review   = c2.form_submit_button("Review & Submit →",   use_container_width=True)
-            _back     = c3.form_submit_button("← Back",              use_container_width=True)
-            _cancel   = c4.form_submit_button("Cancel",              use_container_width=True)
+        else:
+            prefill = prefill_value or (current.title() if field == "Name" else current)
+            val = st.text_input("New value", value=prefill)
+            hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
+            if hint:
+                st.caption(hint)
+
+        # Hidden real buttons (same pattern as show_info chip strip)
+        _nv_sc = [
+            ("+ Add another field", "cr_nv_add",    False),
+            ("Review & Submit →",   "cr_nv_review", False),
+            ("← Back",              "cr_nv_back",   False),
+            ("✕ Cancel",            "cr_nv_cancel", True),
+        ]
+        st.markdown('<div id="cr-nv-btns-start"></div>', unsafe_allow_html=True)
+        _add_more = st.button("+ Add another field", key="cr_nv_add")
+        _review   = st.button("Review & Submit →",   key="cr_nv_review")
+        _back     = st.button("← Back",              key="cr_nv_back")
+        _cancel   = st.button("✕ Cancel",            key="cr_nv_cancel")
+        st.markdown('<div id="cr-nv-btns-end"></div>', unsafe_allow_html=True)
+
+        _chips_nv_one = "".join(
+            f'<button class="chip{" chip-cancel" if is_cancel else ""}" '
+            f'onclick="cbk_nv(\'{k}\',\'{lbl}\')">{lbl}</button>'
+            for lbl, k, is_cancel in _nv_sc
+        )
+        _st_components.html(
+            f'<style>'
+            f'*{{box-sizing:border-box;margin:0;padding:0;}}'
+            f'body{{background:transparent;overflow:hidden;'
+            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;}}'
+            f'.wrap{{overflow:hidden;padding:4px 0 8px;'
+            f'mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);'
+            f'-webkit-mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);}}'
+            f'.track{{display:flex;gap:12px;width:max-content;'
+            f'animation:marquee 22s linear infinite;}}'
+            f'.wrap:hover .track{{animation-play-state:paused;}}'
+            f'@keyframes marquee{{0%{{transform:translateX(0)}}100%{{transform:translateX(-50%)}}}}'
+            f'.chip{{flex:0 0 auto;background:#1a1a1a;'
+            f'border:1px solid rgba({_pr_nv},{_pg_nv},{_pb_nv},0.3);'
+            f'color:#cccccc;padding:8px 18px;border-radius:999px;'
+            f'font-size:0.86rem;cursor:pointer;white-space:nowrap;'
+            f'transition:border-color 0.15s,color 0.15s,background 0.15s;}}'
+            f'.chip:hover{{border-color:{_pc_nv};color:{_pc_nv};'
+            f'background:rgba({_pr_nv},{_pg_nv},{_pb_nv},0.1);}}'
+            f'.chip-cancel{{border-color:rgba(255,255,255,0.1)!important;color:#555555!important;}}'
+            f'.chip-cancel:hover{{border-color:#e74c3c!important;color:#e74c3c!important;'
+            f'background:rgba(231,76,60,0.08)!important;}}'
+            f'</style>'
+            f'<div class="wrap"><div class="track">'
+            + _chips_nv_one + _chips_nv_one +
+            f'</div></div>'
+            f'<script>'
+            f'function hideRange(){{'
+            f'  var pdoc=window.parent.document;'
+            f'  var s=pdoc.getElementById("cr-nv-btns-start");'
+            f'  var e=pdoc.getElementById("cr-nv-btns-end");'
+            f'  if(!s||!e)return;'
+            f'  pdoc.querySelectorAll("[data-testid=\'stButton\']").forEach(function(b){{'
+            f'    var afterS=!!(s.compareDocumentPosition(b)&4);'
+            f'    var beforeE=!!(e.compareDocumentPosition(b)&2);'
+            f'    if(afterS&&beforeE){{'
+            f'      b.style.display="none";'
+            f'      if(b.parentElement)b.parentElement.style.display="none";'
+            f'    }}'
+            f'  }});'
+            f'  var up=function(el){{while(el&&!el.getAttribute("data-testid"))el=el.parentElement;return el;}};'
+            f'  var sm=up(s);var em=up(e);'
+            f'  if(sm)sm.style.display="none";if(em)em.style.display="none";'
+            f'}}'
+            f'hideRange();setTimeout(hideRange,150);setTimeout(hideRange,500);'
+            f'function cbk_nv(k,label){{'
+            f'  var pdoc=window.parent.document;'
+            f'  var el=pdoc.querySelector(\'[data-testid="st-key-\'+k+\'"] button\');'
+            f'  if(!el){{var bs=pdoc.querySelectorAll("button");for(var i=0;i<bs.length;i++){{if(bs[i].innerText.trim()===label){{el=bs[i];break;}}}}}}'
+            f'  if(el)el.click();'
+            f'}}'
+            f'</script>',
+            height=54,
+        )
+
         if _back:
             st.session_state.cr_step = "show_info"
             st.rerun()
