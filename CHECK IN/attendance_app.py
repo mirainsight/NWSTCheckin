@@ -2316,10 +2316,6 @@ all_option_values = list(options.values())[0]
 
 def render_check_in_form(tab_name, form_key, page_label="Check In"):
     """Render the check-in form for a specific tab"""
-    if st.session_state.get('show_undo_success'):
-        st.success(f"✅ {st.session_state['show_undo_success']}")
-        st.session_state['show_undo_success'] = None
-
     # Wrap form section with GIF background
     if background_gif and gif_src:
         st.markdown(f"""
@@ -2372,6 +2368,10 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
                 name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
                 st.success(f"✅ {name_only} checked in!")
                 st.session_state['show_checkin_success'] = None
+            remove_succ = st.session_state.get('show_undo_success')
+            if remove_succ:
+                st.success(f"✅ {remove_succ}")
+                st.session_state['show_undo_success'] = None
 
         selectbox_key = f"{form_key}_selectbox"
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
@@ -2607,10 +2607,6 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         st.warning(f"No members found for {selected_ministry} ministry.")
         return set()
 
-    if st.session_state.get('show_undo_success'):
-        st.success(f"✅ {st.session_state['show_undo_success']}")
-        st.session_state['show_undo_success'] = None
-
     # Wrap form section with GIF background
     if background_gif and gif_src:
         st.markdown(f"""
@@ -2661,6 +2657,10 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
                 name_only = succ.get('name', '').split(" - ")[0] if succ.get('name') else ''
                 st.success(f"✅ {name_only} checked in!")
                 st.session_state['show_checkin_success'] = None
+            remove_succ = st.session_state.get('show_undo_success')
+            if remove_succ:
+                st.success(f"✅ {remove_succ}")
+                st.session_state['show_undo_success'] = None
 
         selectbox_key = f"{form_key}_selectbox"
         if st.session_state.pop(f"{form_key}_reset_selectbox", None):
