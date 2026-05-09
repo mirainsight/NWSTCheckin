@@ -2556,7 +2556,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
                 st.markdown("<div style='margin-top: 2.5rem;'></div>", unsafe_allow_html=True)
-                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
+                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary", width='stretch'):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
@@ -2839,7 +2839,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
                 st.markdown("<div style='margin-top: 2.5rem;'></div>", unsafe_allow_html=True)
-                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
+                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary", width='stretch'):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
@@ -3460,7 +3460,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     if group_by_zone:
         col_refresh, _col_trailing = st.columns([1, 4])
         with col_refresh:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_{tab_name}", width='stretch'):
+            if st.button("🔄", type="secondary", key=f"refresh_btn_{tab_name}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
@@ -5907,9 +5907,9 @@ if page == "NWST Check In":
         render_check_in_form_fragment(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
-        col_refresh, col_update_names, _col_trailing = st.columns([1, 1, 3])
+        col_refresh, col_update_names = st.columns([1, 3])
         with col_refresh:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", width='stretch'):
+            if st.button("🔄", type="secondary", key=f"refresh_btn_{ATTENDANCE_TAB_NAME}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
@@ -5984,9 +5984,9 @@ elif page == "Ministry Discipleship":
         render_ministry_check_in_form_fragment(st.session_state.selected_ministry, "ministry_attendance_form", f"{st.session_state.selected_ministry} Ministry")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
-        col_refresh_m, col_update_names_m, _col_trailing_m = st.columns([1, 1, 3])
+        col_refresh_m, col_update_names_m = st.columns([1, 3])
         with col_refresh_m:
-            if st.button("Refresh", type="secondary", key=f"refresh_btn_ministry_{st.session_state.selected_ministry}", width='stretch'):
+            if st.button("🔄", type="secondary", key=f"refresh_btn_ministry_{st.session_state.selected_ministry}", width='stretch'):
                 st.session_state.refresh_counter = st.session_state.get('refresh_counter', 0) + 1
                 st.session_state.last_refresh_time = get_now_myt()
                 get_today_attendance_data.clear()
