@@ -1008,18 +1008,6 @@ def _render_cr_wizard() -> None:
                     _sc_data.append(("Browse all →", "cr_browse_all", "__browse__"))
                     _sc_data.append(("✕ Cancel", "cr_cancel_l0", "__cancel__"))
 
-                    # CSS hides real buttons; JS clicks them (pointer-events:none
-                    # only blocks user input — programmatic .click() still works)
-                    _hide_sel = ",".join(
-                        f'[data-testid="st-key-{d[1]}"]' for d in _sc_data
-                    )
-                    st.markdown(
-                        f'<style>{_hide_sel}'
-                        f'{{position:absolute!important;opacity:0!important;'
-                        f'pointer-events:none!important;height:0!important;overflow:hidden!important;}}'
-                        f'</style>',
-                        unsafe_allow_html=True,
-                    )
                     for _sc_label, _sc_key, _sc_field in _sc_data:
                         if st.button(_sc_label, key=_sc_key):
                             if _sc_field == "__browse__":
@@ -1038,9 +1026,10 @@ def _render_cr_wizard() -> None:
 
                     _chips_inner = "".join(
                         f'<button class="chip{"  chip-cancel" if d[2] == "__cancel__" else ""}" '
-                        f'onclick="cbk(\'{d[1]}\')">{d[0]}</button>'
+                        f'onclick="cbk(\'{d[1]}\',\'{d[0]}\')">{d[0]}</button>'
                         for d in _sc_data
                     )
+                    _hide_labels = [d[0] for d in _sc_data]
                     _st_components.html(
                         f'<style>'
                         f'*{{box-sizing:border-box;margin:0;padding:0;}}'
@@ -1074,8 +1063,21 @@ def _render_cr_wizard() -> None:
                         f'<button class="arr" id="ar" onclick="sc(1)">&#8250;</button>'
                         f'</div>'
                         f'<script>'
-                        f'function cbk(k){{'
-                        f'  var el=window.parent.document.querySelector(\'[data-testid="st-key-\'+k+\'"] button\');'
+                        f'var _hl={_hide_labels!r};'
+                        f'function _hb(btn){{'
+                        f'  var el=btn.parentElement;'
+                        f'  while(el){{if(el.getAttribute("data-testid")==="stButton"){{el.style.display="none";return;}}el=el.parentElement;}}'
+                        f'  btn.style.display="none";'
+                        f'}}'
+                        f'function hideReal(){{'
+                        f'  var pdoc=window.parent.document;'
+                        f'  pdoc.querySelectorAll("button").forEach(function(b){{if(_hl.indexOf(b.innerText.trim())!==-1)_hb(b);}});'
+                        f'}}'
+                        f'hideReal();setTimeout(hideReal,150);setTimeout(hideReal,400);'
+                        f'function cbk(k,label){{'
+                        f'  var pdoc=window.parent.document;'
+                        f'  var el=pdoc.querySelector(\'[data-testid="st-key-\'+k+\'"] button\');'
+                        f'  if(!el){{var bs=pdoc.querySelectorAll("button");for(var i=0;i<bs.length;i++){{if(bs[i].innerText.trim()===label){{el=bs[i];break;}}}}}}'
                         f'  if(el)el.click();'
                         f'}}'
                         f'var ch=document.getElementById("ch");'
