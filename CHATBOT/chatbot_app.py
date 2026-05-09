@@ -1237,21 +1237,66 @@ def _render_cr_wizard() -> None:
     # Step 6 — Confirm and submit
     elif step == "confirm":
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
+        member_name = data.get("member_name", "")
+        member_cell = data.get("member_cell", "")
         pending = data.get("pending_changes", [])
-        rows_md = "\n".join(
-            f"| **{ch['field']}** | {ch.get('current_value', '') or '—'} | {ch['new_value']} |"
-            for ch in pending
+        reason_val = data.get("reason", "") or "—"
+
+        _pal_cf = _get_daily_palette()
+        _pc_cf = _pal_cf.get("primary", "#5bc0eb")
+        _lt_cf = _pal_cf.get("light", "#8dd4f0")
+        try:
+            _pr_cf, _pg_cf, _pb_cf = int(_pc_cf[1:3], 16), int(_pc_cf[3:5], 16), int(_pc_cf[5:7], 16)
+        except (ValueError, IndexError):
+            _pr_cf, _pg_cf, _pb_cf = 91, 192, 235
+
+        _change_rows = ""
+        for ch in pending:
+            old = ch.get("current_value", "") or "—"
+            new = ch["new_value"]
+            _change_rows += (
+                f'<tr style="border-top:1px solid #141414;">'
+                f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:36%;white-space:nowrap;">{ch["field"]}</td>'
+                f'<td style="padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:30%;">{old}</td>'
+                f'<td style="padding:5px 16px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;">{new}</td>'
+                f'</tr>'
+            )
+
+        _review_card = (
+            f'<div style="background:#0a0a0a;border:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.25);'
+            f'border-top:3px solid {_pc_cf};border-radius:10px;overflow:hidden;margin:4px 0;'
+            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+            f'box-shadow:0 8px 32px rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);">'
+            # Header
+            f'<div style="background:#111111;padding:12px 16px;border-bottom:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);">'
+            f'<span style="font-size:1.0rem;font-weight:700;color:{_pc_cf};">👤 {member_name}</span>'
+            + (f'<span style="color:#999999;font-size:0.88rem;"> · {member_cell}</span>' if member_cell else "")
+            + f'</div>'
+            # Changes section label + col headers
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};'
+            f'letter-spacing:0.12em;text-transform:uppercase;">Changes</div>'
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<tr style="border-top:1px solid #141414;">'
+            f'<td style="padding:3px 8px 3px 16px;color:#444444;font-size:0.72rem;width:36%;">FIELD</td>'
+            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;width:30%;">CURRENT</td>'
+            f'<td style="padding:3px 16px 3px 0;color:#444444;font-size:0.72rem;">NEW</td>'
+            f'</tr>'
+            + _change_rows
+            + f'</table>'
+            # Reason section
+            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};'
+            f'letter-spacing:0.12em;text-transform:uppercase;border-top:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.12);">Reason</div>'
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<tr>'
+            f'<td style="padding:5px 16px 10px;color:{"#ffffff" if reason_val != "—" else "#333333"};font-size:0.82rem;">{reason_val}</td>'
+            f'</tr>'
+            f'</table>'
+            f'</div>'
         )
-        summary = (
-            "Okay! Here's the rundown — double-check and let's make it happen:\n\n"
-            f"**Requested by:** {data.get('requester', '')}  \n"
-            f"**Member:** {label}  \n\n"
-            "| Field | Current | New |\n|---|---|---|\n"
-            + rows_md
-            + f"\n\n**Reason:** {data.get('reason', '') or '—'}"
-        )
+
         with st.chat_message("assistant", avatar="🤖"):
-            st.markdown(summary)
+            st.markdown("Okay! Here's the rundown — double-check and let's make it happen:")
+            st.markdown(_review_card, unsafe_allow_html=True)
         _submit = False
         _cancel = False
         with st.form("cr_confirm"):
