@@ -930,18 +930,8 @@ def _render_cr_wizard() -> None:
             unsafe_allow_html=True,
         )
 
-        # ── Bot message with prompt + quip ────────────────────────────────
-        with st.chat_message("assistant", avatar="🤖"):
-            if available_fields:
-                st.markdown(f"What are we changing for **{name_val}** today?")
-            else:
-                st.markdown("All fields have been queued up — we're good to go! Ready to review.")
-            if _chosen_quip == "__llm__":
-                _llm_quip = st.session_state.get("_card_llm_quip", "")
-                if _llm_quip:
-                    st.caption(f"*{_llm_quip}*")
-            elif _chosen_quip:
-                st.caption(f"*{_chosen_quip}*")
+        if not available_fields:
+            st.markdown("All fields queued — ready to review.")
 
         if available_fields:
             avail_set = set(available_fields)
