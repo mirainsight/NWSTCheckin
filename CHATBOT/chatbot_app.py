@@ -1105,6 +1105,7 @@ for _k, _v in [
     ("user_name", ""), ("user_email", ""), ("user_cell", ""),
     ("user_role", ""), ("user_status", ""), ("user_profile_loaded", False),
     ("authenticated", False), ("login_email", ""),
+    ("messages", []),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
