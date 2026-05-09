@@ -1089,6 +1089,39 @@ def _render_cr_wizard() -> None:
                         f'  if(!el){{var bs=pdoc.querySelectorAll("button");for(var i=0;i<bs.length;i++){{if(bs[i].innerText.trim()===label){{el=bs[i];break;}}}}}}'
                         f'  if(el)el.click();'
                         f'}}'
+                        f'(function(){{'
+                        f'  var track=document.querySelector(".track");'
+                        f'  var sx=0,bx=0,dragging=false,moved=false,resumeTimer=null;'
+                        f'  function getCurX(){{var t=window.getComputedStyle(track).transform;if(!t||t==="none")return 0;return parseFloat(t.split(",")[4])||0;}}'
+                        f'  function startDrag(cx){{'
+                        f'    if(resumeTimer){{clearTimeout(resumeTimer);resumeTimer=null;}}'
+                        f'    dragging=true;moved=false;sx=cx;bx=getCurX();'
+                        f'    track.style.animationPlayState="paused";'
+                        f'    track.style.transform="translateX("+bx+"px)";'
+                        f'  }}'
+                        f'  function moveDrag(cx){{'
+                        f'    if(!dragging)return;'
+                        f'    var d=cx-sx;if(Math.abs(d)>8)moved=true;'
+                        f'    track.style.transform="translateX("+(bx+d)+"px)";'
+                        f'  }}'
+                        f'  function endDrag(){{'
+                        f'    if(!dragging)return;dragging=false;'
+                        f'    var fx=getCurX();var half=track.scrollWidth/2;'
+                        f'    var norm=fx%half;if(norm>0)norm-=half;'
+                        f'    var delay=-(norm/-half*22);'
+                        f'    resumeTimer=setTimeout(function(){{'
+                        f'      track.style.transform="";track.style.animationDelay=delay+"s";'
+                        f'      track.style.animationPlayState="running";resumeTimer=null;'
+                        f'    }},1500);'
+                        f'  }}'
+                        f'  track.addEventListener("touchstart",function(e){{startDrag(e.touches[0].clientX);}},{{passive:true}});'
+                        f'  track.addEventListener("touchmove",function(e){{moveDrag(e.touches[0].clientX);}},{{passive:true}});'
+                        f'  track.addEventListener("touchend",endDrag);'
+                        f'  track.addEventListener("mousedown",function(e){{startDrag(e.clientX);e.preventDefault();}});'
+                        f'  document.addEventListener("mousemove",function(e){{if(dragging)moveDrag(e.clientX);}});'
+                        f'  document.addEventListener("mouseup",endDrag);'
+                        f'  track.addEventListener("click",function(e){{if(moved){{e.stopPropagation();e.preventDefault();moved=false;}}}},true);'
+                        f'}})()'
                         f'</script>',
                         height=54,
                     )
@@ -1254,6 +1287,39 @@ def _render_cr_wizard() -> None:
             f'  if(!el){{var bs=pdoc.querySelectorAll("button");for(var i=0;i<bs.length;i++){{if(bs[i].innerText.trim()===label){{el=bs[i];break;}}}}}}'
             f'  if(el)el.click();'
             f'}}'
+            f'(function(){{'
+            f'  var track=document.querySelector(".track");'
+            f'  var sx=0,bx=0,dragging=false,moved=false,resumeTimer=null;'
+            f'  function getCurX(){{var t=window.getComputedStyle(track).transform;if(!t||t==="none")return 0;return parseFloat(t.split(",")[4])||0;}}'
+            f'  function startDrag(cx){{'
+            f'    if(resumeTimer){{clearTimeout(resumeTimer);resumeTimer=null;}}'
+            f'    dragging=true;moved=false;sx=cx;bx=getCurX();'
+            f'    track.style.animationPlayState="paused";'
+            f'    track.style.transform="translateX("+bx+"px)";'
+            f'  }}'
+            f'  function moveDrag(cx){{'
+            f'    if(!dragging)return;'
+            f'    var d=cx-sx;if(Math.abs(d)>8)moved=true;'
+            f'    track.style.transform="translateX("+(bx+d)+"px)";'
+            f'  }}'
+            f'  function endDrag(){{'
+            f'    if(!dragging)return;dragging=false;'
+            f'    var fx=getCurX();var half=track.scrollWidth/2;'
+            f'    var norm=fx%half;if(norm>0)norm-=half;'
+            f'    var delay=-(norm/-half*22);'
+            f'    resumeTimer=setTimeout(function(){{'
+            f'      track.style.transform="";track.style.animationDelay=delay+"s";'
+            f'      track.style.animationPlayState="running";resumeTimer=null;'
+            f'    }},1500);'
+            f'  }}'
+            f'  track.addEventListener("touchstart",function(e){{startDrag(e.touches[0].clientX);}},{{passive:true}});'
+            f'  track.addEventListener("touchmove",function(e){{moveDrag(e.touches[0].clientX);}},{{passive:true}});'
+            f'  track.addEventListener("touchend",endDrag);'
+            f'  track.addEventListener("mousedown",function(e){{startDrag(e.clientX);e.preventDefault();}});'
+            f'  document.addEventListener("mousemove",function(e){{if(dragging)moveDrag(e.clientX);}});'
+            f'  document.addEventListener("mouseup",endDrag);'
+            f'  track.addEventListener("click",function(e){{if(moved){{e.stopPropagation();e.preventDefault();moved=false;}}}},true);'
+            f'}})()'
             f'</script>',
             height=54,
         )
@@ -1499,7 +1565,8 @@ st.markdown(
 )
 
 st.title("NWST Assistant")
-st.caption("Ask about cell health, check-in, members, or newcomers")
+if not st.session_state.get("authenticated", False):
+    st.caption("Ask about cell health, check-in, members, or newcomers")
 
 # ── identity + login gate ──────────────────────────────────────────────────────
 
