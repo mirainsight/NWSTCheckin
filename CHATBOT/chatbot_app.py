@@ -989,7 +989,29 @@ def _render_cr_wizard() -> None:
             _member_name = data.get("member_name", "") or label
             st.markdown(f"What should we change **{_member_name}**'s **{field}** to?")
         if current:
-            st.caption(f"Current: **{current}**")
+            _pal_nv = _get_daily_palette()
+            _pc_nv = _pal_nv.get("primary", "#5bc0eb")
+            try:
+                _pr_nv, _pg_nv, _pb_nv = int(_pc_nv[1:3], 16), int(_pc_nv[3:5], 16), int(_pc_nv[5:7], 16)
+            except (ValueError, IndexError):
+                _pr_nv, _pg_nv, _pb_nv = 91, 192, 235
+            st.markdown(
+                f'<div style="'
+                f'background:#111111;'
+                f'border:1px solid rgba({_pr_nv},{_pg_nv},{_pb_nv},0.22);'
+                f'border-left:3px solid {_pc_nv};'
+                f'border-radius:6px;'
+                f'padding:8px 14px;'
+                f'margin:6px 0 10px;'
+                f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+                f'display:inline-flex;align-items:baseline;gap:10px;'
+                f'box-shadow:0 2px 12px rgba({_pr_nv},{_pg_nv},{_pb_nv},0.10);'
+                f'">'
+                f'<span style="color:{_pc_nv};font-size:0.70rem;font-weight:700;letter-spacing:0.11em;text-transform:uppercase;white-space:nowrap;">Current</span>'
+                f'<span style="color:#e8e8e8;font-size:0.88rem;font-weight:600;">{current}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         if prefill_value and current and prefill_value.strip().lower() == current.strip().lower():
             st.info(f"💡 Already set to **{current}** — did you mean something else?")
             prefill_value = ""
