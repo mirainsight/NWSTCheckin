@@ -858,7 +858,7 @@ def _render_cr_wizard() -> None:
         if _chosen_quip == "__llm__" and "_card_llm_quip" not in st.session_state:
             st.session_state["_card_llm_quip"] = _get_card_llm_quip(name_val)
 
-        # ── Compact peek row (always visible, outside chat_message) ──────
+        # ── Combined collapsible identity card ───────────────────────────
         _pal_si = _get_daily_palette()
         _pc_si = _pal_si.get("primary", "#5bc0eb")
         try:
@@ -878,56 +878,51 @@ def _render_cr_wizard() -> None:
         )
         _status_label = _status_val.split(":")[0].strip() if ":" in _status_val else _status_val
         _badge = (
-            f'<span style="margin-left:auto;background:{_status_color}22;'
+            f'<span style="background:{_status_color}22;'
             f'border:1px solid {_status_color}66;color:{_status_color};'
             f'font-size:0.70rem;font-weight:700;letter-spacing:0.08em;'
             f'text-transform:uppercase;padding:3px 10px;border-radius:999px;">'
             f'{_status_label}</span>'
         ) if _status_val else ""
 
-        st.markdown(
-            f'<div style="background:#111111;border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25);'
-            f'border-top:3px solid {_pc_si};border-radius:10px;padding:12px 16px;margin:4px 0;'
-            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
-            f'box-shadow:0 4px 20px rgba({_pr_si},{_pg_si},{_pb_si},0.12);'
-            f'display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
-            f'<span style="color:{_pc_si};font-size:1.0rem;font-weight:700;">👤 {name_val}</span>'
-            f'<span style="color:#555;font-size:0.9rem;">·</span>'
-            f'<span style="color:#aaaaaa;font-size:0.88rem;">{cell_val}</span>'
-            f'{_badge}'
-            f'</div>',
-            unsafe_allow_html=True,
+        # Strip outer card border/radius so it merges flush into the details container
+        _inner_html = html.replace(
+            '<div style="background:#0a0a0a;',
+            '<div class="cr-inner-card" style="background:#0a0a0a;',
+            1,
         )
-
-        # ── Full card in expander ─────────────────────────────────────────
         st.markdown(
             f'<style>'
-            f'div[data-testid="stExpander"] {{'
-            f'  border: 1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25) !important;'
-            f'  border-top: 3px solid {_pc_si} !important;'
-            f'  border-radius: 10px !important;'
-            f'  background: #111111 !important;'
-            f'  box-shadow: 0 4px 20px rgba({_pr_si},{_pg_si},{_pb_si},0.10) !important;'
-            f'  overflow: hidden !important;'
-            f'}}'
-            f'div[data-testid="stExpander"] details summary {{'
-            f'  background: #111111 !important;'
-            f'}}'
-            f'div[data-testid="stExpander"] details summary p {{'
-            f'  color: {_pc_si} !important;'
-            f'  font-weight: 700 !important;'
-            f'  letter-spacing: 0.04em !important;'
-            f'}}'
-            f'div[data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {{'
-            f'  background: #0a0a0a !important;'
-            f'  border-top: 1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.15) !important;'
-            f'  padding: 0 !important;'
-            f'}}'
-            f'</style>',
+            f'#cr-id-card summary{{list-style:none;}}'
+            f'#cr-id-card summary::-webkit-details-marker{{display:none;}}'
+            f'#cr-id-card[open]>.cr-summary{{border-bottom:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.15)!important;}}'
+            f'#cr-id-card[open] .cr-chev{{transform:rotate(180deg);}}'
+            f'.cr-chev{{display:inline-block;transition:transform 0.2s;}}'
+            f'.cr-inner-card{{border:none!important;border-top:none!important;'
+            f'border-radius:0!important;margin:0!important;box-shadow:none!important;}}'
+            f'</style>'
+            f'<details id="cr-id-card" style="'
+            f'border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25);'
+            f'border-top:3px solid {_pc_si};border-radius:10px;overflow:hidden;margin:4px 0;'
+            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+            f'box-shadow:0 8px 32px rgba({_pr_si},{_pg_si},{_pb_si},0.15);">'
+            f'<summary class="cr-summary" style="'
+            f'display:flex;align-items:center;gap:12px;'
+            f'padding:12px 16px;cursor:pointer;outline:none;background:#111111;">'
+            f'<span style="flex:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+            f'<span style="color:{_pc_si};font-size:1.0rem;font-weight:700;">👤 {name_val}</span>'
+            f'<span style="color:#555555;font-size:0.9rem;">·</span>'
+            f'<span style="color:#aaaaaa;font-size:0.88rem;">{cell_val}</span>'
+            f'</span>'
+            f'<span style="display:flex;align-items:center;gap:8px;">'
+            f'{_badge}'
+            f'<span class="cr-chev" style="color:{_pc_si};font-size:0.65rem;margin-left:4px;">▼</span>'
+            f'</span>'
+            f'</summary>'
+            + _inner_html
+            + f'</details>',
             unsafe_allow_html=True,
         )
-        with st.expander("View full identity card"):
-            st.markdown(html, unsafe_allow_html=True)
 
         # ── Bot message with prompt + quip ────────────────────────────────
         with st.chat_message("assistant", avatar="🤖"):
