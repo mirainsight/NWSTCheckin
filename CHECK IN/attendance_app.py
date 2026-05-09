@@ -1880,7 +1880,7 @@ def undo_last_checkin(client, name, tab_name):
                     redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
 
                     if removed > 0:
-                        return True, f"Undone! {display_name} has been removed from today's check-in."
+                        return True, f"{display_name} removed from check in!"
 
                     if client and (SHEET_ID or "").strip():
                         try:
@@ -1901,7 +1901,7 @@ def undo_last_checkin(client, name, tab_name):
                                 attendance_sheet.delete_rows(row_to_delete)
                         except Exception:
                             pass
-                    return True, f"Undone! {display_name} has been removed from today's check-in."
+                    return True, f"{display_name} removed from check in!"
         except Exception as e:
             return False, f"Failed to undo: {str(e)}"
 
@@ -1944,7 +1944,7 @@ def undo_last_checkin(client, name, tab_name):
                     )
             except Exception:
                 pass
-        return True, f"Undone! {display_name} has been removed from today's check-in."
+        return True, f"{display_name} removed from check in!"
     except gspread.exceptions.APIError as e:
         if "429" in str(e) or "Quota exceeded" in str(e):
             return False, "⚠️ API quota exceeded. Please wait a moment and try again."
@@ -2317,7 +2317,7 @@ all_option_values = list(options.values())[0]
 def render_check_in_form(tab_name, form_key, page_label="Check In"):
     """Render the check-in form for a specific tab"""
     if st.session_state.get('show_undo_success'):
-        st.info(f"↩️ {st.session_state['show_undo_success']}")
+        st.success(f"✅ {st.session_state['show_undo_success']}")
         st.session_state['show_undo_success'] = None
 
     # Wrap form section with GIF background
@@ -2555,7 +2555,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             remove_target = st.session_state.get(f'{form_key}_remove_target')
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
-                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 2.5rem;'></div>", unsafe_allow_html=True)
                 if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
@@ -2607,7 +2607,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
         return set()
 
     if st.session_state.get('show_undo_success'):
-        st.info(f"↩️ {st.session_state['show_undo_success']}")
+        st.success(f"✅ {st.session_state['show_undo_success']}")
         st.session_state['show_undo_success'] = None
 
     # Wrap form section with GIF background
@@ -2837,7 +2837,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             remove_target = st.session_state.get(f'{form_key}_remove_target')
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
-                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 2.5rem;'></div>", unsafe_allow_html=True)
                 if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
