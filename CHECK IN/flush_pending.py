@@ -1069,7 +1069,7 @@ def _sync_chatbot_to_sheets(
     except Exception as e:
         return False, f"Could not open chatbot sheet: {e}"
 
-    # Open change requests spreadsheet (separate sheet if configured, otherwise fall back to chatbot sheet)
+    # Change requests spreadsheet (separate sheet if configured, otherwise fall back to chatbot sheet)
     if change_req_sheet_id and change_req_sheet_id != chatbot_sheet_id:
         try:
             cr_spreadsheet = gsheet_client.open_by_key(change_req_sheet_id)
@@ -1107,7 +1107,7 @@ def _sync_chatbot_to_sheets(
     else:
         _emit("  Chat logs: nothing to sync", log_lines, with_ts=False)
 
-    # Change requests — historical (up to yesterday) + today via offset
+    # Change requests queued in Upstash (fallback from direct sheet write failures)
     historical_reqs = get_unsynced_change_requests(rc, today_str)
     today_reqs, today_req_offset = _read_today_chatbot_items(rc, "change_requests:", today_str)
     all_reqs = historical_reqs + today_reqs
@@ -1130,9 +1130,9 @@ def _sync_chatbot_to_sheets(
         if today_reqs:
             rc.set(f"change_requests:synced_offset:{today_str}", today_req_offset + len(today_reqs), ex=2 * 86400)
         total += len(all_reqs)
-        _emit(f"  Change requests: +{len(all_reqs)} rows", log_lines, with_ts=False)
+        _emit(f"  Change requests (queued fallback): +{len(all_reqs)} rows", log_lines, with_ts=False)
     else:
-        _emit("  Change requests: nothing to sync", log_lines, with_ts=False)
+        _emit("  Change requests: nothing queued", log_lines, with_ts=False)
 
     if total == 0:
         return True, "nothing to sync"
@@ -1330,7 +1330,7 @@ def _parse_sync_summary(detail_log: list[str]) -> list[tuple[str, str]]:
             rows["chat"] = m.group(1).strip()
             continue
 
-        m = re.match(r"Change requests:\s*(.+)", s)
+        m = re.match(r"Change requests \(queued fallback\):\s*(.+)", s)
         if m:
             rows["change_req"] = m.group(1).strip()
             continue
@@ -1356,8 +1356,8 @@ def _parse_sync_summary(detail_log: list[str]) -> list[tuple[str, str]]:
     chatbot_parts = []
     if "chat" in rows:
         chatbot_parts.append(rows["chat"])
-    if "change_req" in rows and rows["change_req"] != "nothing to sync":
-        chatbot_parts.append(rows["change_req"] + " change req.")
+    if "change_req" in rows and rows["change_req"] != "nothing queued":
+        chatbot_parts.append(rows["change_req"] + " queued req.")
     if chatbot_parts:
         result.append(("Chatbot", "  ·  ".join(chatbot_parts)))
 
