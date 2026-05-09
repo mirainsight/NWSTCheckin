@@ -1363,7 +1363,7 @@ def _bubble_html(log_lines: list[str], live: bool = False) -> str:
             low = s.lower()
             if any(x in low for x in ["went wrong", "error", "stopped", "failed"]):
                 cls, icon = "bubble-error", "✕"
-            elif any(x in low for x in ["all done", "saved!", "done!"]):
+            elif any(x in low for x in ["all done", "saved!", "done!", "updated!"]):
                 cls, icon = "bubble-success", "✓"
             else:
                 cls, icon = "bubble-info", "·"
