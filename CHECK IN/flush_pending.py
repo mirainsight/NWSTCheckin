@@ -995,6 +995,17 @@ def _resolve_chatbot_sheet_id(log_lines: list[str] | None = None) -> str:
     return sheet_id
 
 
+def _resolve_change_req_sheet_id(log_lines: list[str] | None = None) -> str:
+    sheet_id = os.getenv("CHANGE_REQ_SHEET_ID", "").strip()
+    if not sheet_id:
+        try:
+            import streamlit as st
+            sheet_id = (st.secrets.get("CHANGE_REQ_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    return sheet_id
+
+
 def _ensure_chatbot_log_worksheet(spreadsheet):
     headers = ["Date", "Time", "User Name", "Email", "Cell", "Question", "Answer", "Tokens"]
     try:
@@ -1040,6 +1051,7 @@ def _sync_chatbot_to_sheets(
     gsheet_client,
     chatbot_sheet_id: str,
     log_lines: list[str] | None,
+    change_req_sheet_id: str = "",
 ) -> tuple[bool, str]:
     if not _chatbot_redis_available:
         return False, "chatbot_redis module not found — check CHATBOT folder path."
@@ -1056,6 +1068,16 @@ def _sync_chatbot_to_sheets(
         spreadsheet = gsheet_client.open_by_key(chatbot_sheet_id)
     except Exception as e:
         return False, f"Could not open chatbot sheet: {e}"
+
+    # Open change requests spreadsheet (separate sheet if configured, otherwise fall back to chatbot sheet)
+    if change_req_sheet_id and change_req_sheet_id != chatbot_sheet_id:
+        try:
+            cr_spreadsheet = gsheet_client.open_by_key(change_req_sheet_id)
+        except Exception as e:
+            _emit(f"  Could not open change request sheet: {e}", log_lines, with_ts=False)
+            cr_spreadsheet = spreadsheet
+    else:
+        cr_spreadsheet = spreadsheet
 
     total = 0
 
@@ -1090,7 +1112,7 @@ def _sync_chatbot_to_sheets(
     today_reqs, today_req_offset = _read_today_chatbot_items(rc, "change_requests:", today_str)
     all_reqs = historical_reqs + today_reqs
     if all_reqs:
-        ws2 = _ensure_change_req_worksheet(spreadsheet)
+        ws2 = _ensure_change_req_worksheet(cr_spreadsheet)
         rows2 = [[
             e.get("date", ""), e.get("timestamp", ""),
             e.get("requester", ""), e.get("member_name", ""), e.get("member_cell", ""),
@@ -1191,8 +1213,9 @@ def run_full_sheet_resync(
     _emit("Syncing chatbot logs...", log_lines, with_ts=False)
     _progress_set(progress_bar, 0.94, "Syncing chatbot...")
     chatbot_sheet_id = _resolve_chatbot_sheet_id(log_lines)
+    change_req_sheet_id = _resolve_change_req_sheet_id(log_lines)
     if chatbot_sheet_id:
-        _ok_cb, _msg_cb = _sync_chatbot_to_sheets(client, chatbot_sheet_id, log_lines)
+        _ok_cb, _msg_cb = _sync_chatbot_to_sheets(client, chatbot_sheet_id, log_lines, change_req_sheet_id=change_req_sheet_id)
         if not _ok_cb:
             _emit(f"  Chatbot sync skipped: {_msg_cb}", log_lines, with_ts=False)
     else:
