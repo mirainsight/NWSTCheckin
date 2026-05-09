@@ -2076,24 +2076,41 @@ st.markdown(f"""
         transform: scale(1.02) !important;
     }}
 
-    /* Update Names link styled as button */
+    /* Secondary buttons + Update Names link — shared transparent gradient style */
+    .stButton > button[kind="secondary"] {{
+        background: linear-gradient(135deg, {page_colors['primary']}18 0%, {page_colors['light']}28 50%, {page_colors['primary']}18 100%) !important;
+        border: 1px solid {page_colors['primary']}60 !important;
+        color: {page_colors['primary']} !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.5px !important;
+        border-radius: 4px !important;
+    }}
+    .stButton > button[kind="secondary"]:hover {{
+        background: linear-gradient(135deg, {page_colors['primary']}35 0%, {page_colors['light']}50 50%, {page_colors['primary']}35 100%) !important;
+        border-color: {page_colors['primary']} !important;
+        color: {page_colors['primary']} !important;
+        transform: scale(1.01) !important;
+    }}
     .update-names-btn {{
         display: block !important;
         text-align: center !important;
-        padding: 0.5rem 1rem !important;
-        border: 2px solid {page_colors['primary']} !important;
-        border-radius: 0px !important;
+        padding: 0.45rem 1rem !important;
+        border: 1px solid {page_colors['primary']}60 !important;
+        border-radius: 4px !important;
         color: {page_colors['primary']} !important;
         text-decoration: none !important;
         font-family: 'Inter', sans-serif !important;
-        font-weight: 400 !important;
+        font-weight: 500 !important;
         letter-spacing: 0.5px !important;
-        background: transparent !important;
+        font-size: 0.875rem !important;
+        background: linear-gradient(135deg, {page_colors['primary']}18 0%, {page_colors['light']}28 50%, {page_colors['primary']}18 100%) !important;
         transition: all 0.2s ease !important;
     }}
     .update-names-btn:hover {{
-        background-color: {page_colors['primary']} !important;
-        color: {page_colors['background']} !important;
+        background: linear-gradient(135deg, {page_colors['primary']}35 0%, {page_colors['light']}50 50%, {page_colors['primary']}35 100%) !important;
+        color: {page_colors['primary']} !important;
+        border-color: {page_colors['primary']} !important;
         transform: scale(1.02) !important;
     }}
 
