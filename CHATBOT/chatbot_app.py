@@ -738,6 +738,8 @@ def _cr_reset() -> None:
     st.session_state["cr_field_candidates"] = []
     st.session_state["cr_field_query"] = ""
     st.session_state.pop("cr_val_error", None)
+    st.session_state.pop("cr_edit_return", None)
+    st.session_state.pop("cr_edit_original", None)
 
 
 def _render_cr_wizard() -> None:
@@ -1341,7 +1343,13 @@ def _render_cr_wizard() -> None:
         )
 
         if _back:
-            st.session_state.cr_step = "show_info"
+            if st.session_state.pop("cr_edit_return", False):
+                original = st.session_state.pop("cr_edit_original", None)
+                if original:
+                    st.session_state.cr_data.setdefault("pending_changes", []).append(original)
+                st.session_state.cr_step = "confirm"
+            else:
+                st.session_state.cr_step = "show_info"
             st.rerun()
         if _cancel:
             _cr_reset()
@@ -1363,7 +1371,12 @@ def _render_cr_wizard() -> None:
                         "new_value": str_val,
                     })
                     if _add_more:
+                        st.session_state.pop("cr_edit_return", None)
+                        st.session_state.pop("cr_edit_original", None)
                         st.session_state.cr_step = "show_info"
+                    elif st.session_state.pop("cr_edit_return", False):
+                        st.session_state.pop("cr_edit_original", None)
+                        st.session_state.cr_step = "confirm"
                     else:
                         st.session_state.cr_step = "reason"
                     st.rerun()
@@ -1406,11 +1419,17 @@ def _render_cr_wizard() -> None:
         for ch in pending:
             old = ch.get("current_value", "") or "—"
             new = ch["new_value"]
+            _fkey = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
             _change_rows += (
-                f'<tr style="border-top:1px solid #141414;">'
-                f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:36%;white-space:nowrap;">{ch["field"]}</td>'
-                f'<td style="padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:30%;">{old}</td>'
-                f'<td style="padding:5px 16px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;">{new}</td>'
+                f'<tr data-cr-edit="{_fkey}" style="border-top:1px solid #141414;cursor:pointer;" '
+                f'onmouseenter="this.style.background=\'#181818\';this.querySelector(\'.cr-ed\').style.opacity=\'1\'" '
+                f'onmouseleave="this.style.background=\'\';this.querySelector(\'.cr-ed\').style.opacity=\'0\'">'
+                f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;">{ch["field"]}</td>'
+                f'<td style="padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;">{old}</td>'
+                f'<td style="padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;">{new}</td>'
+                f'<td style="padding:5px 12px 5px 0;text-align:right;white-space:nowrap;">'
+                f'<span class="cr-ed" style="color:#666;font-size:0.72rem;opacity:0;transition:opacity 0.15s;">✏ edit</span>'
+                f'</td>'
                 f'</tr>'
             )
 
@@ -1429,9 +1448,10 @@ def _render_cr_wizard() -> None:
             f'letter-spacing:0.12em;text-transform:uppercase;">Changes</div>'
             f'<table style="width:100%;border-collapse:collapse;">'
             f'<tr style="border-top:1px solid #141414;">'
-            f'<td style="padding:3px 8px 3px 16px;color:#444444;font-size:0.72rem;width:36%;">FIELD</td>'
-            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;width:30%;">CURRENT</td>'
-            f'<td style="padding:3px 16px 3px 0;color:#444444;font-size:0.72rem;">NEW</td>'
+            f'<td style="padding:3px 8px 3px 16px;color:#444444;font-size:0.72rem;width:34%;">FIELD</td>'
+            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;width:28%;">CURRENT</td>'
+            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;">NEW</td>'
+            f'<td style="padding:3px 12px 3px 0;"></td>'
             f'</tr>'
             + _change_rows
             + f'</table>'
@@ -1455,6 +1475,57 @@ def _render_cr_wizard() -> None:
             c1, c2 = st.columns([1, 1])
             _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
             _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
+
+        # Hidden edit buttons — one per queued change, wired via JS to row clicks
+        st.markdown('<div id="cr-cf-edit-start"></div>', unsafe_allow_html=True)
+        for _ch in pending:
+            _fkey = f"cr_cf_edit_{_ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+            if st.button(f"edit {_ch['field']}", key=_fkey):
+                st.session_state["cr_edit_original"] = _ch
+                st.session_state["cr_edit_return"] = True
+                st.session_state.cr_data["pending_changes"] = [c for c in pending if c["field"] != _ch["field"]]
+                st.session_state.cr_data.update({
+                    "field": _ch["field"],
+                    "current_value": _ch.get("current_value", ""),
+                    "prefill_value": _ch["new_value"],
+                })
+                st.session_state.cr_step = "new_value"
+                st.rerun()
+        st.markdown('<div id="cr-cf-edit-end"></div>', unsafe_allow_html=True)
+        _st_components.html(
+            f'<script>'
+            f'(function(){{'
+            f'  var pdoc=window.parent.document;'
+            f'  function hide(){{'
+            f'    var s=pdoc.getElementById("cr-cf-edit-start");'
+            f'    var e=pdoc.getElementById("cr-cf-edit-end");'
+            f'    if(!s||!e)return;'
+            f'    pdoc.querySelectorAll("[data-testid=\'stButton\']").forEach(function(b){{'
+            f'      var after=!!(s.compareDocumentPosition(b)&4);'
+            f'      var before=!!(e.compareDocumentPosition(b)&2);'
+            f'      if(after&&before){{b.style.display="none";if(b.parentElement)b.parentElement.style.display="none";}}'
+            f'    }});'
+            f'    var up=function(el){{while(el&&!el.getAttribute("data-testid"))el=el.parentElement;return el;}};'
+            f'    var sm=up(s);var em=up(e);'
+            f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
+            f'  }}'
+            f'  function wire(){{'
+            f'    pdoc.querySelectorAll("tr[data-cr-edit]").forEach(function(tr){{'
+            f'      if(tr._crWired)return;tr._crWired=true;'
+            f'      tr.addEventListener("click",function(){{'
+            f'        var bk=tr.getAttribute("data-cr-edit");'
+            f'        var btn=pdoc.querySelector(\'[data-testid="st-key-\'+bk+\'"] button\');'
+            f'        if(btn)btn.click();'
+            f'      }});'
+            f'    }});'
+            f'  }}'
+            f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
+            f'  wire();setTimeout(wire,150);setTimeout(wire,500);'
+            f'}})()'
+            f'</script>',
+            height=1,
+        )
+
         if _cancel:
             _cr_reset()
             st.session_state.messages.append({
