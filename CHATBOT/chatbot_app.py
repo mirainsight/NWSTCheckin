@@ -994,38 +994,102 @@ def _render_cr_wizard() -> None:
                     st.rerun()
 
             else:
-                # ── Level 0: shortcuts + Browse all (hidden once user has searched) ─────
+                # ── Level 0: swipe chip row ───────────────────────────────
                 if not st.session_state.get("cr_field_query", ""):
-                    _shortcuts = []
+                    _sc_data = []  # (label, key, field)
                     if "Cell" in avail_set:
-                        _shortcuts.append(("Change Cell", "Cell"))
+                        _sc_data.append(("Change Cell", "cr_sc_cell", "Cell"))
                     if "Status" in avail_set:
-                        _shortcuts.append(("Change Status", "Status"))
+                        _sc_data.append(("Change Status", "cr_sc_status", "Status"))
                     if "Notes" in avail_set:
-                        _shortcuts.append(("Add Notes", "Notes"))
-                    _has_ministry = any(f in avail_set for f in _ministry_fields)
-                    if _has_ministry:
-                        _shortcuts.append(("Change Role", None))
+                        _sc_data.append(("Add Notes", "cr_sc_notes", "Notes"))
+                    if any(f in avail_set for f in _ministry_fields):
+                        _sc_data.append(("Change Role", "cr_sc_role", None))
+                    _sc_data.append(("Browse all →", "cr_browse_all", "__browse__"))
+                    _sc_data.append(("✕ Cancel", "cr_cancel_l0", "__cancel__"))
 
-                    if _shortcuts:
-                        sc_cols = st.columns(len(_shortcuts))
-                        for i, (sc_label, sc_field) in enumerate(_shortcuts):
-                            if sc_cols[i].button(sc_label, key=f"cr_sc_{i}", use_container_width=True):
-                                if sc_field is not None:
-                                    _cr_advance_to_field(sc_field, member, mcols, name_val, cell_val)
-                                else:
-                                    st.session_state.cr_field_group = "Ministry"
-                                    st.session_state["cr_field_candidates"] = []
-                                    st.rerun()
+                    # CSS hides real buttons; JS clicks them (pointer-events:none
+                    # only blocks user input — programmatic .click() still works)
+                    _hide_sel = ",".join(
+                        f'[data-testid="st-key-{d[1]}"]' for d in _sc_data
+                    )
+                    st.markdown(
+                        f'<style>{_hide_sel}'
+                        f'{{position:absolute!important;opacity:0!important;'
+                        f'pointer-events:none!important;height:0!important;overflow:hidden!important;}}'
+                        f'</style>',
+                        unsafe_allow_html=True,
+                    )
+                    for _sc_label, _sc_key, _sc_field in _sc_data:
+                        if st.button(_sc_label, key=_sc_key):
+                            if _sc_field == "__browse__":
+                                st.session_state.cr_field_group = "__browse__"
+                                st.session_state["cr_field_candidates"] = []
+                                st.rerun()
+                            elif _sc_field == "__cancel__":
+                                _cr_reset()
+                                st.rerun()
+                            elif _sc_field is not None:
+                                _cr_advance_to_field(_sc_field, member, mcols, name_val, cell_val)
+                            else:
+                                st.session_state.cr_field_group = "Ministry"
+                                st.session_state["cr_field_candidates"] = []
+                                st.rerun()
 
-                    col_browse, col_cancel = st.columns([3, 1])
-                    if col_browse.button("Browse all →", key="cr_browse_all", use_container_width=True):
-                        st.session_state.cr_field_group = "__browse__"
-                        st.session_state["cr_field_candidates"] = []
-                        st.rerun()
-                    if col_cancel.button("Cancel", key="cr_cancel_l0"):
-                        _cr_reset()
-                        st.rerun()
+                    _chips_inner = "".join(
+                        f'<button class="chip{"  chip-cancel" if d[2] == "__cancel__" else ""}" '
+                        f'onclick="cbk(\'{d[1]}\')">{d[0]}</button>'
+                        for d in _sc_data
+                    )
+                    _st_components.html(
+                        f'<style>'
+                        f'*{{box-sizing:border-box;margin:0;padding:0;}}'
+                        f'body{{background:transparent;overflow:hidden;'
+                        f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;}}'
+                        f'.row{{display:flex;align-items:center;gap:6px;padding:4px 0 8px;}}'
+                        f'.arr{{flex:0 0 auto;background:transparent;'
+                        f'border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25);'
+                        f'color:rgba({_pr_si},{_pg_si},{_pb_si},0.7);'
+                        f'width:28px;height:34px;border-radius:6px;cursor:pointer;'
+                        f'font-size:1.1rem;line-height:1;transition:all 0.15s;}}'
+                        f'.arr:hover{{border-color:{_pc_si};color:{_pc_si};}}'
+                        f'.arr:disabled{{opacity:0.18;cursor:default;}}'
+                        f'.chips{{flex:1;display:flex;overflow-x:auto;gap:8px;'
+                        f'scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:2px 0;}}'
+                        f'.chips::-webkit-scrollbar{{display:none;}}'
+                        f'.chip{{flex:0 0 auto;background:#1a1a1a;'
+                        f'border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.3);'
+                        f'color:#cccccc;padding:8px 18px;border-radius:999px;'
+                        f'font-size:0.86rem;cursor:pointer;white-space:nowrap;'
+                        f'transition:border-color 0.15s,color 0.15s,background 0.15s;}}'
+                        f'.chip:hover{{border-color:{_pc_si};color:{_pc_si};'
+                        f'background:rgba({_pr_si},{_pg_si},{_pb_si},0.1);}}'
+                        f'.chip-cancel{{border-color:rgba(255,255,255,0.1)!important;color:#555555!important;}}'
+                        f'.chip-cancel:hover{{border-color:#e74c3c!important;color:#e74c3c!important;'
+                        f'background:rgba(231,76,60,0.08)!important;}}'
+                        f'</style>'
+                        f'<div class="row">'
+                        f'<button class="arr" id="al" onclick="sc(-1)">&#8249;</button>'
+                        f'<div class="chips" id="ch">{_chips_inner}</div>'
+                        f'<button class="arr" id="ar" onclick="sc(1)">&#8250;</button>'
+                        f'</div>'
+                        f'<script>'
+                        f'function cbk(k){{'
+                        f'  var el=window.parent.document.querySelector(\'[data-testid="st-key-\'+k+\'"] button\');'
+                        f'  if(el)el.click();'
+                        f'}}'
+                        f'var ch=document.getElementById("ch");'
+                        f'var al=document.getElementById("al");'
+                        f'var ar=document.getElementById("ar");'
+                        f'function sc(d){{ch.scrollBy({{left:d*160,behavior:"smooth"}});}}'
+                        f'function upd(){{'
+                        f'  al.disabled=ch.scrollLeft<=0;'
+                        f'  ar.disabled=ch.scrollLeft+ch.clientWidth>=ch.scrollWidth-2;'
+                        f'}}'
+                        f'ch.addEventListener("scroll",upd);upd();'
+                        f'</script>',
+                        height=54,
+                    )
                 else:
                     if st.button("Cancel", key="cr_cancel_searched"):
                         _cr_reset()
