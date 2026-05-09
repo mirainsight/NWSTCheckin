@@ -1240,14 +1240,15 @@ def _render_cr_wizard() -> None:
         _chips_nv_one = "".join(
             f'<button class="chip{" chip-cancel" if is_cancel else ""}" '
             f'onclick="cbk_nv(\'{k}\',\'{lbl}\')">{lbl}</button>'
-            for lbl, k, is_cancel in _nv_sc
+            for lbl, k, is_cancel in _nv_sc if k != "cr_nv_review"
         )
         _st_components.html(
             f'<style>'
             f'*{{box-sizing:border-box;margin:0;padding:0;}}'
             f'body{{background:transparent;overflow:hidden;'
             f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;}}'
-            f'.wrap{{overflow:hidden;padding:4px 0 8px;'
+            f'.outer{{display:flex;align-items:center;gap:10px;padding:4px 0 8px;}}'
+            f'.wrap{{flex:1;min-width:0;overflow:hidden;'
             f'mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);'
             f'-webkit-mask-image:linear-gradient(to right,transparent 0,black 6%,black 94%,transparent 100%);}}'
             f'.track{{display:flex;gap:12px;width:max-content;'
@@ -1264,10 +1265,15 @@ def _render_cr_wizard() -> None:
             f'.chip-cancel{{border-color:rgba(255,255,255,0.1)!important;color:#555555!important;}}'
             f'.chip-cancel:hover{{border-color:#e74c3c!important;color:#e74c3c!important;'
             f'background:rgba(231,76,60,0.08)!important;}}'
+            f'.chip-primary{{flex-shrink:0;border-color:{_pc_nv}!important;color:{_pc_nv}!important;}}'
+            f'.chip-primary:hover{{background:rgba({_pr_nv},{_pg_nv},{_pb_nv},0.15)!important;}}'
             f'</style>'
+            f'<div class="outer">'
             f'<div class="wrap"><div class="track">'
             + _chips_nv_one + _chips_nv_one +
             f'</div></div>'
+            f'<button class="chip chip-primary" onclick="cbk_nv(\'cr_nv_review\',\'Review &amp; Submit →\')">Review &amp; Submit →</button>'
+            f'</div>'
             f'<script>'
             f'function hideRange(){{'
             f'  var pdoc=window.parent.document;'
