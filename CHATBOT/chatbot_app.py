@@ -1090,6 +1090,17 @@ def _render_cr_wizard() -> None:
                         f'  ar.disabled=ch.scrollLeft+ch.clientWidth>=ch.scrollWidth-2;'
                         f'}}'
                         f'ch.addEventListener("scroll",upd);upd();'
+                        f'function _auto(){{'
+                        f'  var atEnd=ch.scrollLeft+ch.clientWidth>=ch.scrollWidth-4;'
+                        f'  if(atEnd){{ch.scrollTo({{left:0,behavior:"smooth"}});return;}}'
+                        f'  var btns=ch.querySelectorAll("button");'
+                        f'  for(var i=0;i<btns.length;i++){{'
+                        f'    if(btns[i].offsetLeft+btns[i].offsetWidth>ch.scrollLeft+ch.clientWidth+4){{'
+                        f'      ch.scrollTo({{left:btns[i].offsetLeft,behavior:"smooth"}});break;}}}}'
+                        f'}}'
+                        f'var _t=setInterval(_auto,5000);'
+                        f'ch.addEventListener("mouseenter",function(){{clearInterval(_t);}});'
+                        f'ch.addEventListener("mouseleave",function(){{_t=setInterval(_auto,5000);}});'
                         f'</script>',
                         height=54,
                     )
