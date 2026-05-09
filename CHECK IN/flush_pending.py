@@ -1140,56 +1140,56 @@ def run_full_sheet_resync(
         _emit(msg, log_lines, err=True, with_ts=False)
         return False, msg
 
-    _progress_set(progress_bar, 0.08, "Writing pending check-ins to Google Sheets…")
+    _progress_set(progress_bar, 0.08, "Saving attendance...")
     ok_flush, flush_summary = flush_pending_attendance_for_tabs(
         client, sheet_id, pending_tab_names, log_lines=log_lines
     )
     if not ok_flush:
-        _progress_set(progress_bar, 1.0, "Stopped — error flushing pending rows.")
+        _progress_set(progress_bar, 1.0, "Something went wrong!")
         return False, flush_summary
 
-    _progress_set(progress_bar, 0.38, "Pending queues processed.")
+    _progress_set(progress_bar, 0.38, "Attendance saved!")
 
     today_myt = get_today_myt_date()
     redis_client = _redis_client(log_lines)
     if not redis_client:
         _emit("", log_lines, with_ts=False)
         _emit("Done (no Upstash configured).", log_lines, with_ts=False)
-        _progress_set(progress_bar, 1.0, "Done (no Upstash).")
+        _progress_set(progress_bar, 1.0, "All done!")
         return True, flush_summary
 
     _emit("", log_lines, with_ts=False)
     _emit("Clearing old data from Upstash...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.40, "Clearing Upstash caches (options, attendance, ministry)…")
+    _progress_set(progress_bar, 0.40, "Clearing old data...")
     cache_ok = _clear_full_resync_redis_keys(redis_client, today_myt, log_lines)
     if cache_ok:
         _emit("  Cache cleared", log_lines, with_ts=False)
 
     _emit("", log_lines, with_ts=False)
     _emit("Syncing NWST Health data...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.50, "Syncing NWST Health (CG Combined, Ministries, Attendance)…")
+    _progress_set(progress_bar, 0.50, "Updating NWST Health...")
     _refresh_nwst_health_data(redis_client, client, log_lines)
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing theme...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.65, "Refreshing Theme Override snapshot…")
+    _progress_set(progress_bar, 0.65, "Refreshing theme...")
     theme_ok = _refresh_theme_override_shared(redis_client, client, sheet_id, log_lines)
     if theme_ok:
         _emit("  Theme updated", log_lines, with_ts=False)
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing birthdays...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.75, "Refreshing birthday data…")
+    _progress_set(progress_bar, 0.75, "Refreshing birthdays...")
     _refresh_birthdays_cache(redis_client, client, log_lines)
 
     _emit("", log_lines, with_ts=False)
     _emit("Refreshing cell health...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.88, "Refreshing cell health data (NWST Health)…")
+    _progress_set(progress_bar, 0.88, "Updating cell health...")
     _refresh_cell_health_cache(redis_client, client, log_lines)
 
     _emit("", log_lines, with_ts=False)
     _emit("Syncing chatbot logs...", log_lines, with_ts=False)
-    _progress_set(progress_bar, 0.94, "Syncing chatbot logs and change requests…")
+    _progress_set(progress_bar, 0.94, "Syncing chatbot...")
     chatbot_sheet_id = _resolve_chatbot_sheet_id(log_lines)
     if chatbot_sheet_id:
         _ok_cb, _msg_cb = _sync_chatbot_to_sheets(client, chatbot_sheet_id, log_lines)
@@ -1199,7 +1199,7 @@ def run_full_sheet_resync(
         _emit("  Chatbot sync skipped: CHATBOT_SHEET_ID not set", log_lines, with_ts=False)
 
     _save_last_sync_timestamp()
-    _progress_set(progress_bar, 1.0, "All done.")
+    _progress_set(progress_bar, 1.0, "All done!")
 
     # Summary line
     _emit("", log_lines, with_ts=False)
@@ -1341,31 +1341,63 @@ def _parse_sync_summary(detail_log: list[str]) -> list[tuple[str, str]]:
     return result
 
 
+_BUBBLE_GROUPS: list[tuple[str, list[str]]] = [
+    ("Attendance saved", ["getting started", "saving attendance", "attendance saved"]),
+    ("Cleared old data", ["clearing old data"]),
+    ("NWST Health updated", ["updating nwst health"]),
+    ("App data refreshed", ["refreshing theme", "refreshing birthdays", "updating cell health"]),
+    ("Chatbot synced", ["syncing chatbot"]),
+]
+
+
 def _bubble_html(log_lines: list[str], live: bool = False) -> str:
-    """Return bubble-feed HTML for progress-caption lines."""
-    filtered = [l.strip() for l in log_lines if l.strip()]
+    """Live=True → flat animated captions (during sync). Live=False → grouped collapsible accordion."""
+    filtered = [s.strip() for s in log_lines if s.strip()]
     if not filtered:
         return '<div class="bubble-feed"><div class="bubble bubble-empty">(press sync to see activity)</div></div>'
-    last_idx = len(filtered) - 1
-    parts = []
-    for i, stripped in enumerate(filtered):
-        low = stripped.lower()
-        if any(x in low for x in ["error", "stopped", "failed"]):
-            cls, icon = "bubble-error", "✕"
-        elif any(x in low for x in ["all done", "processed", "complete"]):
-            cls, icon = "bubble-success", "✓"
-        else:
-            cls, icon = "bubble-info", "·"
-        # Live: only the newest bubble animates; prior ones are instantly at final state.
-        # Static: stagger all so they pop in sequence on page load.
-        delay = ("0s" if i == last_idx else "-1s") if live else f"{i * 0.05:.2f}s"
-        parts.append(
-            f'<div class="bubble {cls}" style="animation-delay:{delay}">'
-            f'<span style="font-size:0.7rem;opacity:0.6;flex-shrink:0;padding-top:0.1rem">{icon}</span>'
-            f'<span>{stripped}</span>'
-            f'</div>'
+
+    if live:
+        last = len(filtered) - 1
+        parts = []
+        for i, s in enumerate(filtered):
+            low = s.lower()
+            if any(x in low for x in ["went wrong", "error", "stopped", "failed"]):
+                cls, icon = "bubble-error", "✕"
+            elif any(x in low for x in ["all done", "saved!", "done!"]):
+                cls, icon = "bubble-success", "✓"
+            else:
+                cls, icon = "bubble-info", "·"
+            delay = "0s" if i == last else "-1s"
+            parts.append(
+                f'<div class="bubble {cls}" style="animation-delay:{delay}">'
+                f'<span style="font-size:0.7rem;opacity:0.6;flex-shrink:0;padding-top:0.1rem">{icon}</span>'
+                f'<span>{s}</span>'
+                f'</div>'
+            )
+        return f'<div class="bubble-feed">{"".join(parts)}</div>'
+
+    # Grouped <details>/<summary> accordion for static display
+    groups_html = []
+    for i, (label, markers) in enumerate(_BUBBLE_GROUPS):
+        matched = [s for s in filtered if any(m in s.lower() for m in markers)]
+        if not matched:
+            continue
+        sub_items = "".join(f'<div class="sub-bubble">· {s}</div>' for s in matched)
+        delay = f"{i * 0.08:.2f}s"
+        groups_html.append(
+            f'<details class="bubble-group" style="animation-delay:{delay}">'
+            f'<summary>'
+            f'<span class="bub-icon">✓</span>'
+            f'<span>{label}</span>'
+            f'<span class="bub-chevron">▾</span>'
+            f'</summary>'
+            f'<div class="bubble-group-inner">{sub_items}</div>'
+            f'</details>'
         )
-    return f'<div class="bubble-feed">{"".join(parts)}</div>'
+
+    if not groups_html:
+        return '<div class="bubble-feed"><div class="bubble bubble-empty">(press sync to see activity)</div></div>'
+    return f'<div class="bubble-feed">{"".join(groups_html)}</div>'
 
 
 class _LiveProgressBar:
@@ -1519,6 +1551,63 @@ def run_streamlit_app() -> None:
         padding: 0.6rem 1rem;
     }}
 
+    /* Grouped collapsible bubbles */
+    .bubble-group {{
+        animation: bubble-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }}
+    .bubble-group > summary {{
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem 0.5rem 0.85rem;
+        border-radius: 20px;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.82rem;
+        font-weight: 500;
+        background: rgba(34, 197, 94, 0.12);
+        border: 1px solid rgba(34, 197, 94, 0.35);
+        color: #4ade80;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        -webkit-tap-highlight-color: transparent;
+    }}
+    .bubble-group > summary::-webkit-details-marker,
+    .bubble-group > summary::marker {{
+        display: none;
+    }}
+    .bub-icon {{
+        font-size: 0.7rem;
+        opacity: 0.6;
+        flex-shrink: 0;
+    }}
+    .bub-chevron {{
+        margin-left: auto;
+        font-size: 0.6rem;
+        opacity: 0.4;
+        transition: transform 0.2s ease;
+        flex-shrink: 0;
+    }}
+    .bubble-group[open] > summary .bub-chevron {{
+        transform: rotate(180deg);
+    }}
+    .bubble-group-inner {{
+        margin-top: 0.35rem;
+        margin-left: 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.22rem;
+    }}
+    .sub-bubble {{
+        padding: 0.28rem 0.75rem;
+        border-radius: 10px;
+        font-size: 0.73rem;
+        color: #5a5a5a;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid rgba(255,255,255,0.05);
+        font-family: 'Inter', sans-serif;
+    }}
+
     [data-testid="stVerticalBlock"] {{
         gap: 0.5rem !important;
     }}
@@ -1625,22 +1714,39 @@ def run_streamlit_app() -> None:
         border-radius: 0px !important;
     }}
 
-    /* Sync summary card */
+    /* Sync summary card (collapsible) */
     .summary-card {{
         margin-top: 1.75rem;
         background: {pc["card_bg"]};
         border: 1px solid {pc["primary"]}28;
         border-radius: 10px;
-        padding: 0.85rem 1.1rem 0.6rem 1.1rem;
         font-family: 'Inter', sans-serif;
+        overflow: hidden;
     }}
-    .summary-card-header {{
+    .summary-card > summary {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1.1rem;
         font-size: 0.68rem;
         font-weight: 700;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: {pc["primary"]};
-        margin-bottom: 0.65rem;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        -webkit-tap-highlight-color: transparent;
+    }}
+    .summary-card > summary::-webkit-details-marker,
+    .summary-card > summary::marker {{
+        display: none;
+    }}
+    .summary-card[open] > summary .bub-chevron {{
+        transform: rotate(180deg);
+    }}
+    .summary-card-body {{
+        padding: 0 1.1rem 0.7rem 1.1rem;
     }}
     .summary-row {{
         display: flex;
@@ -1716,7 +1822,7 @@ def run_streamlit_app() -> None:
         run_log: list[str] = []
         bar = progress_slot.progress(0)
         live_bar = _LiveProgressBar(bar, live_slot)
-        live_bar.progress(0.0, "Starting…")
+        live_bar.progress(0.0, "Getting started...")
 
         sheet_id = _resolve_sheet_id(run_log)
         if not sheet_id:
@@ -1768,10 +1874,10 @@ def run_streamlit_app() -> None:
             for label, value in summary_rows
         )
         st.markdown(
-            f'<div class="summary-card">'
-            f'<div class="summary-card-header">What changed</div>'
-            f'{rows_html}'
-            f'</div>',
+            f'<details class="summary-card">'
+            f'<summary>What\'s new <span class="bub-chevron">▾</span></summary>'
+            f'<div class="summary-card-body">{rows_html}</div>'
+            f'</details>',
             unsafe_allow_html=True,
         )
 
