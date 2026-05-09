@@ -373,6 +373,37 @@ def _get_health_sheet_id() -> str:
 
 
 @st.cache_data(ttl=86400)
+def _load_llm_context() -> dict[str, list[dict]]:
+    """Loads 'LLM Context' tab → {type: [{"name", "desc", "chars"}, ...]}"""
+    from chatbot_sync import _gsheet_client
+    gc = _gsheet_client()
+    sid = _get_health_sheet_id()
+    if not gc or not sid:
+        return {}
+    try:
+        ws = gc.open_by_key(sid).worksheet("LLM Context")
+        rows = ws.get_all_values()
+        result: dict[str, list[dict]] = {}
+        for row in rows[1:]:
+            if not row or not row[0].strip():
+                continue
+            row_type = row[0].strip()
+            name  = row[1].strip() if len(row) > 1 else ""
+            desc  = row[2].strip() if len(row) > 2 else ""
+            chars = row[3].strip() if len(row) > 3 else ""
+            result.setdefault(row_type, []).append({"name": name, "desc": desc, "chars": chars})
+        return result
+    except Exception:
+        return {}
+
+
+def _get_field_data_context() -> dict[str, dict]:
+    """Returns {field_name: {"desc": str, "chars": str}} for Type='Field/Data' rows."""
+    rows = _load_llm_context().get("Field/Data", [])
+    return {r["name"]: {"desc": r["desc"], "chars": r["chars"]} for r in rows if r["name"]}
+
+
+@st.cache_data(ttl=86400)
 def _load_key_values_dropdowns() -> dict:
     from chatbot_sync import _gsheet_client
     gc = _gsheet_client()
@@ -559,33 +590,53 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=key)
-        fields_block = "\n".join(
-            f"- {f}: {_CR_FIELD_DESCRIPTIONS[f]}" if f in _CR_FIELD_DESCRIPTIONS else f"- {f}"
-            for f in available_fields
-        )
+
+        dropdown_opts = _load_key_values_dropdowns()
+        field_ctx     = _get_field_data_context()
+
+        lines = []
+        for f in available_fields:
+            sheet_info = field_ctx.get(f, {})
+            desc  = sheet_info.get("desc") or _CR_FIELD_DESCRIPTIONS.get(f, "")
+            chars = sheet_info.get("chars", "")
+            opts  = dropdown_opts.get(f, [])
+            bracket_parts = []
+            if opts:
+                bracket_parts.append(f"valid values: {', '.join(opts[:12])}")
+            if chars:
+                bracket_parts.append(chars)
+            bracket = f" [{'; '.join(bracket_parts)}]" if bracket_parts else ""
+            lines.append(f"- {f}{bracket}: {desc}" if desc else f"- {f}{bracket}")
+
+        fields_block = "\n".join(lines)
         content = (
             f"Available fields:\n{fields_block}\n\n"
             f'User said: "{query}"\n\n'
-            "Which field(s) from the list is the user most likely referring to? "
-            "Reply in this exact format: REASON: <one short sentence, written in second person as the chatbot speaking directly to the user, e.g. 'Sounds like you want to update your role!' or 'You're probably looking for their contact info.'> | FIELDS: <field1>, <field2> (max 3, exact names from the list). "
-            "If nothing matches, reply: REASON: Hmm, not sure what you mean — try again? | FIELDS: none"
+            "Which field is the user referring to, and what value do they want to set it to? "
+            "Reply in this exact format: "
+            "REASON: <one short sentence in second person, e.g. 'Sounds like you want to update their cell!'> | "
+            "FIELDS: <field1>, <field2> (max 3, exact names from the list) | "
+            "VALUE: <the new value the user specified, or 'none' if not mentioned>\n"
+            "If nothing matches, reply: REASON: Hmm, not sure what you mean — try again? | FIELDS: none | VALUE: none"
         )
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": content}],
-            max_tokens=150,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+            max_tokens=200,
             temperature=0,
         )
         raw = resp.choices[0].message.content.strip()
-        reason = ""
-        fields_part = raw
-        if "|" in raw:
-            left, right = raw.split("|", 1)
-            if left.upper().startswith("REASON:"):
-                reason = left[7:].strip()
-            if right.upper().strip().startswith("FIELDS:"):
-                fields_part = right.strip()[7:].strip()
-        st.session_state["cr_field_reason"] = reason
+        parts = [p.strip() for p in raw.split("|")]
+        reason      = parts[0][7:].strip() if parts[0].upper().startswith("REASON:") else ""
+        fields_part = parts[1][7:].strip() if len(parts) > 1 and parts[1].upper().strip().startswith("FIELDS:") else ""
+        value_part  = parts[2][6:].strip() if len(parts) > 2 and parts[2].upper().strip().startswith("VALUE:")  else ""
+
+        st.session_state["cr_field_reason"]   = reason
+        st.session_state["cr_inferred_value"] = "" if value_part.lower() in ("none", "") else value_part
+
         if fields_part.lower() in ("none", "unclear", ""):
             return []
         return [
@@ -616,12 +667,14 @@ def _get_card_llm_quip(name: str) -> str:
         client = OpenAI(api_key=key)
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": (
-                f"You're a sassy, youthful church app assistant. "
-                f"A user just pulled up {name}'s identity card. "
-                "Give ONE short playful nudge (max 10 words) telling them to actually read it "
-                "before making changes. Be fun and warm, not rude. You may use one emoji."
-            )}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": (
+                    f"A user just pulled up {name}'s identity card. "
+                    "Give ONE short playful nudge (max 10 words) telling them to actually read it "
+                    "before making changes. You may use one emoji."
+                )},
+            ],
             max_tokens=30,
             temperature=1.1,
         )
@@ -930,14 +983,16 @@ def _render_cr_wizard() -> None:
     elif step == "new_value":
         field = data.get("field", "")
         current = data.get("current_value", "")
+        prefill_value = data.pop("prefill_value", "")
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
         with st.chat_message("assistant", avatar="🤖"):
             _member_name = data.get("member_name", "") or label
-            st.markdown(
-                f"A **{field}** for {_member_name}? Let's see — "
-                f"currently sitting at **{current if current else 'empty'}**. "
-                f"What should I change it to?"
-            )
+            st.markdown(f"What should we change **{_member_name}**'s **{field}** to?")
+        if current:
+            st.caption(f"Current: **{current}**")
+        if prefill_value and current and prefill_value.strip().lower() == current.strip().lower():
+            st.info(f"💡 Already set to **{current}** — did you mean something else?")
+            prefill_value = ""
         _go = False
         _val_error = st.session_state.pop("cr_val_error", None)
         if _val_error:
@@ -947,15 +1002,17 @@ def _render_cr_wizard() -> None:
                 dropdowns = _load_key_values_dropdowns()
                 options = dropdowns.get(field, [])
                 if options:
-                    default_idx = options.index(current) if current in options else 0
+                    prefill_lower = prefill_value.strip().lower()
+                    prefill_idx = next((i for i, o in enumerate(options) if o.lower() == prefill_lower), None) if prefill_lower else None
+                    default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
                     val = st.selectbox("New value", options, index=default_idx)
                 else:
-                    val = st.text_input("New value", value=current)
+                    val = st.text_input("New value", value=prefill_value or current)
                     hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
                     if hint:
                         st.caption(hint)
             else:
-                prefill = current.title() if field == "Name" else current
+                prefill = prefill_value or (current.title() if field == "Name" else current)
                 val = st.text_input("New value", value=prefill)
                 hint = _CR_FIELD_FORMAT_HINTS.get(field, "")
                 if hint:
@@ -1295,6 +1352,9 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
             _ci = _cr_find_any(_mcols, ["cell", "group"])
             _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
             _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
+            _inferred_val = st.session_state.pop("cr_inferred_value", "")
+            if _inferred_val:
+                st.session_state.cr_data["prefill_value"] = _inferred_val
             _cr_advance_to_field(_cands[0], _m, _mcols, _name_val, _cell_val)
         st.session_state["cr_field_candidates"] = _cands
         st.session_state["cr_field_query"] = _q
