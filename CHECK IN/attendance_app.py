@@ -1587,9 +1587,9 @@ def get_newcomers_count(_client, sheet_id, refresh_key=0):
             q_val = row[16].strip() if len(row) > 16 and row[16] else ""
             if not (p_val.lower() == "new" and (not q_val or q_val.lower() == "false")):
                 continue
-            # Only include rows whose submission date falls within the current week
+            # Include rows from the current week and the one prior
             row_date = _parse_form_timestamp(ts_str)
-            if row_date is None or row_date < week_start:
+            if row_date is None or row_date < week_start - timedelta(days=7):
                 continue
             newcomers.append({"name": name, "cell": cell})
 
