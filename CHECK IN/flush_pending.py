@@ -1339,15 +1339,64 @@ def run_streamlit_app() -> None:
         margin-top: 0.25rem !important;
     }}
 
-    .log-caption {{
+    .bubble-label {{
         color: {pc["text_muted"]} !important;
-        font-size: 0.8rem !important;
+        font-size: 0.75rem !important;
         margin-top: 1.5rem !important;
-        margin-bottom: 0.4rem !important;
+        margin-bottom: 0.6rem !important;
         font-family: 'Inter', sans-serif !important;
         text-transform: uppercase !important;
         letter-spacing: 0.1em !important;
         font-weight: 600 !important;
+    }}
+    .bubble-feed {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        padding: 0.25rem 0;
+    }}
+    .bubble {{
+        display: inline-flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem 0.5rem 0.85rem;
+        border-radius: 20px;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.4;
+        max-width: 98%;
+        align-self: flex-start;
+        animation: bubble-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        word-break: break-word;
+    }}
+    @keyframes bubble-pop {{
+        from {{ opacity: 0; transform: translateY(10px) scale(0.92); }}
+        to {{ opacity: 1; transform: translateY(0) scale(1); }}
+    }}
+    .bubble-success {{
+        background: rgba(34, 197, 94, 0.12);
+        border: 1px solid rgba(34, 197, 94, 0.35);
+        color: #4ade80;
+        box-shadow: 0 2px 8px rgba(34, 197, 94, 0.08);
+    }}
+    .bubble-error {{
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        color: #f87171;
+    }}
+    .bubble-info {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #888888;
+    }}
+    .bubble-empty {{
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        color: #555555;
+        font-style: italic;
+        border-radius: 12px;
+        padding: 0.6rem 1rem;
     }}
 
     [data-testid="stVerticalBlock"] {{
@@ -1536,11 +1585,43 @@ def run_streamlit_app() -> None:
             unsafe_allow_html=True,
         )
 
-    st.markdown('<p class="log-caption">📋 Activity Log</p>', unsafe_allow_html=True)
-    st.code(
-        "\n".join(st.session_state[SESSION_LOG_KEY]) or "(press sync to see activity)",
-        language="text",
-    )
+    st.markdown('<p class="bubble-label">Activity</p>', unsafe_allow_html=True)
+
+    log_lines_raw = st.session_state[SESSION_LOG_KEY]
+    if not log_lines_raw:
+        bubbles_html = '<div class="bubble bubble-empty">(press sync to see activity)</div>'
+    else:
+        bubble_parts = []
+        for i, line in enumerate(log_lines_raw):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            low = stripped.lower()
+            if any(x in low for x in ["error", "failed", "could not", "invalid", "missing"]):
+                cls = "bubble-error"
+                icon = "✕"
+            elif any(x in low for x in ["+", "cached", "done", "updated", "complete", "synced",
+                                         "cleared", "rows", "members", "tracked", "birthday", "health",
+                                         "theme", "chatbot"]):
+                cls = "bubble-success"
+                icon = "✓"
+            else:
+                cls = "bubble-info"
+                icon = "·"
+            delay = i * 0.05
+            bubble_parts.append(
+                f'<div class="bubble {cls}" style="animation-delay:{delay:.2f}s">'
+                f'<span style="font-size:0.7rem;opacity:0.6;flex-shrink:0;padding-top:0.1rem">{icon}</span>'
+                f'<span>{stripped}</span>'
+                f'</div>'
+            )
+        bubbles_html = (
+            "\n".join(bubble_parts)
+            if bubble_parts
+            else '<div class="bubble bubble-empty">(press sync to see activity)</div>'
+        )
+
+    st.markdown(f'<div class="bubble-feed">{bubbles_html}</div>', unsafe_allow_html=True)
 
 
 def _inside_streamlit_script_run() -> bool:
