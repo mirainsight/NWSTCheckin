@@ -23,6 +23,7 @@ except ImportError:
 
 import base64
 import json
+import random
 import re
 
 import streamlit as st
@@ -647,6 +648,42 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
 
 
 
+_CARD_QUIPS = [
+    "",
+    "",
+    "did you even read the identity card? 👀",
+    "make sure to read through ah~",
+    "tap the card above to peek first 👆",
+    "just a lil peek before you edit, yeah?",
+    "__llm__",
+]
+
+
+def _get_card_llm_quip(name: str) -> str:
+    key = _get_openai_key()
+    if not key:
+        return ""
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": (
+                    f"A user just pulled up {name}'s identity card. "
+                    "Give ONE short playful nudge (max 10 words) telling them to actually read it "
+                    "before making changes. You may use one emoji."
+                )},
+            ],
+            max_tokens=30,
+            temperature=1.1,
+        )
+        return resp.choices[0].message.content.strip().strip('"')
+    except Exception:
+        return ""
+
+
 def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
     fi = _cr_field_col_idx(mcols, field)
     current_val = str(member.get(mcols[fi], "") or "").strip() if fi != -1 else ""
@@ -883,8 +920,26 @@ def _render_cr_wizard() -> None:
             unsafe_allow_html=True,
         )
 
-        if not available_fields:
-            st.markdown("All fields queued — ready to review.")
+        # Quip — pick once per member, cache so rerenders stay stable
+        _quip_cache_key = f"_card_quip__{name_val}"
+        if st.session_state.get("_card_quip_member") != name_val:
+            st.session_state["_card_quip_member"] = name_val
+            st.session_state[_quip_cache_key] = random.choice(_CARD_QUIPS)
+            st.session_state.pop("_card_llm_quip", None)
+        _chosen_quip = st.session_state.get(_quip_cache_key, "")
+        if _chosen_quip == "__llm__" and "_card_llm_quip" not in st.session_state:
+            st.session_state["_card_llm_quip"] = _get_card_llm_quip(name_val)
+
+        _quip_text = (
+            st.session_state.get("_card_llm_quip", "") if _chosen_quip == "__llm__"
+            else _chosen_quip
+        )
+        if _quip_text or not available_fields:
+            with st.chat_message("assistant", avatar="🤖"):
+                if _quip_text:
+                    st.caption(f"*{_quip_text}*")
+                if not available_fields:
+                    st.markdown("All fields queued — ready to review.")
 
         if available_fields:
             avail_set = set(available_fields)
@@ -1009,28 +1064,17 @@ def _render_cr_wizard() -> None:
                         f'  var s=pdoc.getElementById("cr-btns-start");'
                         f'  var e=pdoc.getElementById("cr-btns-end");'
                         f'  if(!s||!e)return;'
-                        f'  function collapseEl(el){{'
-                        f'    var p=el;'
-                        f'    while(p&&p!==pdoc.body){{'
-                        f'      p.style.cssText+="display:none!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important;";'
-                        f'      if(p.getAttribute&&p.getAttribute("data-testid")==="element-container")break;'
-                        f'      p=p.parentElement;'
-                        f'    }}'
-                        f'  }}'
                         f'  pdoc.querySelectorAll("[data-testid=\'stButton\']").forEach(function(b){{'
                         f'    var afterS=!!(s.compareDocumentPosition(b)&4);'
                         f'    var beforeE=!!(e.compareDocumentPosition(b)&2);'
-                        f'    if(afterS&&beforeE)collapseEl(b);'
-                        f'  }});'
-                        f'  function collapseMarker(el){{'
-                        f'    var p=el;'
-                        f'    while(p&&p!==pdoc.body){{'
-                        f'      p.style.cssText+="display:none!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important;";'
-                        f'      if(p.getAttribute&&p.getAttribute("data-testid")==="element-container")break;'
-                        f'      p=p.parentElement;'
+                        f'    if(afterS&&beforeE){{'
+                        f'      b.style.display="none";'
+                        f'      if(b.parentElement)b.parentElement.style.display="none";'
                         f'    }}'
-                        f'  }}'
-                        f'  collapseMarker(s);collapseMarker(e);'
+                        f'  }});'
+                        f'  var up=function(el){{while(el&&!el.getAttribute("data-testid"))el=el.parentElement;return el;}};'
+                        f'  var sm=up(s);var em=up(e);'
+                        f'  if(sm)sm.style.display="none";if(em)em.style.display="none";'
                         f'}}'
                         f'hideRange();setTimeout(hideRange,150);setTimeout(hideRange,500);'
                         f'function cbk(k,label){{'
