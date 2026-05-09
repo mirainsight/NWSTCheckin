@@ -994,13 +994,13 @@ def _render_cr_wizard() -> None:
                     if "Cell" in avail_set:
                         _sc_data.append(("Change Cell",       "cr_sc_cell",       "Cell",           ""))
                     if "Status" in avail_set:
-                        _sc_data.append(("No longer coming",  "cr_sc_red",        "Status",         "Red"))
+                        _sc_data.append(("No longer coming",  "cr_sc_red",        "Status",         "Red: Will no longer follow up. Don't wanna come church anymore"))
                     if any(f in avail_set for f in _leadership_fields):
                         _sc_data.append(("Change Leadership", "cr_sc_leadership", "__leadership__", ""))
                     if any(f in avail_set for f in _ministry_specific):
                         _sc_data.append(("Change Ministry",   "cr_sc_ministry",   "__ministry__",   ""))
                     if "Status" in avail_set:
-                        _sc_data.append(("Graduated",         "cr_sc_graduated",  "Status",         "Graduated"))
+                        _sc_data.append(("Graduated",         "cr_sc_graduated",  "Status",         "Graduated: Will no longer follow up. Moved to different ministry"))
                     if "Notes" in avail_set:
                         _sc_data.append(("Add Notes",         "cr_sc_notes",      "Notes",          ""))
                     _sc_data.append(("Browse all →", "cr_browse_all", "__browse__",  ""))
