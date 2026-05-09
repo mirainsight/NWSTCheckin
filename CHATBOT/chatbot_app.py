@@ -756,11 +756,6 @@ def _render_cr_wizard() -> None:
 
     # Step 2 — Member name search
     elif step == "member_search":
-        with st.chat_message("assistant", avatar="🤖"):
-            st.markdown(
-                f"Got it — filing this one from **{data.get('requester', 'you')}** ✨  \n"
-                "Who are we looking up today? Drop their name and I'll track them down! 👀"
-            )
         err = st.session_state.get("cr_search_error", "")
         if err:
             st.warning(err)
