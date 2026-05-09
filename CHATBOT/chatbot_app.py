@@ -1311,7 +1311,9 @@ def _render_cr_wizard() -> None:
             st.rerun()
         if _submit:
             _cr_written = False
+            _cr_fallback = False
             _cr_err = ""
+            # Primary path: write directly to Google Sheets
             try:
                 import gspread as _gspread
                 from chatbot_sync import _gsheet_client as _cr_gsheet_client
@@ -1360,9 +1362,34 @@ def _render_cr_wizard() -> None:
                     _cr_err = "CHANGE_REQ_SHEET_ID / CHATBOT_SHEET_ID not configured."
             except Exception as _e:
                 _cr_err = str(_e)
+            # Fallback: queue in Upstash if Google Sheets failed
+            if not _cr_written:
+                try:
+                    from chatbot_redis import submit_change_request as _submit_cr
+                    _rc_cr = get_chatbot_redis_client()
+                    if _rc_cr:
+                        for ch in pending:
+                            _submit_cr(_rc_cr, {
+                                "requester":     data.get("requester", ""),
+                                "member_name":   data.get("member_name", ""),
+                                "member_cell":   data.get("member_cell", ""),
+                                "field":         ch["field"],
+                                "current_value": ch.get("current_value", ""),
+                                "new_value":     ch["new_value"],
+                                "reason":        data.get("reason", ""),
+                            })
+                        _cr_fallback = True
+                    else:
+                        _cr_err += " · Upstash also unavailable."
+                except Exception as _e2:
+                    _cr_err += f" · Fallback failed: {_e2}"
             if _cr_written:
                 _cr_reset()
                 st.session_state.cr_flash = "✅ Request submitted! Waiting for NWST admin to approve."
+                st.rerun()
+            elif _cr_fallback:
+                _cr_reset()
+                st.session_state.cr_flash = "✅ Request queued! Will be synced to records in the next update."
                 st.rerun()
             else:
                 st.error(f"⚠️ Could not submit change request: {_cr_err or 'unknown error'}")
