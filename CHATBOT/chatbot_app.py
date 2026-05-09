@@ -1055,11 +1055,7 @@ def _render_cr_wizard() -> None:
                     })
             n = len(pending)
             _cr_reset()
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"✅ {n} change request(s) submitted! They will be reviewed and updated shortly.",
-                "tokens": 0,
-            })
+            st.session_state.cr_flash = f"✅ Request submitted! Waiting for NWST admin to approve."
             st.rerun()
 
 
@@ -1202,6 +1198,10 @@ st.divider()
 if st.session_state.cr_active:
     _render_cr_wizard()
 else:
+    if "cr_flash" in st.session_state:
+        st.success(st.session_state.cr_flash)
+        del st.session_state["cr_flash"]
+
     _hour = datetime.now(MYT).hour
     if 5 <= _hour < 12:
         _greeting = "Good morning"
