@@ -1140,7 +1140,7 @@ def run_full_sheet_resync(
         _emit(msg, log_lines, err=True, with_ts=False)
         return False, msg
 
-    _progress_set(progress_bar, 0.08, "Saving attendance...")
+    _progress_set(progress_bar, 0.08, "Updating newcomers & attendance...")
     ok_flush, flush_summary = flush_pending_attendance_for_tabs(
         client, sheet_id, pending_tab_names, log_lines=log_lines
     )
@@ -1148,7 +1148,7 @@ def run_full_sheet_resync(
         _progress_set(progress_bar, 1.0, "Something went wrong!")
         return False, flush_summary
 
-    _progress_set(progress_bar, 0.38, "Attendance saved!")
+    _progress_set(progress_bar, 0.38, "Newcomers & attendance updated!")
 
     today_myt = get_today_myt_date()
     redis_client = _redis_client(log_lines)
@@ -1342,7 +1342,7 @@ def _parse_sync_summary(detail_log: list[str]) -> list[tuple[str, str]]:
 
 
 _BUBBLE_GROUPS: list[tuple[str, list[str]]] = [
-    ("Attendance saved", ["getting started", "saving attendance", "attendance saved"]),
+    ("Updated newcomers & attendance", ["getting started", "updating newcomers", "newcomers & attendance updated"]),
     ("Cleared old data", ["clearing old data"]),
     ("NWST Health updated", ["updating nwst health"]),
     ("App data refreshed", ["refreshing theme", "refreshing birthdays", "updating cell health"]),
