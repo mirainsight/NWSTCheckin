@@ -900,6 +900,7 @@ def _render_cr_wizard() -> None:
             f'.cr-chev{{display:inline-block;transition:transform 0.2s;}}'
             f'.cr-inner-card{{border:none!important;border-top:none!important;'
             f'border-radius:0!important;margin:0!important;box-shadow:none!important;}}'
+            f'.cr-inner-card>div:first-child{{display:none!important;}}'
             f'</style>'
             f'<details id="cr-id-card" style="'
             f'border:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.25);'
