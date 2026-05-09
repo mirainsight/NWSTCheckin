@@ -48,6 +48,18 @@ def _get_bot_sheet_id() -> str:
     return sid
 
 
+def _get_change_req_sheet_id() -> str:
+    """Sheet ID for the Change Requests workbook (CHANGE_REQ_SHEET_ID secret)."""
+    sid = os.getenv("CHANGE_REQ_SHEET_ID", "").strip()
+    if not sid:
+        try:
+            import streamlit as st
+            sid = (st.secrets.get("CHANGE_REQ_SHEET_ID") or "").strip()
+        except Exception:
+            pass
+    return sid
+
+
 def _gsheet_client():
     try:
         import gspread
@@ -206,7 +218,7 @@ def sync_change_requests() -> None:
     if not gc:
         return
 
-    sheet_id = _get_bot_sheet_id()
+    sheet_id = _get_change_req_sheet_id()
     if not sheet_id:
         return
 
