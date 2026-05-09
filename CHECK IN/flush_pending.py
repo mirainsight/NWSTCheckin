@@ -110,6 +110,7 @@ REDIS_BIRTHDAYS_KEY = "attendance:birthdays_data"
 # Same list as attendance_app.MINISTRY_LIST (ministry option cache keys)
 MINISTRY_LIST = ["Worship", "Hype", "VS", "Frontlines"]
 SESSION_LOG_KEY = "flush_pending_session_log"
+SESSION_DETAIL_KEY = "flush_pending_detail_log"
 ALL_PENDING_TABS = [ATTENDANCE_TAB_NAME, LEADERS_ATTENDANCE_TAB_NAME, MINISTRY_ATTENDANCE_TAB_NAME]
 
 _nwst_accent_cfg_mod = None
@@ -1266,6 +1267,80 @@ def main_cli(argv: list[str] | None = None) -> int:
     return 0 if ok else 1
 
 
+def _parse_sync_summary(detail_log: list[str]) -> list[tuple[str, str]]:
+    """Extract key stats from detailed log lines into (label, value) pairs."""
+    import re
+    rows: dict[str, str] = {}
+    checkin_parts: list[str] = []
+
+    for line in detail_log:
+        s = line.strip()
+
+        m = re.match(r"(Attendance|Leaders Attendance|Ministry Attendance):\s*\+?(\d+)\s*rows?", s)
+        if m:
+            tab = m.group(1).replace(" Attendance", "").strip()
+            n = int(m.group(2))
+            if n > 0:
+                checkin_parts.append(f"{tab} +{n}")
+            elif "checkin_seen" not in rows:
+                rows["checkin_seen"] = "none"
+            continue
+
+        m = re.match(r"CG Combined:\s*(\d+)\s*members", s)
+        if m:
+            rows["cg"] = m.group(1)
+            continue
+
+        m = re.match(r"Ministries:\s*(\d+)\s*members", s)
+        if m:
+            rows["ministries"] = m.group(1)
+            continue
+
+        m = re.match(r"Attendance:\s*(\d+)\s*members\s*[·•]\s*(\d+)\s*sessions", s)
+        if m:
+            rows["att_members"] = m.group(1)
+            rows["sessions"] = m.group(2)
+            continue
+
+        m = re.match(r"Chat logs:\s*(.+)", s)
+        if m:
+            rows["chat"] = m.group(1).strip()
+            continue
+
+        m = re.match(r"Change requests:\s*(.+)", s)
+        if m:
+            rows["change_req"] = m.group(1).strip()
+            continue
+
+    result: list[tuple[str, str]] = []
+
+    if checkin_parts:
+        result.append(("Check-ins", "  ·  ".join(checkin_parts)))
+    elif "checkin_seen" in rows:
+        result.append(("Check-ins", "no new rows"))
+
+    member_parts = []
+    if "cg" in rows:
+        member_parts.append(f"{rows['cg']} CG")
+    if "ministries" in rows:
+        member_parts.append(f"{rows['ministries']} Ministries")
+    if member_parts:
+        result.append(("Members", "  ·  ".join(member_parts)))
+
+    if "att_members" in rows and "sessions" in rows:
+        result.append(("Tracked", f"{rows['att_members']} members  ·  {rows['sessions']} sessions"))
+
+    chatbot_parts = []
+    if "chat" in rows:
+        chatbot_parts.append(rows["chat"])
+    if "change_req" in rows and rows["change_req"] != "nothing to sync":
+        chatbot_parts.append(rows["change_req"] + " change req.")
+    if chatbot_parts:
+        result.append(("Chatbot", "  ·  ".join(chatbot_parts)))
+
+    return result
+
+
 def _bubble_html(log_lines: list[str], live: bool = False) -> str:
     """Return bubble-feed HTML for progress-caption lines."""
     filtered = [l.strip() for l in log_lines if l.strip()]
@@ -1550,6 +1625,51 @@ def run_streamlit_app() -> None:
         border-radius: 0px !important;
     }}
 
+    /* Sync summary card */
+    .summary-card {{
+        margin-top: 1.75rem;
+        background: {pc["card_bg"]};
+        border: 1px solid {pc["primary"]}28;
+        border-radius: 10px;
+        padding: 0.85rem 1.1rem 0.6rem 1.1rem;
+        font-family: 'Inter', sans-serif;
+    }}
+    .summary-card-header {{
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: {pc["primary"]};
+        margin-bottom: 0.65rem;
+    }}
+    .summary-row {{
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 0.3rem 0;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        gap: 1rem;
+    }}
+    .summary-row:last-child {{
+        border-bottom: none;
+        padding-bottom: 0;
+    }}
+    .summary-label {{
+        color: {pc["text_muted"]};
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        flex-shrink: 0;
+    }}
+    .summary-value {{
+        color: {pc["text"]};
+        font-size: 0.8rem;
+        font-weight: 400;
+        text-align: right;
+        opacity: 0.85;
+    }}
+
     /* Last sync timestamp styling */
     .last-sync-text {{
         color: {pc["text_muted"]} !important;
@@ -1578,6 +1698,8 @@ def run_streamlit_app() -> None:
 
     if SESSION_LOG_KEY not in st.session_state:
         st.session_state[SESSION_LOG_KEY] = []
+    if SESSION_DETAIL_KEY not in st.session_state:
+        st.session_state[SESSION_DETAIL_KEY] = []
 
     progress_slot = st.empty()
     clicked = st.button(
@@ -1614,6 +1736,7 @@ def run_streamlit_app() -> None:
                     progress_bar=live_bar,
                 )
                 st.session_state[SESSION_LOG_KEY] = list(live_bar.stages)
+                st.session_state[SESSION_DETAIL_KEY] = run_log
                 if ok:
                     st.success(summary)
                     toast = getattr(st, "toast", None)
@@ -1634,6 +1757,23 @@ def run_streamlit_app() -> None:
 
     st.markdown('<p class="bubble-label">Activity</p>', unsafe_allow_html=True)
     st.markdown(_bubble_html(st.session_state[SESSION_LOG_KEY]), unsafe_allow_html=True)
+
+    summary_rows = _parse_sync_summary(st.session_state[SESSION_DETAIL_KEY])
+    if summary_rows:
+        rows_html = "".join(
+            f'<div class="summary-row">'
+            f'<span class="summary-label">{label}</span>'
+            f'<span class="summary-value">{value}</span>'
+            f'</div>'
+            for label, value in summary_rows
+        )
+        st.markdown(
+            f'<div class="summary-card">'
+            f'<div class="summary-card-header">What changed</div>'
+            f'{rows_html}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _inside_streamlit_script_run() -> bool:
