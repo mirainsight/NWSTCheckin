@@ -992,16 +992,17 @@ def _render_cr_wizard() -> None:
                     _ministry_specific  = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"}
                     _sc_data = []  # (label, key, field, prefill="")
                     if "Cell" in avail_set:
-                        _sc_data.append(("Change Cell", "cr_sc_cell", "Cell", ""))
+                        _sc_data.append(("Change Cell",       "cr_sc_cell",       "Cell",           ""))
                     if "Status" in avail_set:
-                        _sc_data.append(("No longer coming", "cr_sc_red",        "Status",          "Red"))
-                        _sc_data.append(("Graduated",        "cr_sc_graduated",  "Status",          "Graduated"))
-                    if "Notes" in avail_set:
-                        _sc_data.append(("Add Notes", "cr_sc_notes", "Notes", ""))
+                        _sc_data.append(("No longer coming",  "cr_sc_red",        "Status",         "Red"))
                     if any(f in avail_set for f in _leadership_fields):
                         _sc_data.append(("Change Leadership", "cr_sc_leadership", "__leadership__", ""))
                     if any(f in avail_set for f in _ministry_specific):
                         _sc_data.append(("Change Ministry",   "cr_sc_ministry",   "__ministry__",   ""))
+                    if "Status" in avail_set:
+                        _sc_data.append(("Graduated",         "cr_sc_graduated",  "Status",         "Graduated"))
+                    if "Notes" in avail_set:
+                        _sc_data.append(("Add Notes",         "cr_sc_notes",      "Notes",          ""))
                     _sc_data.append(("Browse all →", "cr_browse_all", "__browse__",  ""))
                     _sc_data.append(("✕ Cancel",     "cr_cancel_l0",  "__cancel__",  ""))
 
@@ -1115,7 +1116,7 @@ def _render_cr_wizard() -> None:
     elif step == "new_value":
         field = data.get("field", "")
         current = data.get("current_value", "")
-        prefill_value = data.pop("prefill_value", "")
+        prefill_value = data.get("prefill_value", "")
         label = _cr_member_label(data.get("member_name", ""), data.get("member_cell", ""))
         with st.chat_message("assistant", avatar="🤖"):
             _member_name = data.get("member_name", "") or label
@@ -1203,6 +1204,7 @@ def _render_cr_wizard() -> None:
                 else:
                     if field in ("Birthday", "Role Last Updated"):
                         str_val = _cr_parse_birthday(str_val) or str_val
+                    data.pop("prefill_value", None)
                     st.session_state.cr_data.setdefault("pending_changes", []).append({
                         "field": field,
                         "current_value": current,
