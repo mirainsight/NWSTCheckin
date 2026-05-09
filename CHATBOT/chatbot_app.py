@@ -1017,12 +1017,16 @@ def _render_cr_wizard() -> None:
                                 _cr_reset()
                                 st.rerun()
                             elif _sc_field == "__leadership__":
-                                st.session_state.cr_field_group = "Leadership"
-                                st.session_state["cr_field_candidates"] = []
+                                st.session_state["cr_field_candidates"] = [f for f in ["Role", "Role Last Updated"] if f in avail_set]
+                                st.session_state["cr_field_query"] = "Change Leadership"
+                                st.session_state.pop("cr_field_reason", None)
+                                st.session_state.cr_field_group = None
                                 st.rerun()
                             elif _sc_field == "__ministry__":
-                                st.session_state.cr_field_group = "Ministry"
-                                st.session_state["cr_field_candidates"] = []
+                                st.session_state["cr_field_candidates"] = [f for f in ["Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"] if f in avail_set]
+                                st.session_state["cr_field_query"] = "Change Ministry"
+                                st.session_state.pop("cr_field_reason", None)
+                                st.session_state.cr_field_group = None
                                 st.rerun()
                             else:
                                 if _sc_prefill:
