@@ -1266,6 +1266,51 @@ def main_cli(argv: list[str] | None = None) -> int:
     return 0 if ok else 1
 
 
+def _bubble_html(log_lines: list[str], live: bool = False) -> str:
+    """Return bubble-feed HTML for progress-caption lines."""
+    filtered = [l.strip() for l in log_lines if l.strip()]
+    if not filtered:
+        return '<div class="bubble-feed"><div class="bubble bubble-empty">(press sync to see activity)</div></div>'
+    last_idx = len(filtered) - 1
+    parts = []
+    for i, stripped in enumerate(filtered):
+        low = stripped.lower()
+        if any(x in low for x in ["error", "stopped", "failed"]):
+            cls, icon = "bubble-error", "✕"
+        elif any(x in low for x in ["all done", "processed", "complete"]):
+            cls, icon = "bubble-success", "✓"
+        else:
+            cls, icon = "bubble-info", "·"
+        # Live: only the newest bubble animates; prior ones are instantly at final state.
+        # Static: stagger all so they pop in sequence on page load.
+        delay = ("0s" if i == last_idx else "-1s") if live else f"{i * 0.05:.2f}s"
+        parts.append(
+            f'<div class="bubble {cls}" style="animation-delay:{delay}">'
+            f'<span style="font-size:0.7rem;opacity:0.6;flex-shrink:0;padding-top:0.1rem">{icon}</span>'
+            f'<span>{stripped}</span>'
+            f'</div>'
+        )
+    return f'<div class="bubble-feed">{"".join(parts)}</div>'
+
+
+class _LiveProgressBar:
+    """Wraps a Streamlit progress bar and mirrors each caption as a live bubble notification."""
+
+    def __init__(self, bar, live_slot) -> None:
+        self._bar = bar
+        self._slot = live_slot
+        self.stages: list[str] = []
+
+    def progress(self, value: float, text: str | None = None) -> None:
+        try:
+            self._bar.progress(value, text=text)
+        except TypeError:
+            self._bar.progress(value)
+        if text:
+            self.stages.append(text)
+            self._slot.markdown(_bubble_html(self.stages, live=True), unsafe_allow_html=True)
+
+
 def run_streamlit_app() -> None:
     import streamlit as st
 
@@ -1545,18 +1590,20 @@ def run_streamlit_app() -> None:
     )
 
     if clicked:
+        live_slot = st.empty()
         run_log: list[str] = []
         bar = progress_slot.progress(0)
-        _progress_set(bar, 0.0, "Starting…")
+        live_bar = _LiveProgressBar(bar, live_slot)
+        live_bar.progress(0.0, "Starting…")
 
         sheet_id = _resolve_sheet_id(run_log)
         if not sheet_id:
-            st.session_state[SESSION_LOG_KEY] = run_log
+            st.session_state[SESSION_LOG_KEY] = list(live_bar.stages)
             st.error("ATTENDANCE_SHEET_ID missing (env or Streamlit secrets).")
         else:
             client = _gsheet_client(run_log)
             if not client:
-                st.session_state[SESSION_LOG_KEY] = run_log
+                st.session_state[SESSION_LOG_KEY] = list(live_bar.stages)
                 st.error("Could not connect to Google Sheets — see log below.")
             else:
                 ok, summary = run_full_sheet_resync(
@@ -1564,9 +1611,9 @@ def run_streamlit_app() -> None:
                     sheet_id,
                     list(ALL_PENDING_TABS),
                     log_lines=run_log,
-                    progress_bar=bar,
+                    progress_bar=live_bar,
                 )
-                st.session_state[SESSION_LOG_KEY] = run_log
+                st.session_state[SESSION_LOG_KEY] = list(live_bar.stages)
                 if ok:
                     st.success(summary)
                     toast = getattr(st, "toast", None)
@@ -1586,42 +1633,7 @@ def run_streamlit_app() -> None:
         )
 
     st.markdown('<p class="bubble-label">Activity</p>', unsafe_allow_html=True)
-
-    log_lines_raw = st.session_state[SESSION_LOG_KEY]
-    if not log_lines_raw:
-        bubbles_html = '<div class="bubble bubble-empty">(press sync to see activity)</div>'
-    else:
-        bubble_parts = []
-        for i, line in enumerate(log_lines_raw):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            low = stripped.lower()
-            if any(x in low for x in ["error", "failed", "could not", "invalid", "missing"]):
-                cls = "bubble-error"
-                icon = "✕"
-            elif any(x in low for x in ["+", "cached", "done", "updated", "complete", "synced",
-                                         "cleared", "rows", "members", "tracked", "birthday", "health",
-                                         "theme", "chatbot"]):
-                cls = "bubble-success"
-                icon = "✓"
-            else:
-                cls = "bubble-info"
-                icon = "·"
-            delay = i * 0.05
-            bubble_parts.append(
-                f'<div class="bubble {cls}" style="animation-delay:{delay:.2f}s">'
-                f'<span style="font-size:0.7rem;opacity:0.6;flex-shrink:0;padding-top:0.1rem">{icon}</span>'
-                f'<span>{stripped}</span>'
-                f'</div>'
-            )
-        bubbles_html = (
-            "\n".join(bubble_parts)
-            if bubble_parts
-            else '<div class="bubble bubble-empty">(press sync to see activity)</div>'
-        )
-
-    st.markdown(f'<div class="bubble-feed">{bubbles_html}</div>', unsafe_allow_html=True)
+    st.markdown(_bubble_html(st.session_state[SESSION_LOG_KEY]), unsafe_allow_html=True)
 
 
 def _inside_streamlit_script_run() -> bool:
