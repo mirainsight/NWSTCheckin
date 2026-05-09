@@ -2556,7 +2556,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
                 st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
-                if st.button(f"Remove attendance for {display_name}", key=f"{form_key}_remove", type="secondary"):
+                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
@@ -2838,7 +2838,7 @@ def render_ministry_check_in_form(selected_ministry, form_key, page_label="Minis
             if remove_target:
                 display_name = remove_target['name'].split(" - ")[0] if " - " in remove_target['name'] else remove_target['name']
                 st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
-                if st.button(f"Remove attendance for {display_name}", key=f"{form_key}_remove", type="secondary"):
+                if st.button(f"Remove attendance for {display_name}?", key=f"{form_key}_remove", type="secondary"):
                     success, message = undo_last_checkin(client, remove_target['name'], remove_target['tab_name'])
                     if success:
                         st.session_state[f'{form_key}_remove_target'] = None
