@@ -1142,7 +1142,7 @@ def _render_cr_wizard() -> None:
         else:
             with st.form("cr_show_info_done"):
                 c1, c2 = st.columns([3, 1])
-                _review = c1.form_submit_button("Review & Submit →", use_container_width=True)
+                _review = c1.form_submit_button("Submit", use_container_width=True)
                 _cancel = c2.form_submit_button("Cancel", use_container_width=True)
             if _cancel:
                 _cr_reset()
@@ -1230,13 +1230,13 @@ def _render_cr_wizard() -> None:
         # Hidden real buttons (same pattern as show_info chip strip)
         _nv_sc = [
             ("+ Add another field", "cr_nv_add",    False),
-            ("Review & Submit →",   "cr_nv_review", False),
+            ("Submit",   "cr_nv_review", False),
             ("← Back",              "cr_nv_back",   False),
             ("✕ Cancel",            "cr_nv_cancel", True),
         ]
         st.markdown('<div id="cr-nv-btns-start"></div>', unsafe_allow_html=True)
         _add_more = st.button("+ Add another field", key="cr_nv_add")
-        _review   = st.button("Review & Submit →",   key="cr_nv_review")
+        _review   = st.button("Submit",   key="cr_nv_review")
         _back     = st.button("← Back",              key="cr_nv_back")
         _cancel   = st.button("✕ Cancel",            key="cr_nv_cancel")
         st.markdown('<div id="cr-nv-btns-end"></div>', unsafe_allow_html=True)
@@ -1276,7 +1276,7 @@ def _render_cr_wizard() -> None:
             f'<div class="wrap"><div class="track">'
             + _chips_nv_one + _chips_nv_one +
             f'</div></div>'
-            f'<button class="chip chip-primary" onclick="cbk_nv(\'cr_nv_review\',\'Review &amp; Submit →\')">Review &amp; Submit →</button>'
+            f'<button class="chip chip-primary" onclick="cbk_nv(\'cr_nv_review\',\'Submit\')">Submit</button>'
             f'</div>'
             f'<script>'
             f'function hideRange(){{'
