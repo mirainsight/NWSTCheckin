@@ -947,7 +947,6 @@ def _render_cr_wizard() -> None:
                 ("Contact",    [f for f in ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"] if f in avail_set]),
             ]
             active_groups = [(g, fs) for g, fs in _CHIP_GROUPS if fs]
-            _ministry_fields = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department", "Role"}
             selected_group = st.session_state.get("cr_field_group")
 
             if selected_group == "__browse__":
@@ -989,20 +988,25 @@ def _render_cr_wizard() -> None:
             else:
                 # ── Level 0: swipe chip row ───────────────────────────────
                 if not st.session_state.get("cr_field_query", ""):
-                    _sc_data = []  # (label, key, field)
+                    _leadership_fields = {"Role", "Role Last Updated"}
+                    _ministry_specific  = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role", "Ministry Department"}
+                    _sc_data = []  # (label, key, field, prefill="")
                     if "Cell" in avail_set:
-                        _sc_data.append(("Change Cell", "cr_sc_cell", "Cell"))
+                        _sc_data.append(("Change Cell", "cr_sc_cell", "Cell", ""))
                     if "Status" in avail_set:
-                        _sc_data.append(("Change Status", "cr_sc_status", "Status"))
+                        _sc_data.append(("No longer coming", "cr_sc_red",        "Status",          "Red"))
+                        _sc_data.append(("Graduated",        "cr_sc_graduated",  "Status",          "Graduated"))
                     if "Notes" in avail_set:
-                        _sc_data.append(("Add Notes", "cr_sc_notes", "Notes"))
-                    if any(f in avail_set for f in _ministry_fields):
-                        _sc_data.append(("Change Role", "cr_sc_role", None))
-                    _sc_data.append(("Browse all →", "cr_browse_all", "__browse__"))
-                    _sc_data.append(("✕ Cancel", "cr_cancel_l0", "__cancel__"))
+                        _sc_data.append(("Add Notes", "cr_sc_notes", "Notes", ""))
+                    if any(f in avail_set for f in _leadership_fields):
+                        _sc_data.append(("Change Leadership", "cr_sc_leadership", "__leadership__", ""))
+                    if any(f in avail_set for f in _ministry_specific):
+                        _sc_data.append(("Change Ministry",   "cr_sc_ministry",   "__ministry__",   ""))
+                    _sc_data.append(("Browse all →", "cr_browse_all", "__browse__",  ""))
+                    _sc_data.append(("✕ Cancel",     "cr_cancel_l0",  "__cancel__",  ""))
 
                     st.markdown('<div id="cr-btns-start"></div>', unsafe_allow_html=True)
-                    for _sc_label, _sc_key, _sc_field in _sc_data:
+                    for _sc_label, _sc_key, _sc_field, _sc_prefill in _sc_data:
                         if st.button(_sc_label, key=_sc_key):
                             if _sc_field == "__browse__":
                                 st.session_state.cr_field_group = "__browse__"
@@ -1011,12 +1015,18 @@ def _render_cr_wizard() -> None:
                             elif _sc_field == "__cancel__":
                                 _cr_reset()
                                 st.rerun()
-                            elif _sc_field is not None:
-                                _cr_advance_to_field(_sc_field, member, mcols, name_val, cell_val)
-                            else:
+                            elif _sc_field == "__leadership__":
+                                st.session_state.cr_field_group = "Leadership"
+                                st.session_state["cr_field_candidates"] = []
+                                st.rerun()
+                            elif _sc_field == "__ministry__":
                                 st.session_state.cr_field_group = "Ministry"
                                 st.session_state["cr_field_candidates"] = []
                                 st.rerun()
+                            else:
+                                if _sc_prefill:
+                                    st.session_state.cr_data["prefill_value"] = _sc_prefill
+                                _cr_advance_to_field(_sc_field, member, mcols, name_val, cell_val)
                     st.markdown('<div id="cr-btns-end"></div>', unsafe_allow_html=True)
 
                     _chips_one = "".join(
