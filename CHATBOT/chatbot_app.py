@@ -1008,6 +1008,7 @@ def _render_cr_wizard() -> None:
                     _sc_data.append(("Browse all →", "cr_browse_all", "__browse__"))
                     _sc_data.append(("✕ Cancel", "cr_cancel_l0", "__cancel__"))
 
+                    st.markdown('<div id="cr-btns-start"></div>', unsafe_allow_html=True)
                     for _sc_label, _sc_key, _sc_field in _sc_data:
                         if st.button(_sc_label, key=_sc_key):
                             if _sc_field == "__browse__":
@@ -1023,13 +1024,13 @@ def _render_cr_wizard() -> None:
                                 st.session_state.cr_field_group = "Ministry"
                                 st.session_state["cr_field_candidates"] = []
                                 st.rerun()
+                    st.markdown('<div id="cr-btns-end"></div>', unsafe_allow_html=True)
 
                     _chips_inner = "".join(
                         f'<button class="chip{"  chip-cancel" if d[2] == "__cancel__" else ""}" '
                         f'onclick="cbk(\'{d[1]}\',\'{d[0]}\')">{d[0]}</button>'
                         for d in _sc_data
                     )
-                    _hide_labels = [d[0] for d in _sc_data]
                     _st_components.html(
                         f'<style>'
                         f'*{{box-sizing:border-box;margin:0;padding:0;}}'
@@ -1063,17 +1064,17 @@ def _render_cr_wizard() -> None:
                         f'<button class="arr" id="ar" onclick="sc(1)">&#8250;</button>'
                         f'</div>'
                         f'<script>'
-                        f'var _hl={_hide_labels!r};'
-                        f'function _hb(btn){{'
-                        f'  var el=btn.parentElement;'
-                        f'  while(el){{if(el.getAttribute("data-testid")==="stButton"){{el.style.display="none";return;}}el=el.parentElement;}}'
-                        f'  btn.style.display="none";'
-                        f'}}'
-                        f'function hideReal(){{'
+                        f'function _nearest(el,testid){{while(el&&el.getAttribute("data-testid")!==testid)el=el.parentElement;return el;}}'
+                        f'function hideRange(){{'
                         f'  var pdoc=window.parent.document;'
-                        f'  pdoc.querySelectorAll("button").forEach(function(b){{if(_hl.indexOf(b.innerText.trim())!==-1)_hb(b);}});'
+                        f'  var s=_nearest(pdoc.getElementById("cr-btns-start"),"stMarkdown");'
+                        f'  var e=_nearest(pdoc.getElementById("cr-btns-end"),"stMarkdown");'
+                        f'  if(!s||!e)return;'
+                        f'  var el=s.nextElementSibling;'
+                        f'  while(el&&el!==e){{el.style.display="none";el=el.nextElementSibling;}}'
+                        f'  s.style.display="none";e.style.display="none";'
                         f'}}'
-                        f'hideReal();setTimeout(hideReal,150);setTimeout(hideReal,400);'
+                        f'hideRange();setTimeout(hideRange,150);setTimeout(hideRange,400);'
                         f'function cbk(k,label){{'
                         f'  var pdoc=window.parent.document;'
                         f'  var el=pdoc.querySelector(\'[data-testid="st-key-\'+k+\'"] button\');'
