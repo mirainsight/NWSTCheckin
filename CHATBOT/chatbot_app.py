@@ -1003,7 +1003,18 @@ def _render_cr_wizard() -> None:
                 options = dropdowns.get(field, [])
                 if options:
                     prefill_lower = prefill_value.strip().lower()
-                    prefill_idx = next((i for i, o in enumerate(options) if o.lower() == prefill_lower), None) if prefill_lower else None
+                    if prefill_lower:
+                        # exact match first, then strip leading "N. " prefix for numbered options
+                        prefill_idx = next((i for i, o in enumerate(options) if o.lower() == prefill_lower), None)
+                        if prefill_idx is None:
+                            import re as _re
+                            prefill_idx = next(
+                                (i for i, o in enumerate(options)
+                                 if _re.sub(r'^\d+\.\s*', '', o).strip().lower() == prefill_lower),
+                                None,
+                            )
+                    else:
+                        prefill_idx = None
                     default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
                     val = st.selectbox("New value", options, index=default_idx)
                 else:
