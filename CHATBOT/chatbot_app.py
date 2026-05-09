@@ -652,7 +652,7 @@ _CARD_QUIPS = [
     "",
     "did you even read the identity card? 👀",
     "make sure to read through ah~",
-    "scroll up a bit, it's all there 😌",
+    "tap the card above to peek first 👆",
     "just a lil peek before you edit, yeah?",
     "__llm__",
 ]
@@ -895,8 +895,12 @@ def _render_cr_wizard() -> None:
             f'<style>'
             f'#cr-id-card summary{{list-style:none;}}'
             f'#cr-id-card summary::-webkit-details-marker{{display:none;}}'
+            f'#cr-id-card>.cr-summary:hover{{background:#191919!important;}}'
             f'#cr-id-card[open]>.cr-summary{{border-bottom:1px solid rgba({_pr_si},{_pg_si},{_pb_si},0.15)!important;}}'
-            f'#cr-id-card[open] .cr-chev{{transform:rotate(180deg);}}'
+            f'#cr-id-card[open] .cr-chev{{transform:rotate(180deg);animation:none;}}'
+            f'#cr-id-card:not([open]) .cr-chev{{animation:cr-bounce 2s ease-in-out infinite;}}'
+            f'#cr-id-card[open] .cr-hint{{display:none;}}'
+            f'@keyframes cr-bounce{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(3px)}}}}'
             f'.cr-chev{{display:inline-block;transition:transform 0.2s;}}'
             f'.cr-inner-card{{border:none!important;border-top:none!important;'
             f'border-radius:0!important;margin:0!important;box-shadow:none!important;}}'
@@ -917,7 +921,8 @@ def _render_cr_wizard() -> None:
             f'</span>'
             f'<span style="display:flex;align-items:center;gap:8px;">'
             f'{_badge}'
-            f'<span class="cr-chev" style="color:{_pc_si};font-size:0.65rem;margin-left:4px;">▼</span>'
+            f'<span class="cr-hint" style="color:#555555;font-size:0.70rem;white-space:nowrap;">tap to view</span>'
+            f'<span class="cr-chev" style="color:{_pc_si};font-size:0.65rem;margin-left:2px;">▼</span>'
             f'</span>'
             f'</summary>'
             + _inner_html
