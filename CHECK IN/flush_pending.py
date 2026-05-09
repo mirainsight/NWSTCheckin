@@ -1069,14 +1069,15 @@ def _sync_chatbot_to_sheets(
     except Exception as e:
         return False, f"Could not open chatbot sheet: {e}"
 
-    # Change requests spreadsheet (separate sheet if configured, otherwise fall back to chatbot sheet)
+    # Change requests spreadsheet (separate sheet if configured)
+    cr_spreadsheet = None
+    cr_sheet_err = ""
     if change_req_sheet_id and change_req_sheet_id != chatbot_sheet_id:
         try:
             cr_spreadsheet = gsheet_client.open_by_key(change_req_sheet_id)
         except Exception as e:
-            _emit(f"  Could not open change request sheet: {e}", log_lines, with_ts=False)
-            cr_spreadsheet = spreadsheet
-    else:
+            cr_sheet_err = str(e)
+    elif change_req_sheet_id:
         cr_spreadsheet = spreadsheet
 
     total = 0
@@ -1108,31 +1109,37 @@ def _sync_chatbot_to_sheets(
         _emit("  Chat logs: nothing to sync", log_lines, with_ts=False)
 
     # Change requests queued in Upstash (fallback from direct sheet write failures)
-    historical_reqs = get_unsynced_change_requests(rc, today_str)
-    today_reqs, today_req_offset = _read_today_chatbot_items(rc, "change_requests:", today_str)
-    all_reqs = historical_reqs + today_reqs
-    if all_reqs:
-        ws2 = _ensure_change_req_worksheet(cr_spreadsheet)
-        rows2 = [[
-            e.get("date", ""), e.get("timestamp", ""),
-            e.get("requester", ""), e.get("member_name", ""), e.get("member_cell", ""),
-            e.get("field", ""), e.get("current_value", ""), e.get("new_value", ""),
-            e.get("reason", ""), e.get("status", "Pending"),
-        ] for e in all_reqs]
-        ws2.append_rows(rows2)
-        if historical_reqs:
-            mark_change_requests_synced(rc, yesterday)
-            cur = _date.fromisoformat(today_str) - _td(days=30)
-            end_d = _date.fromisoformat(yesterday)
-            while cur <= end_d:
-                rc.delete(f"{CHANGE_REQ_KEY_PREFIX}{cur.isoformat()}")
-                cur += _td(days=1)
-        if today_reqs:
-            rc.set(f"change_requests:synced_offset:{today_str}", today_req_offset + len(today_reqs), ex=2 * 86400)
-        total += len(all_reqs)
-        _emit(f"  Change requests (queued fallback): +{len(all_reqs)} rows", log_lines, with_ts=False)
+    if cr_spreadsheet is None:
+        if cr_sheet_err:
+            _emit(f"  Change requests skipped: could not open CHANGE_REQ_SHEET_ID ({cr_sheet_err})", log_lines, with_ts=False)
+        elif not change_req_sheet_id:
+            _emit("  Change requests skipped: CHANGE_REQ_SHEET_ID not configured", log_lines, with_ts=False)
     else:
-        _emit("  Change requests: nothing queued", log_lines, with_ts=False)
+        historical_reqs = get_unsynced_change_requests(rc, today_str)
+        today_reqs, today_req_offset = _read_today_chatbot_items(rc, "change_requests:", today_str)
+        all_reqs = historical_reqs + today_reqs
+        if all_reqs:
+            ws2 = _ensure_change_req_worksheet(cr_spreadsheet)
+            rows2 = [[
+                e.get("date", ""), e.get("timestamp", ""),
+                e.get("requester", ""), e.get("member_name", ""), e.get("member_cell", ""),
+                e.get("field", ""), e.get("current_value", ""), e.get("new_value", ""),
+                e.get("reason", ""), e.get("status", "Pending"),
+            ] for e in all_reqs]
+            ws2.append_rows(rows2)
+            if historical_reqs:
+                mark_change_requests_synced(rc, yesterday)
+                cur = _date.fromisoformat(today_str) - _td(days=30)
+                end_d = _date.fromisoformat(yesterday)
+                while cur <= end_d:
+                    rc.delete(f"{CHANGE_REQ_KEY_PREFIX}{cur.isoformat()}")
+                    cur += _td(days=1)
+            if today_reqs:
+                rc.set(f"change_requests:synced_offset:{today_str}", today_req_offset + len(today_reqs), ex=2 * 86400)
+            total += len(all_reqs)
+            _emit(f"  Change requests (queued fallback): +{len(all_reqs)} rows", log_lines, with_ts=False)
+        else:
+            _emit("  Change requests: nothing queued", log_lines, with_ts=False)
 
     if total == 0:
         return True, "nothing to sync"
