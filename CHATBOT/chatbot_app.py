@@ -829,8 +829,20 @@ def _render_cr_wizard() -> None:
     # Step 3 — Show current info, pick field
     elif step == "show_info":
         _st_components.html(
-            "<script>var el=window.parent.document.querySelector('section[data-testid=\"stMain\"]');"
-            "if(!el)el=window.parent.document.querySelector('.main');if(el)el.scrollTop=0;</script>",
+            "<script>"
+            "(function(){"
+            "  var n=0;"
+            "  function s(){"
+            "    var el=window.parent.document.querySelector('section[data-testid=\"stMain\"]')"
+            "         ||window.parent.document.querySelector('.main')"
+            "         ||window.parent.document.querySelector('[data-testid=\"stAppViewContainer\"]');"
+            "    if(el){el.scrollTop=0;}"
+            "    window.parent.scrollTo(0,0);"
+            "    if(++n<6)setTimeout(s,120);"
+            "  }"
+            "  s();"
+            "})();"
+            "</script>",
             height=0,
         )
         member = st.session_state.cr_member_row or {}
