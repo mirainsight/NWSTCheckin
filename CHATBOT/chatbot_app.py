@@ -23,7 +23,6 @@ except ImportError:
 
 import base64
 import json
-import random
 import re
 
 import streamlit as st
@@ -647,41 +646,6 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
         return []
 
 
-_CARD_QUIPS = [
-    "",
-    "",
-    "did you even read the identity card? 👀",
-    "make sure to read through ah~",
-    "tap the card above to peek first 👆",
-    "just a lil peek before you edit, yeah?",
-    "__llm__",
-]
-
-
-def _get_card_llm_quip(name: str) -> str:
-    key = _get_openai_key()
-    if not key:
-        return ""
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"A user just pulled up {name}'s identity card. "
-                    "Give ONE short playful nudge (max 10 words) telling them to actually read it "
-                    "before making changes. You may use one emoji."
-                )},
-            ],
-            max_tokens=30,
-            temperature=1.1,
-        )
-        return resp.choices[0].message.content.strip().strip('"')
-    except Exception:
-        return ""
-
 
 def _cr_advance_to_field(field: str, member: dict, mcols: list, name_val: str, cell_val: str) -> None:
     fi = _cr_field_col_idx(mcols, field)
@@ -846,17 +810,6 @@ def _render_cr_wizard() -> None:
 
         label = _cr_member_label(name_val, cell_val)
         html = _member_info_html(member, mcols, label, pending, _get_daily_palette())
-
-        # Pick a quip once per member and cache it so rerenders stay stable
-        _quip_cache_key = f"_card_quip__{name_val}"
-        if st.session_state.get("_card_quip_member") != name_val:
-            st.session_state["_card_quip_member"] = name_val
-            st.session_state[_quip_cache_key] = random.choice(_CARD_QUIPS)
-            st.session_state.pop("_card_llm_quip", None)
-        _chosen_quip = st.session_state.get(_quip_cache_key, "")
-
-        if _chosen_quip == "__llm__" and "_card_llm_quip" not in st.session_state:
-            st.session_state["_card_llm_quip"] = _get_card_llm_quip(name_val)
 
         # ── Combined collapsible identity card ───────────────────────────
         _pal_si = _get_daily_palette()
