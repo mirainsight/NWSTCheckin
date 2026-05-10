@@ -1623,14 +1623,14 @@ def _render_cr_wizard() -> None:
             height=_iframe_h,
         )
 
-        _add_field = st.button("+ Add another field", key="cr_cf_add_field", use_container_width=True)
-
         _submit = False
         _cancel = False
+        _add_field = False
         with st.form("cr_confirm"):
-            c1, c2 = st.columns([1, 1])
-            _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
-            _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
+            c1, c2, c3 = st.columns([2, 2, 2])
+            _submit    = c1.form_submit_button("✅ Submit all", use_container_width=True)
+            _cancel    = c2.form_submit_button("✗ Cancel", use_container_width=True)
+            _add_field = c3.form_submit_button("+ Make more changes", use_container_width=True)
 
         if _add_field:
             st.session_state.cr_step = "show_info"
@@ -1947,7 +1947,7 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         )
         st.markdown(f"*{_no_match_msg}*")
 
-    _typed = st.chat_input('Not what you need? Try "Change Name" or "School"…')
+    _typed = st.chat_input('Try "Move to Cell" or "Update to Leader/Core"…')
     if _typed:
         _m = st.session_state.get("cr_member_row") or {}
         _queued = {ch["field"] for ch in (st.session_state.cr_data or {}).get("pending_changes", [])}
