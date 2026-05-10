@@ -1623,12 +1623,18 @@ def _render_cr_wizard() -> None:
             height=_iframe_h,
         )
 
+        _add_field = st.button("+ Add another field", key="cr_cf_add_field", use_container_width=True)
+
         _submit = False
         _cancel = False
         with st.form("cr_confirm"):
             c1, c2 = st.columns([1, 1])
             _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
             _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
+
+        if _add_field:
+            st.session_state.cr_step = "show_info"
+            st.rerun()
 
         if _cancel:
             _cr_reset()
