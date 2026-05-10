@@ -1435,7 +1435,7 @@ def _render_cr_wizard() -> None:
                 st.rerun()
         st.markdown('<div id="cr-cf-edit-end"></div>', unsafe_allow_html=True)
 
-        # Build iframe change rows with inline onclick (no sanitization inside iframe)
+        # Build iframe change rows with an Edit button per row
         _iframe_rows = ""
         for ch in pending:
             _fk = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
@@ -1443,11 +1443,11 @@ def _render_cr_wizard() -> None:
             _new_v = ch["new_value"]
             _fname = ch["field"].replace("'", "\\'")
             _iframe_rows += (
-                f'<tr class="chrow" onclick="clickEdit(\'{_fk}\',\'{_fname}\')">'
+                f'<tr class="chrow">'
                 f'<td class="ftd">{ch["field"]}</td>'
                 f'<td class="ctd">{_old}</td>'
                 f'<td class="ntd">{_new_v}</td>'
-                f'<td class="etd"><span class="eic">✏</span></td>'
+                f'<td class="etd"><button class="edit-btn" onclick="clickEdit(\'{_fk}\',\'{_fname}\')">Edit</button></td>'
                 f'</tr>'
             )
         _reason_color = "#ffffff" if reason_val != "—" else "#333333"
@@ -1470,14 +1470,15 @@ def _render_cr_wizard() -> None:
             f'table{{width:100%;border-collapse:collapse;}}'
             f'.colhdr td{{padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;}}'
             f'.colhdr td:first-child{{padding-left:16px;}}'
-            f'.chrow{{border-top:1px solid #141414;cursor:pointer;}}'
-            f'.chrow:hover{{background:#181818;}}'
-            f'.chrow:hover .eic{{color:{_pc_cf};}}'
+            f'.chrow{{border-top:1px solid #141414;}}'
             f'.ftd{{padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;}}'
             f'.ctd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;}}'
             f'.ntd{{padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;}}'
-            f'.etd{{padding:5px 12px 5px 0;text-align:right;white-space:nowrap;}}'
-            f'.eic{{color:#444444;font-size:0.72rem;transition:color 0.15s;}}'
+            f'.etd{{padding:4px 12px 4px 0;text-align:right;white-space:nowrap;}}'
+            f'.edit-btn{{background:transparent;border:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.35);'
+            f'color:#888888;font-size:0.72rem;padding:3px 10px;border-radius:999px;cursor:pointer;'
+            f'transition:border-color 0.15s,color 0.15s;}}'
+            f'.edit-btn:hover{{border-color:{_pc_cf};color:{_pc_cf};}}'
             f'.rtd{{padding:5px 16px 10px;color:{_reason_color};font-size:0.82rem;}}'
             f'</style></head><body>'
             f'<div class="card">'
