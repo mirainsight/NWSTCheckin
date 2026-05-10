@@ -1629,8 +1629,8 @@ def _render_cr_wizard() -> None:
         with st.form("cr_confirm"):
             c1, c2, c3 = st.columns([2, 2, 2])
             _submit    = c1.form_submit_button("✅ Submit all", use_container_width=True)
-            _cancel    = c2.form_submit_button("✗ Cancel", use_container_width=True)
-            _add_field = c3.form_submit_button("+ Make more changes", use_container_width=True)
+            _add_field = c2.form_submit_button("+ Make more changes", use_container_width=True)
+            _cancel    = c3.form_submit_button("✗ Cancel", use_container_width=True)
 
         if _add_field:
             st.session_state.cr_step = "show_info"
