@@ -1415,66 +1415,10 @@ def _render_cr_wizard() -> None:
         except (ValueError, IndexError):
             _pr_cf, _pg_cf, _pb_cf = 91, 192, 235
 
-        _change_rows = ""
-        for ch in pending:
-            old = ch.get("current_value", "") or "—"
-            new = ch["new_value"]
-            _fkey = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
-            _change_rows += (
-                f'<tr data-cr-edit="{_fkey}" style="border-top:1px solid #141414;cursor:pointer;">'
-                f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;">{ch["field"]}</td>'
-                f'<td style="padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;">{old}</td>'
-                f'<td style="padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;">{new}</td>'
-                f'<td style="padding:5px 12px 5px 0;text-align:right;white-space:nowrap;">'
-                f'<span style="color:#444;font-size:0.72rem;">✏</span>'
-                f'</td>'
-                f'</tr>'
-            )
-
-        _review_card = (
-            f'<div style="background:#0a0a0a;border:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.25);'
-            f'border-top:3px solid {_pc_cf};border-radius:10px;overflow:hidden;margin:4px 0;'
-            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
-            f'box-shadow:0 8px 32px rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);">'
-            # Header
-            f'<div style="background:#111111;padding:12px 16px;border-bottom:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);">'
-            f'<span style="font-size:1.0rem;font-weight:700;color:{_pc_cf};">👤 {member_name}</span>'
-            + (f'<span style="color:#999999;font-size:0.88rem;"> · {member_cell}</span>' if member_cell else "")
-            + f'</div>'
-            # Changes section label + col headers
-            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};'
-            f'letter-spacing:0.12em;text-transform:uppercase;">Changes</div>'
-            f'<table style="width:100%;border-collapse:collapse;">'
-            f'<tr style="border-top:1px solid #141414;">'
-            f'<td style="padding:3px 8px 3px 16px;color:#444444;font-size:0.72rem;width:34%;">FIELD</td>'
-            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;width:28%;">CURRENT</td>'
-            f'<td style="padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;">NEW</td>'
-            f'<td style="padding:3px 12px 3px 0;"></td>'
-            f'</tr>'
-            + _change_rows
-            + f'</table>'
-            # Reason section
-            f'<div style="padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};'
-            f'letter-spacing:0.12em;text-transform:uppercase;border-top:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.12);">Reason</div>'
-            f'<table style="width:100%;border-collapse:collapse;">'
-            f'<tr>'
-            f'<td style="padding:5px 16px 10px;color:{"#ffffff" if reason_val != "—" else "#333333"};font-size:0.82rem;">{reason_val}</td>'
-            f'</tr>'
-            f'</table>'
-            f'</div>'
-        )
-
         with st.chat_message("assistant", avatar="🤖"):
             st.markdown("Okay! Here's the rundown — double-check and let's make it happen:")
-            st.markdown(_review_card, unsafe_allow_html=True)
-        _submit = False
-        _cancel = False
-        with st.form("cr_confirm"):
-            c1, c2 = st.columns([1, 1])
-            _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
-            _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
 
-        # Hidden edit buttons — one per queued change, wired via JS to row clicks
+        # Hidden edit buttons — one per queued change, clicked from inside the iframe below
         st.markdown('<div id="cr-cf-edit-start"></div>', unsafe_allow_html=True)
         for _ch in pending:
             _fkey = f"cr_cf_edit_{_ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
@@ -1491,16 +1435,76 @@ def _render_cr_wizard() -> None:
                 st.rerun()
         st.markdown('<div id="cr-cf-edit-end"></div>', unsafe_allow_html=True)
 
-        # Build JS field→buttonKey map for text-content fallback matching
-        _field_map_js = "{" + ",".join(
-            f'"{ch["field"]}":"cr_cf_edit_{ch["field"].replace(" ", "_").replace("/", "_").replace(".", "_")}"'
-            for ch in pending
-        ) + "}"
+        # Build iframe change rows with inline onclick (no sanitization inside iframe)
+        _iframe_rows = ""
+        for ch in pending:
+            _fk = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+            _old = ch.get("current_value", "") or "—"
+            _new_v = ch["new_value"]
+            _fname = ch["field"].replace("'", "\\'")
+            _iframe_rows += (
+                f'<tr class="chrow" onclick="clickEdit(\'{_fk}\',\'{_fname}\')">'
+                f'<td class="ftd">{ch["field"]}</td>'
+                f'<td class="ctd">{_old}</td>'
+                f'<td class="ntd">{_new_v}</td>'
+                f'<td class="etd"><span class="eic">✏</span></td>'
+                f'</tr>'
+            )
+        _reason_color = "#ffffff" if reason_val != "—" else "#333333"
+        _cell_span = f'<span class="hdr-cell"> · {member_cell}</span>' if member_cell else ""
+        _iframe_h = 215 + len(pending) * 34
+
         _st_components.html(
+            f'<!doctype html><html><head><meta charset="utf-8">'
+            f'<style>'
+            f'*{{box-sizing:border-box;margin:0;padding:0;}}'
+            f'body{{background:transparent;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;padding:4px 0 8px;}}'
+            f'.card{{background:#0a0a0a;border:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.25);'
+            f'border-top:3px solid {_pc_cf};border-radius:10px;overflow:hidden;'
+            f'box-shadow:0 8px 32px rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);}}'
+            f'.hdr{{background:#111111;padding:12px 16px;border-bottom:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.15);}}'
+            f'.hdr-name{{font-size:1.0rem;font-weight:700;color:{_pc_cf};}}'
+            f'.hdr-cell{{color:#999999;font-size:0.88rem;}}'
+            f'.slbl{{padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};letter-spacing:0.12em;text-transform:uppercase;}}'
+            f'.rlbl{{padding:8px 16px 2px;font-size:0.68rem;font-weight:700;color:{_pc_cf};letter-spacing:0.12em;text-transform:uppercase;border-top:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.12);}}'
+            f'table{{width:100%;border-collapse:collapse;}}'
+            f'.colhdr td{{padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;}}'
+            f'.colhdr td:first-child{{padding-left:16px;}}'
+            f'.chrow{{border-top:1px solid #141414;cursor:pointer;}}'
+            f'.chrow:hover{{background:#181818;}}'
+            f'.chrow:hover .eic{{color:{_pc_cf};}}'
+            f'.ftd{{padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;}}'
+            f'.ctd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;}}'
+            f'.ntd{{padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;}}'
+            f'.etd{{padding:5px 12px 5px 0;text-align:right;white-space:nowrap;}}'
+            f'.eic{{color:#444444;font-size:0.72rem;transition:color 0.15s;}}'
+            f'.rtd{{padding:5px 16px 10px;color:{_reason_color};font-size:0.82rem;}}'
+            f'</style></head><body>'
+            f'<div class="card">'
+            f'<div class="hdr"><span class="hdr-name">👤 {member_name}</span>{_cell_span}</div>'
+            f'<div class="slbl">CHANGES</div>'
+            f'<table>'
+            f'<tr class="colhdr"><td style="width:34%">FIELD</td><td style="width:28%">CURRENT</td><td>NEW</td><td style="width:40px"></td></tr>'
+            + _iframe_rows +
+            f'</table>'
+            f'<div class="rlbl">REASON</div>'
+            f'<table><tr><td class="rtd">{reason_val}</td></tr></table>'
+            f'</div>'
             f'<script>'
+            f'function clickEdit(bk,fieldName){{'
+            f'  var pdoc=window.parent.document;'
+            f'  var btn=pdoc.querySelector(\'[data-testid="st-key-\'+bk+\'"] button\');'
+            f'  if(!btn){{'
+            f'    var label="edit "+fieldName;'
+            f'    var bs=pdoc.querySelectorAll("button");'
+            f'    for(var i=0;i<bs.length;i++){{'
+            f'      if(bs[i].textContent.trim()===label){{btn=bs[i];break;}}'
+            f'    }}'
+            f'  }}'
+            f'  if(btn)btn.click();'
+            f'}}'
             f'(function(){{'
             f'  var pdoc=window.parent.document;'
-            f'  var fieldMap={_field_map_js};'
             f'  function hide(){{'
             f'    var s=pdoc.getElementById("cr-cf-edit-start");'
             f'    var e=pdoc.getElementById("cr-cf-edit-end");'
@@ -1514,31 +1518,19 @@ def _render_cr_wizard() -> None:
             f'    var sm=up(s);var em=up(e);'
             f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
             f'  }}'
-            f'  function wire(){{'
-            f'    pdoc.querySelectorAll("tr").forEach(function(tr){{'
-            f'      if(tr._crWired)return;'
-            f'      var bk=tr.getAttribute("data-cr-edit");'
-            f'      if(!bk){{'
-            f'        var td=tr.querySelector("td:first-child");'
-            f'        if(td)bk=fieldMap[td.textContent.trim()]||null;'
-            f'      }}'
-            f'      if(!bk)return;'
-            f'      tr._crWired=true;'
-            f'      tr.style.cursor="pointer";'
-            f'      tr.addEventListener("click",function(){{'
-            f'        var btn=pdoc.querySelector(\'[data-testid="st-key-\'+bk+\'"] button\');'
-            f'        if(btn)btn.click();'
-            f'      }});'
-            f'      tr.addEventListener("mouseenter",function(){{tr.style.background="#181818";}});'
-            f'      tr.addEventListener("mouseleave",function(){{tr.style.background="";}});'
-            f'    }});'
-            f'  }}'
             f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
-            f'  wire();setTimeout(wire,150);setTimeout(wire,500);'
             f'}})()'
-            f'</script>',
-            height=1,
+            f'</script>'
+            f'</body></html>',
+            height=_iframe_h,
         )
+
+        _submit = False
+        _cancel = False
+        with st.form("cr_confirm"):
+            c1, c2 = st.columns([1, 1])
+            _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
+            _cancel = c2.form_submit_button("✗ Cancel", use_container_width=True)
 
         if _cancel:
             _cr_reset()
