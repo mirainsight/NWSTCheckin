@@ -1421,14 +1421,12 @@ def _render_cr_wizard() -> None:
             new = ch["new_value"]
             _fkey = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
             _change_rows += (
-                f'<tr data-cr-edit="{_fkey}" style="border-top:1px solid #141414;cursor:pointer;" '
-                f'onmouseenter="this.style.background=\'#181818\';this.querySelector(\'.cr-ed\').style.opacity=\'1\'" '
-                f'onmouseleave="this.style.background=\'\';this.querySelector(\'.cr-ed\').style.opacity=\'0\'">'
+                f'<tr data-cr-edit="{_fkey}" style="border-top:1px solid #141414;cursor:pointer;">'
                 f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;">{ch["field"]}</td>'
                 f'<td style="padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;">{old}</td>'
                 f'<td style="padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;">{new}</td>'
                 f'<td style="padding:5px 12px 5px 0;text-align:right;white-space:nowrap;">'
-                f'<span class="cr-ed" style="color:#666;font-size:0.72rem;opacity:0;transition:opacity 0.15s;">✏ edit</span>'
+                f'<span style="color:#444;font-size:0.72rem;">✏</span>'
                 f'</td>'
                 f'</tr>'
             )
@@ -1492,10 +1490,17 @@ def _render_cr_wizard() -> None:
                 st.session_state.cr_step = "new_value"
                 st.rerun()
         st.markdown('<div id="cr-cf-edit-end"></div>', unsafe_allow_html=True)
+
+        # Build JS field→buttonKey map for text-content fallback matching
+        _field_map_js = "{" + ",".join(
+            f'"{ch["field"]}":"cr_cf_edit_{ch["field"].replace(" ", "_").replace("/", "_").replace(".", "_")}"'
+            for ch in pending
+        ) + "}"
         _st_components.html(
             f'<script>'
             f'(function(){{'
             f'  var pdoc=window.parent.document;'
+            f'  var fieldMap={_field_map_js};'
             f'  function hide(){{'
             f'    var s=pdoc.getElementById("cr-cf-edit-start");'
             f'    var e=pdoc.getElementById("cr-cf-edit-end");'
@@ -1510,13 +1515,22 @@ def _render_cr_wizard() -> None:
             f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
             f'  }}'
             f'  function wire(){{'
-            f'    pdoc.querySelectorAll("tr[data-cr-edit]").forEach(function(tr){{'
-            f'      if(tr._crWired)return;tr._crWired=true;'
+            f'    pdoc.querySelectorAll("tr").forEach(function(tr){{'
+            f'      if(tr._crWired)return;'
+            f'      var bk=tr.getAttribute("data-cr-edit");'
+            f'      if(!bk){{'
+            f'        var td=tr.querySelector("td:first-child");'
+            f'        if(td)bk=fieldMap[td.textContent.trim()]||null;'
+            f'      }}'
+            f'      if(!bk)return;'
+            f'      tr._crWired=true;'
+            f'      tr.style.cursor="pointer";'
             f'      tr.addEventListener("click",function(){{'
-            f'        var bk=tr.getAttribute("data-cr-edit");'
             f'        var btn=pdoc.querySelector(\'[data-testid="st-key-\'+bk+\'"] button\');'
             f'        if(btn)btn.click();'
             f'      }});'
+            f'      tr.addEventListener("mouseenter",function(){{tr.style.background="#181818";}});'
+            f'      tr.addEventListener("mouseleave",function(){{tr.style.background="";}});'
             f'    }});'
             f'  }}'
             f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
