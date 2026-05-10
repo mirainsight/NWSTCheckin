@@ -1342,6 +1342,103 @@ def _render_cr_wizard() -> None:
             height=54,
         )
 
+        # Mini pending-changes card — shown when there are already queued changes
+        _nv_pending = data.get("pending_changes", [])
+        if _nv_pending:
+            st.markdown('<div id="cr-nv-edit-start"></div>', unsafe_allow_html=True)
+            for _pch in _nv_pending:
+                _pfkey = f"cr_nv_edit_{_pch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+                if st.button(f"nvedit {_pch['field']}", key=_pfkey):
+                    st.session_state["cr_edit_original"] = _pch
+                    st.session_state["cr_edit_return"] = True
+                    st.session_state.cr_data["pending_changes"] = [c for c in _nv_pending if c["field"] != _pch["field"]]
+                    st.session_state.cr_data.update({
+                        "field": _pch["field"],
+                        "current_value": _pch.get("current_value", ""),
+                        "prefill_value": _pch["new_value"],
+                    })
+                    st.session_state.cr_step = "new_value"
+                    st.rerun()
+            st.markdown('<div id="cr-nv-edit-end"></div>', unsafe_allow_html=True)
+
+            _nv_mini_rows = ""
+            for _pch in _nv_pending:
+                _pfk = f"cr_nv_edit_{_pch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+                _pold = _pch.get("current_value", "") or "—"
+                _pnew = _pch["new_value"]
+                _pfname = _pch["field"].replace("'", "\\'")
+                _nv_mini_rows += (
+                    f'<tr class="chrow">'
+                    f'<td class="ftd">{_pch["field"]}</td>'
+                    f'<td class="ctd">{_pold}</td>'
+                    f'<td class="ntd">{_pnew}</td>'
+                    f'<td class="etd"><button class="edit-btn" onclick="clickNvEdit(\'{_pfk}\',\'{_pfname}\')">Edit</button></td>'
+                    f'</tr>'
+                )
+            _nv_mini_h = 110 + len(_nv_pending) * 34
+            _st_components.html(
+                f'<!doctype html><html><head><meta charset="utf-8">'
+                f'<style>'
+                f'*{{box-sizing:border-box;margin:0;padding:0;}}'
+                f'body{{background:transparent;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;padding:2px 0 6px;}}'
+                f'.card{{background:#0a0a0a;border:1px solid rgba({_pr_nv},{_pg_nv},{_pb_nv},0.2);'
+                f'border-left:3px solid {_pc_nv};border-radius:8px;overflow:hidden;}}'
+                f'.slbl{{padding:6px 14px 2px;font-size:0.65rem;font-weight:700;color:{_pc_nv};letter-spacing:0.12em;text-transform:uppercase;}}'
+                f'table{{width:100%;border-collapse:collapse;}}'
+                f'.colhdr td{{padding:2px 8px 2px 0;color:#444444;font-size:0.68rem;}}'
+                f'.colhdr td:first-child{{padding-left:14px;}}'
+                f'.chrow{{border-top:1px solid #141414;}}'
+                f'.ftd{{padding:4px 8px 4px 14px;color:#999999;font-size:0.78rem;width:34%;white-space:nowrap;}}'
+                f'.ctd{{padding:4px 8px 4px 0;color:#555555;font-size:0.78rem;width:28%;}}'
+                f'.ntd{{padding:4px 8px 4px 0;color:{_pc_nv};font-size:0.78rem;font-weight:600;}}'
+                f'.etd{{padding:3px 10px 3px 0;text-align:right;white-space:nowrap;}}'
+                f'.edit-btn{{background:transparent;border:1px solid rgba({_pr_nv},{_pg_nv},{_pb_nv},0.3);'
+                f'color:#777777;font-size:0.68rem;padding:2px 8px;border-radius:999px;cursor:pointer;'
+                f'transition:border-color 0.15s,color 0.15s;}}'
+                f'.edit-btn:hover{{border-color:{_pc_nv};color:{_pc_nv};}}'
+                f'</style></head><body>'
+                f'<div class="card">'
+                f'<div class="slbl">QUEUED CHANGES</div>'
+                f'<table>'
+                f'<tr class="colhdr"><td style="width:34%">FIELD</td><td style="width:28%">CURRENT</td><td>NEW</td><td style="width:40px"></td></tr>'
+                + _nv_mini_rows +
+                f'</table>'
+                f'</div>'
+                f'<script>'
+                f'function clickNvEdit(bk,fieldName){{'
+                f'  var pdoc=window.parent.document;'
+                f'  var btn=pdoc.querySelector(\'[data-testid="st-key-\'+bk+\'"] button\');'
+                f'  if(!btn){{'
+                f'    var label="nvedit "+fieldName;'
+                f'    var bs=pdoc.querySelectorAll("button");'
+                f'    for(var i=0;i<bs.length;i++){{'
+                f'      if(bs[i].textContent.trim()===label){{btn=bs[i];break;}}'
+                f'    }}'
+                f'  }}'
+                f'  if(btn)btn.click();'
+                f'}}'
+                f'(function(){{'
+                f'  var pdoc=window.parent.document;'
+                f'  function hide(){{'
+                f'    var s=pdoc.getElementById("cr-nv-edit-start");'
+                f'    var e=pdoc.getElementById("cr-nv-edit-end");'
+                f'    if(!s||!e)return;'
+                f'    pdoc.querySelectorAll("[data-testid=\'stButton\']").forEach(function(b){{'
+                f'      var after=!!(s.compareDocumentPosition(b)&4);'
+                f'      var before=!!(e.compareDocumentPosition(b)&2);'
+                f'      if(after&&before){{b.style.display="none";if(b.parentElement)b.parentElement.style.display="none";}}'
+                f'    }});'
+                f'    var up=function(el){{while(el&&!el.getAttribute("data-testid"))el=el.parentElement;return el;}};'
+                f'    var sm=up(s);var em=up(e);'
+                f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
+                f'  }}'
+                f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
+                f'}})()'
+                f'</script>'
+                f'</body></html>',
+                height=_nv_mini_h,
+            )
+
         if _back:
             if st.session_state.pop("cr_edit_return", False):
                 original = st.session_state.pop("cr_edit_original", None)
