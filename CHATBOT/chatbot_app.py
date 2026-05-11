@@ -573,11 +573,11 @@ def _cr_fuzzy_match_fields(query: str, available_fields: list[str]) -> list[str]
         if t in avail:
             return [t]
     for alias, field in _CR_FIELD_ALIASES.items():
-        if q in alias and field in avail and field not in seen:
+        if re.search(r'\b' + re.escape(alias) + r'\b', q) and field in avail and field not in seen:
             results.append(field)
             seen.add(field)
     for field in available_fields:
-        if q in field.lower() and field not in seen:
+        if re.search(r'\b' + re.escape(field.lower()) + r'\b', q) and field not in seen:
             results.append(field)
             seen.add(field)
     return results
