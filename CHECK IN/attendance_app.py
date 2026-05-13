@@ -3181,7 +3181,7 @@ def render_ministry_dashboard(selected_ministry):
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                bottom: 125%;
+                top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
                 background-color: #2a2a2a;
@@ -3204,11 +3204,11 @@ def render_ministry_dashboard(selected_ministry):
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                bottom: 115%;
+                top: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-top-color: #2a2a2a;
+                border-bottom-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -3719,7 +3719,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         .name-badge::after, .name-badge-pending::after {{
             content: attr(data-tooltip);
             position: absolute;
-            bottom: 125%;
+            top: 125%;
             left: 50%;
             transform: translateX(-50%);
             background-color: #2a2a2a;
@@ -3742,11 +3742,11 @@ def render_dashboard(tab_name, group_by_zone=False):
         .name-badge::before, .name-badge-pending::before {{
             content: '';
             position: absolute;
-            bottom: 115%;
+            top: 115%;
             left: 50%;
             transform: translateX(-50%);
             border: 5px solid transparent;
-            border-top-color: #2a2a2a;
+            border-bottom-color: #2a2a2a;
             opacity: 0;
             visibility: hidden;
             transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4071,7 +4071,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                bottom: 125%;
+                top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
                 background-color: #2a2a2a;
@@ -4094,11 +4094,11 @@ def render_dashboard(tab_name, group_by_zone=False):
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                bottom: 115%;
+                top: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-top-color: #2a2a2a;
+                border-bottom-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4513,7 +4513,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 .name-badge::after, .name-badge-pending::after {{
                     content: attr(data-tooltip);
                     position: absolute;
-                    bottom: 125%;
+                    top: 125%;
                     left: 50%;
                     transform: translateX(-50%);
                     background-color: #2a2a2a;
@@ -4536,11 +4536,11 @@ def render_dashboard(tab_name, group_by_zone=False):
                 .name-badge::before, .name-badge-pending::before {{
                     content: '';
                     position: absolute;
-                    bottom: 115%;
+                    top: 115%;
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-top-color: #2a2a2a;
+                    border-bottom-color: #2a2a2a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5279,7 +5279,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                bottom: 125%;
+                top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
                 background-color: #2a2a2a;
@@ -5302,11 +5302,11 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                bottom: 115%;
+                top: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-top-color: #2a2a2a;
+                border-bottom-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5692,7 +5692,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 .name-badge::after, .name-badge-pending::after {{
                     content: attr(data-tooltip);
                     position: absolute;
-                    bottom: 125%;
+                    top: 125%;
                     left: 50%;
                     transform: translateX(-50%);
                     background-color: #2a2a2a;
@@ -5715,11 +5715,11 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 .name-badge::before, .name-badge-pending::before {{
                     content: '';
                     position: absolute;
-                    bottom: 115%;
+                    top: 115%;
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-top-color: #2a2a2a;
+                    border-bottom-color: #2a2a2a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
