@@ -3223,8 +3223,8 @@ def render_ministry_dashboard(selected_ministry):
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a;
-                color: #ffffff;
+                background-color: #4a4a4a !important;
+                color: #ffffff !important;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
                 font-size: 0.8rem;
@@ -3232,13 +3232,14 @@ def render_ministry_dashboard(selected_ministry):
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #666;
+                border: 1px solid #888 !important;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 1000;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+                z-index: 99999;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
+                backdrop-filter: none !important;
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
@@ -4114,8 +4115,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a;
-                color: #ffffff;
+                background-color: #4a4a4a !important;
+                color: #ffffff !important;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
                 font-size: 0.8rem;
@@ -4123,13 +4124,14 @@ def render_dashboard(tab_name, group_by_zone=False):
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #666;
+                border: 1px solid #888 !important;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 1000;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+                z-index: 99999;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
+                backdrop-filter: none !important;
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
@@ -5322,8 +5324,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a;
-                color: #ffffff;
+                background-color: #4a4a4a !important;
+                color: #ffffff !important;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
                 font-size: 0.8rem;
@@ -5331,13 +5333,14 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #666;
+                border: 1px solid #888 !important;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 1000;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+                z-index: 99999;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
+                backdrop-filter: none !important;
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
