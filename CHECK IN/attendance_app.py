@@ -3184,22 +3184,22 @@ def render_ministry_dashboard(selected_ministry):
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #2a2a2a;
+                background-color: #4a4a4a;
                 color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.75rem;
-                font-weight: 400;
+                font-size: 0.8rem;
+                font-weight: 600;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #444;
+                border: 1px solid #666;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
                 z-index: 1000;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
@@ -3208,7 +3208,7 @@ def render_ministry_dashboard(selected_ministry):
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #2a2a2a;
+                border-bottom-color: #4a4a4a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -3746,7 +3746,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             left: 50%;
             transform: translateX(-50%);
             border: 5px solid transparent;
-            border-bottom-color: #2a2a2a;
+            border-bottom-color: #4a4a4a;
             opacity: 0;
             visibility: hidden;
             transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4074,22 +4074,22 @@ def render_dashboard(tab_name, group_by_zone=False):
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #2a2a2a;
+                background-color: #4a4a4a;
                 color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.75rem;
-                font-weight: 400;
+                font-size: 0.8rem;
+                font-weight: 600;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #444;
+                border: 1px solid #666;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
                 z-index: 1000;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
@@ -4098,7 +4098,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #2a2a2a;
+                border-bottom-color: #4a4a4a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4540,7 +4540,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-bottom-color: #2a2a2a;
+                    border-bottom-color: #4a4a4a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5282,22 +5282,22 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 top: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #2a2a2a;
+                background-color: #4a4a4a;
                 color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.75rem;
-                font-weight: 400;
+                font-size: 0.8rem;
+                font-weight: 600;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #444;
+                border: 1px solid #666;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
                 z-index: 1000;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
@@ -5306,7 +5306,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #2a2a2a;
+                border-bottom-color: #4a4a4a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5719,7 +5719,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-bottom-color: #2a2a2a;
+                    border-bottom-color: #4a4a4a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
