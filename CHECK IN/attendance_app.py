@@ -845,6 +845,43 @@ def _build_last_attended_lookup() -> dict:
         return {}
 
 
+def _format_last_attended_label(date_str: str) -> str:
+    """Convert a raw last-attended date string to a relative label (services are Saturdays).
+
+    0-6 days before most recent Saturday  -> "Last week"
+    7-13 days                             -> "Last 2 weeks"
+    14-20 days                            -> "Last 3 weeks"
+    21-27 days                            -> "Last month"
+    28+ days                              -> exact date e.g. "9 May 2026"
+    """
+    if not date_str:
+        return date_str
+    parsed = None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d-%m-%Y"):
+        try:
+            parsed = datetime.strptime(date_str.strip(), fmt).date()
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return date_str
+    today = date.today()
+    days_since_saturday = (today.weekday() - 5) % 7
+    most_recent_saturday = today - timedelta(days=days_since_saturday)
+    delta = (most_recent_saturday - parsed).days
+    if delta < 0:
+        return date_str
+    if delta < 7:
+        return "Last week"
+    if delta < 14:
+        return "Last 2 weeks"
+    if delta < 21:
+        return "Last 3 weeks"
+    if delta < 28:
+        return "Last month"
+    return f"{parsed.day} {parsed.strftime('%b')} {parsed.year}"
+
+
 def format_name_badge(name, role, badge_class="name-badge", tooltip=None):
     """Format a name badge with optional role (below name, formatted as 'N. Label:')."""
     if not role:
@@ -853,7 +890,8 @@ def format_name_badge(name, role, badge_class="name-badge", tooltip=None):
         # Format as "N. Label:" (e.g. "1. Co Leader" -> "1. Co Leader:")
         role_display = f"{role.rstrip(':')}:" if role.strip() else ""
         role_html = f'<span class="name-badge-role">{role_display}</span>' if role_display else ''
-    title_attr = f' data-tooltip="Last attended: {tooltip}"' if tooltip else ''
+    label = _format_last_attended_label(tooltip) if tooltip else None
+    title_attr = f' data-tooltip="Last attended: {label}"' if label else ''
     return f'<span class="{badge_class}"{title_attr}><span class="name-badge-name">{name}</span>{role_html}</span>'
 
 
