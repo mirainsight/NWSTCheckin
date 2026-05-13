@@ -3177,6 +3177,7 @@ def render_ministry_dashboard(selected_ministry):
                 letter-spacing: 0.5px;
                 opacity: 0.5;
             }}
+            .name-badge-pending:hover {{ opacity: 1; }}
             .name-badge, .name-badge-pending {{ position: relative; }}
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
@@ -3715,6 +3716,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             letter-spacing: 0.5px;
             opacity: 0.5;
         }}
+        .name-badge-pending:hover {{ opacity: 1; }}
         .name-badge, .name-badge-pending {{ position: relative; }}
         .name-badge::after, .name-badge-pending::after {{
             content: attr(data-tooltip);
@@ -4065,7 +4067,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             }}
             .name-badge-pending:hover {{
                 transform: scale(1.05);
-                opacity: 0.7;
+                opacity: 1;
             }}
             .name-badge, .name-badge-pending {{ position: relative; }}
             .name-badge::after, .name-badge-pending::after {{
@@ -4507,7 +4509,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 }}
                 .name-badge-pending:hover {{
                     transform: scale(1.05);
-                    opacity: 0.7;
+                    opacity: 1;
                 }}
                 .name-badge, .name-badge-pending {{ position: relative; }}
                 .name-badge::after, .name-badge-pending::after {{
@@ -5273,7 +5275,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             }}
             .name-badge-pending:hover {{
                 transform: scale(1.05);
-                opacity: 0.7;
+                opacity: 1;
             }}
             .name-badge, .name-badge-pending {{ position: relative; }}
             .name-badge::after, .name-badge-pending::after {{
@@ -5686,7 +5688,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 }}
                 .name-badge-pending:hover {{
                     transform: scale(1.05);
-                    opacity: 0.7;
+                    opacity: 1;
                 }}
                 .name-badge, .name-badge-pending {{ position: relative; }}
                 .name-badge::after, .name-badge-pending::after {{
