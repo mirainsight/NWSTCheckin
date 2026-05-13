@@ -160,6 +160,7 @@ def _format_members(r) -> str:
     gender_idx = _find("gender")
     age_idx    = _find("age")
     min_dept_idx = _find("ministry department")
+    last_attended_idx = _find("last attended", "last_attended")
     ministry_role_idxs = {label: cols_lower.index(label) for label in _MINISTRY_ROLE_COLS if label in cols_lower}
 
     if name_idx is None:
@@ -197,7 +198,7 @@ def _format_members(r) -> str:
         att_key = f"{name} - {cell}" if cell else name
         att_info = att_stats.get(att_key) or att_stats.get(name) or {}
         att_pct  = f"{att_info.get('percentage', 0)}%" if att_info else "—"
-        last_att = att_info.get("last_attended") or "—"
+        last_att = _get(last_attended_idx) or "—"
         rec_att  = att_info.get("recent_attended")
         rec_tot  = att_info.get("recent_total")
         recent   = f"{rec_att}/{rec_tot}" if rec_att is not None else "—"

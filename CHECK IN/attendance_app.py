@@ -821,7 +821,31 @@ def generate_daily_colors_legacy():
         'accent': primary_color
     }
 
-def format_name_badge(name, role, badge_class="name-badge"):
+def _build_last_attended_lookup() -> dict:
+    """Return {name: last_attended_str} from cached CG Combined data."""
+    rc = get_redis_client()
+    if not rc:
+        return {}
+    try:
+        raw = rc.get("nwst_cg_combined_data")
+        if not raw:
+            return {}
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        cols = [c.lower().strip() for c in data.get("columns", [])]
+        name_idx = next((i for i, c in enumerate(cols) if c in ("name", "member name", "member")), None)
+        la_idx   = next((i for i, c in enumerate(cols) if c in ("last attended", "last_attended")), None)
+        if name_idx is None or la_idx is None:
+            return {}
+        return {
+            row[name_idx].strip(): row[la_idx].strip()
+            for row in data.get("rows", [])
+            if len(row) > max(name_idx, la_idx) and row[name_idx].strip() and row[la_idx].strip()
+        }
+    except Exception:
+        return {}
+
+
+def format_name_badge(name, role, badge_class="name-badge", tooltip=None):
     """Format a name badge with optional role (below name, formatted as 'N. Label:')."""
     if not role:
         role_html = ''
@@ -829,7 +853,8 @@ def format_name_badge(name, role, badge_class="name-badge"):
         # Format as "N. Label:" (e.g. "1. Co Leader" -> "1. Co Leader:")
         role_display = f"{role.rstrip(':')}:" if role.strip() else ""
         role_html = f'<span class="name-badge-role">{role_display}</span>' if role_display else ''
-    return f'<span class="{badge_class}"><span class="name-badge-name">{name}</span>{role_html}</span>'
+    title_attr = f' title="Last attended: {tooltip}"' if tooltip else ''
+    return f'<span class="{badge_class}"{title_attr}><span class="name-badge-name">{name}</span>{role_html}</span>'
 
 
 def _role_sort_key(role):
@@ -840,9 +865,11 @@ def _role_sort_key(role):
     return (999, f"{role.strip()}:")  # No number prefix: sort last
 
 
-def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_class_checked, badge_class_pending):
+def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_class_checked, badge_class_pending, name_to_last_attended=None):
     """Build HTML with role rows: 'Role Label: tile | tile' and 'Remaining cell members: tile | tile'.
     Tiles show name only (no role inside)."""
+    la = name_to_last_attended or {}
+
     # Group names by role
     role_to_names = {}
     no_role_names = []
@@ -862,8 +889,8 @@ def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_cla
         names_in_role = role_to_names[role]
         checked = sorted([n for n in names_in_role if n in checked_in_set])
         pending = sorted([n for n in names_in_role if n not in checked_in_set])
-        badges = ''.join([format_name_badge(n, '', badge_class_checked) for n in checked])
-        badges += ''.join([format_name_badge(n, '', badge_class_pending) for n in pending])
+        badges = ''.join([format_name_badge(n, '', badge_class_checked, tooltip=la.get(n)) for n in checked])
+        badges += ''.join([format_name_badge(n, '', badge_class_pending, tooltip=la.get(n)) for n in pending])
         if badges:
             parts.append(f'<div class="role-row"><span class="role-label">{role_label}</span> {badges}</div>')
 
@@ -871,8 +898,8 @@ def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_cla
     if no_role_names:
         checked = sorted([n for n in no_role_names if n in checked_in_set])
         pending = sorted([n for n in no_role_names if n not in checked_in_set])
-        badges = ''.join([format_name_badge(n, '', badge_class_checked) for n in checked])
-        badges += ''.join([format_name_badge(n, '', badge_class_pending) for n in pending])
+        badges = ''.join([format_name_badge(n, '', badge_class_checked, tooltip=la.get(n)) for n in checked])
+        badges += ''.join([format_name_badge(n, '', badge_class_pending, tooltip=la.get(n)) for n in pending])
         if badges:
             parts.append(f'<div class="role-row"><span class="role-label">Remaining cell members:</span> {badges}</div>')
 
@@ -3506,6 +3533,7 @@ def render_dashboard(tab_name, group_by_zone=False):
     all_members_by_cell_group = {}
     name_to_role = {}
     options_data, name_to_role, _ = get_options_from_sheet(client, SHEET_ID)
+    name_to_last_attended = _build_last_attended_lookup()
     if options_data:
         for header, values in options_data.items():
             for value in values:
@@ -4106,7 +4134,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                     total_count = len(all_names_in_cell)
                     role_grouped_badges = build_role_grouped_badges(
                         all_names_in_cell, checked_in_names_set, name_to_role,
-                        "name-badge", "name-badge-pending"
+                        "name-badge", "name-badge-pending",
+                        name_to_last_attended=name_to_last_attended
                     )
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
@@ -4135,7 +4164,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                 checked_count = len(checked_in_names)
                 role_grouped_badges = build_role_grouped_badges(
                     all_names_in_group, checked_in_names_set, name_to_role,
-                    "name-badge", "name-badge-pending"
+                    "name-badge", "name-badge-pending",
+                    name_to_last_attended=name_to_last_attended
                 )
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
@@ -4466,7 +4496,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                         all_names_in_cell = cells_all[cell_group]
                         role_grouped_badges = build_role_grouped_badges(
                             all_names_in_cell, set(), name_to_role,
-                            "name-badge-pending", "name-badge-pending"
+                            "name-badge-pending", "name-badge-pending",
+                            name_to_last_attended=name_to_last_attended
                         )
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
@@ -4487,7 +4518,8 @@ def render_dashboard(tab_name, group_by_zone=False):
                     all_names_in_group = all_members_by_cell_group[group_name]
                     role_grouped_badges = build_role_grouped_badges(
                         all_names_in_group, set(), name_to_role,
-                        "name-badge-pending", "name-badge-pending"
+                        "name-badge-pending", "name-badge-pending",
+                        name_to_last_attended=name_to_last_attended
                     )
                     total_in_group = len(all_names_in_group)
 
@@ -4635,6 +4667,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
     all_members_by_cell_group = {}
     name_to_role = {}
     options_data, name_to_role, _ = get_options_from_sheet(client, SHEET_ID)
+    name_to_last_attended = _build_last_attended_lookup()
     if options_data:
         for header, values in options_data.items():
             for value in values:
@@ -5205,7 +5238,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     total_in_cell = len(all_names_in_cell)
                     role_grouped_badges = build_role_grouped_badges(
                         all_names_in_cell, checked_in_names_set, name_to_role,
-                        "name-badge", "name-badge-pending"
+                        "name-badge", "name-badge-pending",
+                        name_to_last_attended=name_to_last_attended
                     )
 
                     cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
@@ -5230,7 +5264,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 total_in_group = len(all_names_in_group)
                 role_grouped_badges = build_role_grouped_badges(
                     all_names_in_group, checked_in_names_set, name_to_role,
-                    "name-badge", "name-badge-pending"
+                    "name-badge", "name-badge-pending",
+                    name_to_last_attended=name_to_last_attended
                 )
 
                 group_id = group_name.replace(" ", "-").replace("'", "").lower()
@@ -5554,7 +5589,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                         all_names_in_cell = cells_all[cell_group]
                         role_grouped_badges = build_role_grouped_badges(
                             all_names_in_cell, set(), name_to_role,
-                            "name-badge-pending", "name-badge-pending"
+                            "name-badge-pending", "name-badge-pending",
+                            name_to_last_attended=name_to_last_attended
                         )
 
                         cell_id = cell_group.replace(" ", "-").replace("'", "").lower()
@@ -5576,7 +5612,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                     total_in_group = len(all_names_in_group)
                     role_grouped_badges = build_role_grouped_badges(
                         all_names_in_group, set(), name_to_role,
-                        "name-badge-pending", "name-badge-pending"
+                        "name-badge-pending", "name-badge-pending",
+                        name_to_last_attended=name_to_last_attended
                     )
 
                     group_id = group_name.replace(" ", "-").replace("'", "").lower()
