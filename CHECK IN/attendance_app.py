@@ -3220,35 +3220,34 @@ def render_ministry_dashboard(selected_ministry):
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                top: 125%;
+                bottom: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a !important;
-                color: #ffffff !important;
+                background-color: #2a2a2a;
+                color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.8rem;
-                font-weight: 600;
+                font-size: 0.75rem;
+                font-weight: 400;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #888 !important;
+                border: 1px solid #444;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 99999;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
-                backdrop-filter: none !important;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                top: 115%;
+                bottom: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #4a4a4a;
+                border-top-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -3760,7 +3759,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         .name-badge::after, .name-badge-pending::after {{
             content: attr(data-tooltip);
             position: absolute;
-            top: 125%;
+            bottom: 125%;
             left: 50%;
             transform: translateX(-50%);
             background-color: #2a2a2a;
@@ -3783,11 +3782,11 @@ def render_dashboard(tab_name, group_by_zone=False):
         .name-badge::before, .name-badge-pending::before {{
             content: '';
             position: absolute;
-            top: 115%;
+            bottom: 115%;
             left: 50%;
             transform: translateX(-50%);
             border: 5px solid transparent;
-            border-bottom-color: #4a4a4a;
+            border-top-color: #2a2a2a;
             opacity: 0;
             visibility: hidden;
             transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4112,35 +4111,34 @@ def render_dashboard(tab_name, group_by_zone=False):
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                top: 125%;
+                bottom: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a !important;
-                color: #ffffff !important;
+                background-color: #2a2a2a;
+                color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.8rem;
-                font-weight: 600;
+                font-size: 0.75rem;
+                font-weight: 400;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #888 !important;
+                border: 1px solid #444;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 99999;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
-                backdrop-filter: none !important;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                top: 115%;
+                bottom: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #4a4a4a;
+                border-top-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -4555,7 +4553,7 @@ def render_dashboard(tab_name, group_by_zone=False):
                 .name-badge::after, .name-badge-pending::after {{
                     content: attr(data-tooltip);
                     position: absolute;
-                    top: 125%;
+                    bottom: 125%;
                     left: 50%;
                     transform: translateX(-50%);
                     background-color: #2a2a2a;
@@ -4578,11 +4576,11 @@ def render_dashboard(tab_name, group_by_zone=False):
                 .name-badge::before, .name-badge-pending::before {{
                     content: '';
                     position: absolute;
-                    top: 115%;
+                    bottom: 115%;
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-bottom-color: #4a4a4a;
+                    border-top-color: #2a2a2a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5321,35 +5319,34 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             .name-badge::after, .name-badge-pending::after {{
                 content: attr(data-tooltip);
                 position: absolute;
-                top: 125%;
+                bottom: 125%;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #4a4a4a !important;
-                color: #ffffff !important;
+                background-color: #2a2a2a;
+                color: #ffffff;
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
-                font-size: 0.8rem;
-                font-weight: 600;
+                font-size: 0.75rem;
+                font-weight: 400;
                 text-transform: none;
                 letter-spacing: normal;
                 white-space: nowrap;
-                border: 1px solid #888 !important;
+                border: 1px solid #444;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
                 pointer-events: none;
-                z-index: 99999;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.9) !important;
-                backdrop-filter: none !important;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
             }}
             .name-badge::before, .name-badge-pending::before {{
                 content: '';
                 position: absolute;
-                top: 115%;
+                bottom: 115%;
                 left: 50%;
                 transform: translateX(-50%);
                 border: 5px solid transparent;
-                border-bottom-color: #4a4a4a;
+                border-top-color: #2a2a2a;
                 opacity: 0;
                 visibility: hidden;
                 transition: opacity 0.2s ease, visibility 0.2s ease;
@@ -5735,7 +5732,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 .name-badge::after, .name-badge-pending::after {{
                     content: attr(data-tooltip);
                     position: absolute;
-                    top: 125%;
+                    bottom: 125%;
                     left: 50%;
                     transform: translateX(-50%);
                     background-color: #2a2a2a;
@@ -5758,11 +5755,11 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 .name-badge::before, .name-badge-pending::before {{
                     content: '';
                     position: absolute;
-                    top: 115%;
+                    bottom: 115%;
                     left: 50%;
                     transform: translateX(-50%);
                     border: 5px solid transparent;
-                    border-bottom-color: #4a4a4a;
+                    border-top-color: #2a2a2a;
                     opacity: 0;
                     visibility: hidden;
                     transition: opacity 0.2s ease, visibility 0.2s ease;
