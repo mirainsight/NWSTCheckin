@@ -857,7 +857,7 @@ def _format_last_attended_label(date_str: str) -> str:
     if not date_str:
         return date_str
     parsed = None
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d-%m-%Y"):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
         try:
             parsed = datetime.strptime(date_str.strip(), fmt).date()
             break
