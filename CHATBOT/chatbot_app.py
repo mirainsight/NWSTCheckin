@@ -119,7 +119,7 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
     has_lm = any(_hv(f) for f in _LM_ALL)
 
     lm_groups = [("LEADERSHIP", ["Role", "Role Last Updated"]), ("MINISTRY", ministry_fields)]
-    fixed_top = [("IDENTITY", ["Name", "Cell"]), ("HEALTH", ["Status", "New Since", "Prev Cell"])]
+    fixed_top = [("IDENTITY", ["Name", "Cell"]), ("HEALTH", ["Status", "Last Attended", "New Since", "Prev Cell"])]
     fixed_bot = [
         ("PERSONAL", ["Gender", "Age", "School / Work", "Notes", "Birthday"]),
         ("CONTACT",  ["Contact No.", "Email Address", "Emergency Contact", "Emergency Relationship"]),
@@ -556,6 +556,8 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
         return _cr_find_any(cols, ["status"])
     if f == "attendance":
         return _cr_find_any(cols, ["attendance"])
+    if f == "last attended":
+        return _cr_find_any(cols, ["last attended", "last_attended"])
     if f == "role last updated":
         i = _cr_find_all(cols, ["role", "updated"])
         return i if i != -1 else _cr_find_any(cols, ["role last", "last updated"])
