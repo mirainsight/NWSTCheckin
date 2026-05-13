@@ -853,7 +853,7 @@ def format_name_badge(name, role, badge_class="name-badge", tooltip=None):
         # Format as "N. Label:" (e.g. "1. Co Leader" -> "1. Co Leader:")
         role_display = f"{role.rstrip(':')}:" if role.strip() else ""
         role_html = f'<span class="name-badge-role">{role_display}</span>' if role_display else ''
-    title_attr = f' title="Last attended: {tooltip}"' if tooltip else ''
+    title_attr = f' data-tooltip="Last attended: {tooltip}"' if tooltip else ''
     return f'<span class="{badge_class}"{title_attr}><span class="name-badge-name">{name}</span>{role_html}</span>'
 
 
@@ -3177,6 +3177,49 @@ def render_ministry_dashboard(selected_ministry):
                 letter-spacing: 0.5px;
                 opacity: 0.5;
             }}
+            .name-badge, .name-badge-pending {{ position: relative; }}
+            .name-badge::after, .name-badge-pending::after {{
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 125%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #2a2a2a;
+                color: #ffffff;
+                padding: 0.5rem 0.75rem;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: normal;
+                white-space: nowrap;
+                border: 1px solid #444;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            }}
+            .name-badge::before, .name-badge-pending::before {{
+                content: '';
+                position: absolute;
+                bottom: 115%;
+                left: 50%;
+                transform: translateX(-50%);
+                border: 5px solid transparent;
+                border-top-color: #2a2a2a;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+            }}
+            .name-badge:hover::after, .name-badge-pending:hover::after,
+            .name-badge:hover::before, .name-badge-pending:hover::before {{
+                opacity: 1;
+                visibility: visible;
+            }}
             .name-badge-name {{ display: block; }}
             .name-badge-role {{ display: block; font-size: 0.8em; font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.95; }}
             .role-row {{ margin-bottom: 0.8rem; }}
@@ -3672,6 +3715,49 @@ def render_dashboard(tab_name, group_by_zone=False):
             letter-spacing: 0.5px;
             opacity: 0.5;
         }}
+        .name-badge, .name-badge-pending {{ position: relative; }}
+        .name-badge::after, .name-badge-pending::after {{
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #2a2a2a;
+            color: #ffffff;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 400;
+            text-transform: none;
+            letter-spacing: normal;
+            white-space: nowrap;
+            border: 1px solid #444;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            pointer-events: none;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }}
+        .name-badge::before, .name-badge-pending::before {{
+            content: '';
+            position: absolute;
+            bottom: 115%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #2a2a2a;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            pointer-events: none;
+            z-index: 1000;
+        }}
+        .name-badge:hover::after, .name-badge-pending:hover::after,
+        .name-badge:hover::before, .name-badge-pending:hover::before {{
+            opacity: 1;
+            visibility: visible;
+        }}
         .empty-state {{
             text-align: center;
             padding: 4rem 2rem;
@@ -3980,6 +4066,49 @@ def render_dashboard(tab_name, group_by_zone=False):
             .name-badge-pending:hover {{
                 transform: scale(1.05);
                 opacity: 0.7;
+            }}
+            .name-badge, .name-badge-pending {{ position: relative; }}
+            .name-badge::after, .name-badge-pending::after {{
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 125%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #2a2a2a;
+                color: #ffffff;
+                padding: 0.5rem 0.75rem;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: normal;
+                white-space: nowrap;
+                border: 1px solid #444;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            }}
+            .name-badge::before, .name-badge-pending::before {{
+                content: '';
+                position: absolute;
+                bottom: 115%;
+                left: 50%;
+                transform: translateX(-50%);
+                border: 5px solid transparent;
+                border-top-color: #2a2a2a;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+            }}
+            .name-badge:hover::after, .name-badge-pending:hover::after,
+            .name-badge:hover::before, .name-badge-pending:hover::before {{
+                opacity: 1;
+                visibility: visible;
             }}
             .name-badge-name {{
                 display: block;
@@ -4379,6 +4508,49 @@ def render_dashboard(tab_name, group_by_zone=False):
                 .name-badge-pending:hover {{
                     transform: scale(1.05);
                     opacity: 0.7;
+                }}
+                .name-badge, .name-badge-pending {{ position: relative; }}
+                .name-badge::after, .name-badge-pending::after {{
+                    content: attr(data-tooltip);
+                    position: absolute;
+                    bottom: 125%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background-color: #2a2a2a;
+                    color: #ffffff;
+                    padding: 0.5rem 0.75rem;
+                    border-radius: 4px;
+                    font-size: 0.75rem;
+                    font-weight: 400;
+                    text-transform: none;
+                    letter-spacing: normal;
+                    white-space: nowrap;
+                    border: 1px solid #444;
+                    opacity: 0;
+                    visibility: hidden;
+                    transition: opacity 0.2s ease, visibility 0.2s ease;
+                    pointer-events: none;
+                    z-index: 1000;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                }}
+                .name-badge::before, .name-badge-pending::before {{
+                    content: '';
+                    position: absolute;
+                    bottom: 115%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    border: 5px solid transparent;
+                    border-top-color: #2a2a2a;
+                    opacity: 0;
+                    visibility: hidden;
+                    transition: opacity 0.2s ease, visibility 0.2s ease;
+                    pointer-events: none;
+                    z-index: 1000;
+                }}
+                .name-badge:hover::after, .name-badge-pending:hover::after,
+                .name-badge:hover::before, .name-badge-pending:hover::before {{
+                    opacity: 1;
+                    visibility: visible;
                 }}
                 .name-badge-name {{ display: block; }}
                 .role-row {{ margin-bottom: 0.8rem; }}
@@ -5103,6 +5275,49 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 transform: scale(1.05);
                 opacity: 0.7;
             }}
+            .name-badge, .name-badge-pending {{ position: relative; }}
+            .name-badge::after, .name-badge-pending::after {{
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 125%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #2a2a2a;
+                color: #ffffff;
+                padding: 0.5rem 0.75rem;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: normal;
+                white-space: nowrap;
+                border: 1px solid #444;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            }}
+            .name-badge::before, .name-badge-pending::before {{
+                content: '';
+                position: absolute;
+                bottom: 115%;
+                left: 50%;
+                transform: translateX(-50%);
+                border: 5px solid transparent;
+                border-top-color: #2a2a2a;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.2s ease, visibility 0.2s ease;
+                pointer-events: none;
+                z-index: 1000;
+            }}
+            .name-badge:hover::after, .name-badge-pending:hover::after,
+            .name-badge:hover::before, .name-badge-pending:hover::before {{
+                opacity: 1;
+                visibility: visible;
+            }}
             .name-badge-name {{
                 display: block;
             }}
@@ -5472,6 +5687,49 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 .name-badge-pending:hover {{
                     transform: scale(1.05);
                     opacity: 0.7;
+                }}
+                .name-badge, .name-badge-pending {{ position: relative; }}
+                .name-badge::after, .name-badge-pending::after {{
+                    content: attr(data-tooltip);
+                    position: absolute;
+                    bottom: 125%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background-color: #2a2a2a;
+                    color: #ffffff;
+                    padding: 0.5rem 0.75rem;
+                    border-radius: 4px;
+                    font-size: 0.75rem;
+                    font-weight: 400;
+                    text-transform: none;
+                    letter-spacing: normal;
+                    white-space: nowrap;
+                    border: 1px solid #444;
+                    opacity: 0;
+                    visibility: hidden;
+                    transition: opacity 0.2s ease, visibility 0.2s ease;
+                    pointer-events: none;
+                    z-index: 1000;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                }}
+                .name-badge::before, .name-badge-pending::before {{
+                    content: '';
+                    position: absolute;
+                    bottom: 115%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    border: 5px solid transparent;
+                    border-top-color: #2a2a2a;
+                    opacity: 0;
+                    visibility: hidden;
+                    transition: opacity 0.2s ease, visibility 0.2s ease;
+                    pointer-events: none;
+                    z-index: 1000;
+                }}
+                .name-badge:hover::after, .name-badge-pending:hover::after,
+                .name-badge:hover::before, .name-badge-pending:hover::before {{
+                    opacity: 1;
+                    visibility: visible;
                 }}
                 .name-badge-name {{ display: block; }}
                 .role-row {{ margin-bottom: 0.8rem; }}
