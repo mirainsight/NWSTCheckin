@@ -1880,7 +1880,7 @@ def _render_cr_wizard() -> None:
                         f'<td class="brmtd"><button class="rm-btn" onclick="clickRm({_bi})">✕</button></td>'
                         f'</tr>'
                     )
-                _batch_h = 46 + len(_batch_members) * 34
+                _batch_h = 60 + len(_batch_members) * 50
                 _st_components.html(
                     f'<!doctype html><html><head><meta charset="utf-8">'
                     f'<style>'
@@ -1894,7 +1894,7 @@ def _render_cr_wizard() -> None:
                     f'.brow{{border-top:1px solid #141414;}}'
                     f'.bntd{{padding:5px 8px 5px 16px;color:#e8e8e8;font-size:0.82rem;width:28%;white-space:nowrap;}}'
                     f'.bctd{{padding:5px 8px 5px 0;color:#777777;font-size:0.82rem;width:22%;}}'
-                    f'.bcurtd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:24%;text-decoration:line-through;}}'
+                    f'.bcurtd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:24%;}}'
                     f'.bnvtd{{padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;width:22%;}}'
                     f'.brmtd{{padding:4px 12px 4px 0;text-align:right;}}'
                     f'.rm-btn{{background:transparent;border:1px solid rgba(255,100,100,0.30);'
@@ -1937,6 +1937,15 @@ def _render_cr_wizard() -> None:
                     f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
                     f'  }}'
                     f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
+                    f'}})()'
+                    f'(function(){{'
+                    f'  function autosize(){{'
+                    f'    try{{'
+                    f'      var h=document.documentElement.scrollHeight||document.body.scrollHeight;'
+                    f'      if(window.frameElement)window.frameElement.style.height=h+"px";'
+                    f'    }}catch(e){{}}'
+                    f'  }}'
+                    f'  autosize();setTimeout(autosize,50);setTimeout(autosize,200);'
                     f'}})()'
                     f'</script>'
                     f'</body></html>',
