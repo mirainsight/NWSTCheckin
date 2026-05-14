@@ -2091,7 +2091,7 @@ def _render_cr_wizard() -> None:
                                 ch["new_value"],
                                 _cr_notes_val,
                             ])
-                    _cr_ws.append_rows(_rows_cr)
+                    _cr_ws.insert_rows(_rows_cr, row=2, value_input_option="USER_ENTERED")
                     _cr_written = True
                 else:
                     _cr_err = "CHANGE_REQ_SHEET_ID / CHATBOT_SHEET_ID not configured."

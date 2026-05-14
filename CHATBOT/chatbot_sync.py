@@ -239,7 +239,7 @@ def sync_change_requests() -> None:
             ]
             for entry in requests
         ]
-        ws.append_rows(rows, value_input_option="USER_ENTERED")
+        ws.insert_rows(rows, row=2, value_input_option="USER_ENTERED")
         mark_change_requests_synced(r, yesterday_str)
     except Exception:
         pass  # retry on next sync
