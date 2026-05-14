@@ -974,6 +974,11 @@ def _render_cr_wizard() -> None:
                             "label": _cr_member_label(str(raw_name), str(raw_cell).strip()),
                             "row": dict(zip(cols, row)),
                         })
+                st.session_state.cr_data["all_members"] = [
+                    dict(zip(cols, row))
+                    for row in rows
+                    if name_idx < len(row) and row[name_idx]
+                ]
                 st.session_state.pop("cr_search_error", None)
                 if not matches:
                     st.session_state.cr_search_error = f"No member found matching \"{val.strip()}\". Please try again."
@@ -1678,6 +1683,9 @@ def _render_cr_wizard() -> None:
                                 "current_value": _rlu_cur,
                                 "new_value": _today_str,
                             })
+                    if len(st.session_state.cr_data.get("pending_changes", [])) > 1:
+                        st.session_state.cr_data["batch_extra_members"] = []
+                        st.session_state.cr_data.pop("batch_search_matches", None)
                     if _add_more:
                         st.session_state.pop("cr_edit_return", None)
                         st.session_state.pop("cr_edit_original", None)
@@ -1834,6 +1842,167 @@ def _render_cr_wizard() -> None:
             height=_iframe_h,
         )
 
+        # ── Batch section (only when exactly one field is being changed) ──────
+        if len(pending) == 1:
+            _batch_field   = pending[0]["field"]
+            _batch_new_val = pending[0]["new_value"]
+            _batch_members = data.get("batch_extra_members", [])
+            _batch_matches = data.get("batch_search_matches", [])
+
+            st.markdown(
+                f'<div style="margin:10px 0 4px;padding:0 2px;">'
+                f'<span style="font-size:0.68rem;font-weight:700;color:{_pc_cf};'
+                f'letter-spacing:0.12em;text-transform:uppercase;">ALSO APPLY TO</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            if _batch_members:
+                # Hidden remove-buttons (triggered via JS from inside the iframe below)
+                st.markdown('<div id="cr-batch-rm-start"></div>', unsafe_allow_html=True)
+                for _bi in range(len(_batch_members)):
+                    if st.button(f"remove {_bi}", key=f"cr_batch_rm_{_bi}"):
+                        data["batch_extra_members"].pop(_bi)
+                        st.rerun()
+                st.markdown('<div id="cr-batch-rm-end"></div>', unsafe_allow_html=True)
+
+                _batch_rows_html = ""
+                for _bi, _bm in enumerate(_batch_members):
+                    _bm_name = _bm.get("Name", "") or "—"
+                    _bm_cell = _bm.get("Cell", "") or "—"
+                    _bm_cur  = _bm.get(_batch_field, "") or "—"
+                    _batch_rows_html += (
+                        f'<tr class="brow">'
+                        f'<td class="bntd">{_bm_name}</td>'
+                        f'<td class="bctd">{_bm_cell}</td>'
+                        f'<td class="bcurtd">{_bm_cur}</td>'
+                        f'<td class="bnvtd">{_batch_new_val}</td>'
+                        f'<td class="brmtd"><button class="rm-btn" onclick="clickRm({_bi})">✕</button></td>'
+                        f'</tr>'
+                    )
+                _batch_h = 46 + len(_batch_members) * 34
+                _st_components.html(
+                    f'<!doctype html><html><head><meta charset="utf-8">'
+                    f'<style>'
+                    f'*{{box-sizing:border-box;margin:0;padding:0;}}'
+                    f'body{{background:transparent;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;padding:2px 0;}}'
+                    f'.card{{background:#0a0a0a;border:1px solid rgba({_pr_cf},{_pg_cf},{_pb_cf},0.25);'
+                    f'border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba({_pr_cf},{_pg_cf},{_pb_cf},0.10);}}'
+                    f'table{{width:100%;border-collapse:collapse;}}'
+                    f'.colhdr td{{padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;}}'
+                    f'.colhdr td:first-child{{padding-left:16px;}}'
+                    f'.brow{{border-top:1px solid #141414;}}'
+                    f'.bntd{{padding:5px 8px 5px 16px;color:#e8e8e8;font-size:0.82rem;width:28%;white-space:nowrap;}}'
+                    f'.bctd{{padding:5px 8px 5px 0;color:#777777;font-size:0.82rem;width:22%;}}'
+                    f'.bcurtd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:24%;text-decoration:line-through;}}'
+                    f'.bnvtd{{padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;width:22%;}}'
+                    f'.brmtd{{padding:4px 12px 4px 0;text-align:right;}}'
+                    f'.rm-btn{{background:transparent;border:1px solid rgba(255,100,100,0.30);'
+                    f'color:#666666;font-size:0.72rem;padding:3px 8px;border-radius:999px;cursor:pointer;'
+                    f'transition:border-color 0.15s,color 0.15s;}}'
+                    f'.rm-btn:hover{{border-color:#ff6464;color:#ff6464;}}'
+                    f'</style></head><body>'
+                    f'<div class="card"><table>'
+                    f'<tr class="colhdr">'
+                    f'<td style="width:28%">NAME</td>'
+                    f'<td style="width:22%">CELL</td>'
+                    f'<td style="width:24%">CURRENT</td>'
+                    f'<td style="width:22%">→ NEW</td>'
+                    f'<td style="width:40px"></td>'
+                    f'</tr>'
+                    + _batch_rows_html +
+                    f'</table></div>'
+                    f'<script>'
+                    f'function clickRm(i){{'
+                    f'  var pdoc=window.parent.document;'
+                    f'  var lbl="remove "+i;'
+                    f'  var bs=pdoc.querySelectorAll("button");'
+                    f'  for(var j=0;j<bs.length;j++){{'
+                    f'    if(bs[j].textContent.trim()===lbl){{bs[j].click();return;}}'
+                    f'  }}'
+                    f'}}'
+                    f'(function(){{'
+                    f'  var pdoc=window.parent.document;'
+                    f'  function hide(){{'
+                    f'    var s=pdoc.getElementById("cr-batch-rm-start");'
+                    f'    var e=pdoc.getElementById("cr-batch-rm-end");'
+                    f'    if(!s||!e)return;'
+                    f'    pdoc.querySelectorAll("[data-testid=\'stButton\']").forEach(function(b){{'
+                    f'      var a=!!(s.compareDocumentPosition(b)&4);'
+                    f'      var bf=!!(e.compareDocumentPosition(b)&2);'
+                    f'      if(a&&bf){{b.style.display="none";if(b.parentElement)b.parentElement.style.display="none";}}'
+                    f'    }});'
+                    f'    var up=function(el){{while(el&&!el.getAttribute("data-testid"))el=el.parentElement;return el;}};'
+                    f'    var sm=up(s);var em=up(e);'
+                    f'    if(sm)sm.style.display="none";if(em)em.style.display="none";'
+                    f'  }}'
+                    f'  hide();setTimeout(hide,150);setTimeout(hide,500);'
+                    f'}})()'
+                    f'</script>'
+                    f'</body></html>',
+                    height=_batch_h,
+                )
+
+            # Disambiguation: multiple matches from last search
+            if _batch_matches:
+                _bm_labels = [
+                    _cr_member_label(m.get("Name", ""), m.get("Cell", ""))
+                    for m in _batch_matches
+                ]
+                _bm_pick = st.selectbox(
+                    "Multiple matches — which one?",
+                    _bm_labels,
+                    key="cr_batch_pick_sel",
+                )
+                _bpc1, _bpc2 = st.columns([1, 1])
+                if _bpc1.button("Add →", key="cr_batch_pick_confirm", use_container_width=True):
+                    _pidx = _bm_labels.index(_bm_pick)
+                    data.setdefault("batch_extra_members", []).append(_batch_matches[_pidx])
+                    data.pop("batch_search_matches", None)
+                    st.session_state.pop("cr_batch_search_input", None)
+                    st.rerun()
+                if _bpc2.button("Cancel", key="cr_batch_pick_cancel", use_container_width=True):
+                    data.pop("batch_search_matches", None)
+                    st.session_state.pop("cr_batch_search_input", None)
+                    st.rerun()
+            else:
+                # Search bar
+                _bsc1, _bsc2 = st.columns([3, 1])
+                with _bsc1:
+                    _bsq = st.text_input(
+                        "batch_search",
+                        key="cr_batch_search_input",
+                        placeholder="Search member to add...",
+                        label_visibility="collapsed",
+                    )
+                if _bsc2.button("+ Add", key="cr_batch_add_btn", use_container_width=True):
+                    if _bsq.strip():
+                        _all_mems  = data.get("all_members", [])
+                        _bq_norm   = _cr_normalize(_bsq.strip())
+                        _skip_names = {m.get("Name", "") for m in data.get("batch_extra_members", [])}
+                        _skip_names.add(data.get("member_name", ""))
+                        _bfound = [
+                            m for m in _all_mems
+                            if _bq_norm in _cr_normalize(m.get("Name", ""))
+                            and m.get("Name", "") not in _skip_names
+                        ]
+                        if not _bfound:
+                            st.session_state["cr_batch_no_result"] = (
+                                f"No member found matching '{_bsq.strip()}'"
+                            )
+                            st.rerun()
+                        elif len(_bfound) == 1:
+                            data.setdefault("batch_extra_members", []).append(_bfound[0])
+                            st.session_state["cr_batch_search_input"] = ""
+                            st.rerun()
+                        else:
+                            data["batch_search_matches"] = _bfound
+                            st.rerun()
+                _bno = st.session_state.pop("cr_batch_no_result", None)
+                if _bno:
+                    st.warning(_bno)
+
+        # ── Submit form ────────────────────────────────────────────────────────
         _submit = False
         _cancel = False
         _add_field = False
@@ -1887,19 +2056,26 @@ def _render_cr_wizard() -> None:
                         _cr_ws.append_row(_cr_headers)
                     _myt_now = datetime.now(MYT)
                     _rows_cr = []
+                    # Build ordered target list: primary member first, then batch members
+                    _cr_targets = [{"name": data.get("member_name", ""), "cell": data.get("member_cell", ""), "row": None}]
+                    if len(pending) == 1:
+                        for _bm in data.get("batch_extra_members", []):
+                            _cr_targets.append({"name": _bm.get("Name", ""), "cell": _bm.get("Cell", ""), "row": _bm})
                     for ch in pending:
-                        _rows_cr.append([
-                            _myt_now.strftime("%Y-%m-%d"),
-                            _myt_now.strftime("%H:%M:%S"),
-                            data.get("requester", ""),
-                            data.get("member_name", ""),
-                            data.get("member_cell", ""),
-                            ch["field"],
-                            ch.get("current_value", ""),
-                            ch["new_value"],
-                            data.get("reason", ""),
-                            "Pending",
-                        ])
+                        for _tgt in _cr_targets:
+                            _cur_val = ch.get("current_value", "") if _tgt["row"] is None else _tgt["row"].get(ch["field"], "")
+                            _rows_cr.append([
+                                _myt_now.strftime("%Y-%m-%d"),
+                                _myt_now.strftime("%H:%M:%S"),
+                                data.get("requester", ""),
+                                _tgt["name"],
+                                _tgt["cell"],
+                                ch["field"],
+                                _cur_val,
+                                ch["new_value"],
+                                data.get("reason", ""),
+                                "Pending",
+                            ])
                     _cr_ws.append_rows(_rows_cr)
                     _cr_written = True
                 else:
@@ -1912,16 +2088,22 @@ def _render_cr_wizard() -> None:
                     from chatbot_redis import submit_change_request as _submit_cr
                     _rc_cr = get_chatbot_redis_client()
                     if _rc_cr:
+                        _fb_targets = [{"name": data.get("member_name", ""), "cell": data.get("member_cell", ""), "row": None}]
+                        if len(pending) == 1:
+                            for _bm in data.get("batch_extra_members", []):
+                                _fb_targets.append({"name": _bm.get("Name", ""), "cell": _bm.get("Cell", ""), "row": _bm})
                         for ch in pending:
-                            _submit_cr(_rc_cr, {
-                                "requester":     data.get("requester", ""),
-                                "member_name":   data.get("member_name", ""),
-                                "member_cell":   data.get("member_cell", ""),
-                                "field":         ch["field"],
-                                "current_value": ch.get("current_value", ""),
-                                "new_value":     ch["new_value"],
-                                "reason":        data.get("reason", ""),
-                            })
+                            for _tgt in _fb_targets:
+                                _cur_val = ch.get("current_value", "") if _tgt["row"] is None else _tgt["row"].get(ch["field"], "")
+                                _submit_cr(_rc_cr, {
+                                    "requester":     data.get("requester", ""),
+                                    "member_name":   _tgt["name"],
+                                    "member_cell":   _tgt["cell"],
+                                    "field":         ch["field"],
+                                    "current_value": _cur_val,
+                                    "new_value":     ch["new_value"],
+                                    "reason":        data.get("reason", ""),
+                                })
                         _cr_fallback = True
                     else:
                         _cr_err += " · Upstash also unavailable."
