@@ -1780,10 +1780,11 @@ def _render_cr_wizard() -> None:
         with st.chat_message("assistant", avatar="🤖"):
             st.markdown("Okay! Here's the rundown — double-check and let's make it happen:")
 
-        # Hidden edit buttons — one per queued change, clicked from inside the iframe below
+        # Hidden edit/delete buttons — one per queued change, clicked from inside the iframe below
         st.markdown('<div id="cr-cf-edit-start"></div>', unsafe_allow_html=True)
         for _ch in pending:
-            _fkey = f"cr_cf_edit_{_ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+            _fkey  = f"cr_cf_edit_{_ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
+            _dfkey = f"cr_cf_del_{_ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
             if st.button(f"edit {_ch['field']}", key=_fkey):
                 st.session_state["cr_edit_original"] = _ch
                 st.session_state["cr_edit_return"] = True
@@ -1795,6 +1796,9 @@ def _render_cr_wizard() -> None:
                 })
                 st.session_state.cr_step = "new_value"
                 st.rerun()
+            if st.button(f"delete {_ch['field']}", key=_dfkey):
+                st.session_state.cr_data["pending_changes"] = [c for c in pending if c["field"] != _ch["field"]]
+                st.rerun()
         st.markdown('<div id="cr-cf-edit-end"></div>', unsafe_allow_html=True)
 
         # Build iframe change rows with an Edit button per row
@@ -1805,11 +1809,14 @@ def _render_cr_wizard() -> None:
             _new_v = ch["new_value"]
             _fname = ch["field"].replace("'", "\\'")
             _iframe_rows += (
-                f'<tr class="chrow">'
+                f'<tr class="chrow" data-field="{_fname}">'
                 f'<td class="ftd">{ch["field"]}</td>'
                 f'<td class="ctd">{_old}</td>'
                 f'<td class="ntd">{_new_v}</td>'
-                f'<td class="etd"><button class="edit-btn" onclick="clickEdit(\'{_fk}\',\'{_fname}\')">Edit</button></td>'
+                f'<td class="etd">'
+                f'<button class="edit-btn" onclick="clickEdit(\'{_fk}\',\'{_fname}\')">Edit</button>'
+                f'<button class="del-btn" onclick="clickDelete(\'{_fname}\')">✕</button>'
+                f'</td>'
                 f'</tr>'
             )
         _reason_color = "#ffffff" if reason_val != "—" else "#333333"
@@ -1832,7 +1839,7 @@ def _render_cr_wizard() -> None:
             f'table{{width:100%;border-collapse:collapse;}}'
             f'.colhdr td{{padding:3px 8px 3px 0;color:#444444;font-size:0.72rem;}}'
             f'.colhdr td:first-child{{padding-left:16px;}}'
-            f'.chrow{{border-top:1px solid #141414;}}'
+            f'.chrow{{border-top:1px solid #141414;transition:transform 0.2s ease,opacity 0.2s ease;}}'
             f'.ftd{{padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:34%;white-space:nowrap;}}'
             f'.ctd{{padding:5px 8px 5px 0;color:#555555;font-size:0.82rem;width:28%;}}'
             f'.ntd{{padding:5px 8px 5px 0;color:{_pc_cf};font-size:0.82rem;font-weight:600;}}'
@@ -1841,6 +1848,10 @@ def _render_cr_wizard() -> None:
             f'color:#888888;font-size:0.72rem;padding:3px 10px;border-radius:999px;cursor:pointer;'
             f'transition:border-color 0.15s,color 0.15s;}}'
             f'.edit-btn:hover{{border-color:{_pc_cf};color:{_pc_cf};}}'
+            f'.del-btn{{background:transparent;border:1px solid rgba(255,100,100,0.30);'
+            f'color:#666666;font-size:0.72rem;padding:3px 8px;border-radius:999px;cursor:pointer;'
+            f'margin-left:6px;transition:border-color 0.15s,color 0.15s;}}'
+            f'.del-btn:hover{{border-color:#ff6464;color:#ff6464;}}'
             f'.rtd{{padding:5px 16px 10px;color:{_reason_color};font-size:0.82rem;}}'
             f'</style></head><body>'
             f'<div class="card">'
@@ -1866,6 +1877,38 @@ def _render_cr_wizard() -> None:
             f'  }}'
             f'  if(btn)btn.click();'
             f'}}'
+            f'function clickDelete(fieldName){{'
+            f'  var pdoc=window.parent.document;'
+            f'  var lbl="delete "+fieldName;'
+            f'  var bs=pdoc.querySelectorAll("button");'
+            f'  for(var j=0;j<bs.length;j++){{'
+            f'    if(bs[j].textContent.trim()===lbl){{bs[j].click();return;}}'
+            f'  }}'
+            f'}}'
+            f'(function(){{'
+            f'  document.querySelectorAll("tr.chrow").forEach(function(row){{'
+            f'    var sx=0,sy=0,dx=0;'
+            f'    row.addEventListener("touchstart",function(e){{sx=e.touches[0].clientX;sy=e.touches[0].clientY;dx=0;}},{{passive:true}});'
+            f'    row.addEventListener("touchmove",function(e){{'
+            f'      dx=e.touches[0].clientX-sx;'
+            f'      var dy=e.touches[0].clientY-sy;'
+            f'      if(Math.abs(dx)>Math.abs(dy)&&dx<0){{'
+            f'        row.style.transform="translateX("+dx+"px)";'
+            f'        row.style.opacity=Math.max(0.3,1+dx/200);'
+            f'      }}'
+            f'    }},{{passive:true}});'
+            f'    row.addEventListener("touchend",function(){{'
+            f'      if(dx<-60){{'
+            f'        row.style.transform="translateX(-100%)";'
+            f'        row.style.opacity="0";'
+            f'        setTimeout(function(){{clickDelete(row.getAttribute("data-field"));}},200);'
+            f'      }}else{{'
+            f'        row.style.transform="";'
+            f'        row.style.opacity="";'
+            f'      }}'
+            f'    }});'
+            f'  }});'
+            f'}})()'
             f'(function(){{'
             f'  var pdoc=window.parent.document;'
             f'  function hide(){{'
