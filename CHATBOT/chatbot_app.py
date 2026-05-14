@@ -2057,7 +2057,7 @@ def _render_cr_wizard() -> None:
                             pass
                 if _cr_gc and _cr_sid:
                     _cr_sp = _cr_gc.open_by_key(_cr_sid)
-                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Notes"]
+                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Notes"]
                     try:
                         _cr_ws = _cr_sp.worksheet("Change Requests")
                     except _gspread.exceptions.WorksheetNotFound:
@@ -2089,6 +2089,7 @@ def _render_cr_wizard() -> None:
                                 ch["field"],
                                 _cur_val,
                                 ch["new_value"],
+                                _cr_reason,
                                 _cr_notes_val,
                             ])
                     _cr_ws.insert_rows(_rows_cr, row=2, value_input_option="USER_ENTERED")
