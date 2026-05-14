@@ -2064,11 +2064,17 @@ def _render_cr_wizard() -> None:
         _submit = False
         _cancel = False
         _add_field = False
+        _has_batch = bool(data.get("batch_extra_members"))
         with st.form("cr_confirm"):
-            c1, c2, c3 = st.columns([2, 2, 2])
-            _submit    = c1.form_submit_button("✅ Submit all", use_container_width=True)
-            _add_field = c2.form_submit_button("+ Make more changes", use_container_width=True)
-            _cancel    = c3.form_submit_button("✗ Cancel", use_container_width=True)
+            if _has_batch:
+                c1, c3 = st.columns([2, 2])
+                _submit = c1.form_submit_button("✅ Submit all", use_container_width=True)
+                _cancel = c3.form_submit_button("✗ Cancel", use_container_width=True)
+            else:
+                c1, c2, c3 = st.columns([2, 2, 2])
+                _submit    = c1.form_submit_button("✅ Submit all", use_container_width=True)
+                _add_field = c2.form_submit_button("+ Make more changes", use_container_width=True)
+                _cancel    = c3.form_submit_button("✗ Cancel", use_container_width=True)
 
         if _add_field:
             st.session_state.cr_step = "show_info"
@@ -2104,7 +2110,7 @@ def _render_cr_wizard() -> None:
                             pass
                 if _cr_gc and _cr_sid:
                     _cr_sp = _cr_gc.open_by_key(_cr_sid)
-                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Notes", "Done", "Rejected"]
+                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Notes", "Approve?", "Done?", "Rejected?"]
                     try:
                         _cr_ws = _cr_sp.worksheet("Change Requests")
                     except _gspread.exceptions.WorksheetNotFound:
@@ -2153,7 +2159,7 @@ def _render_cr_wizard() -> None:
                                 "rule": {"condition": {"type": "BOOLEAN"}, "showCustomUi": True},
                             }
                         }
-                        for col_idx in [10, 11]  # K=Done?, L=Rejected?
+                        for col_idx in [10, 11, 12]  # K=Approve?, L=Done?, M=Rejected?
                     ]})
                     _cr_written = True
                 else:
