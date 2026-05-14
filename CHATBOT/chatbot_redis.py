@@ -129,7 +129,6 @@ def submit_change_request(r, data: dict) -> None:
         **data,
         "date": date_str,
         "timestamp": now.strftime("%H:%M:%S"),
-        "status": "Pending",
     })
     key = f"{CHANGE_REQ_KEY_PREFIX}{date_str}"
     r.rpush(key, payload)

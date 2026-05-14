@@ -185,7 +185,7 @@ def _ensure_change_requests_worksheet(spreadsheet):
         ws = spreadsheet.add_worksheet("Change Requests", rows=5000, cols=10)
         ws.append_row(
             ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
-             "Field", "Current Value", "New Value", "Reason", "Status"],
+             "Field", "Current Value", "New Value", "Notes"],
             value_input_option="USER_ENTERED",
         )
         return ws
@@ -193,7 +193,7 @@ def _ensure_change_requests_worksheet(spreadsheet):
     if not ws.row_values(1):
         ws.append_row(
             ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
-             "Field", "Current Value", "New Value", "Reason", "Status"],
+             "Field", "Current Value", "New Value", "Notes"],
             value_input_option="USER_ENTERED",
         )
     return ws
@@ -235,8 +235,7 @@ def sync_change_requests() -> None:
                 entry.get("field", ""),
                 entry.get("current_value", ""),
                 entry.get("new_value", ""),
-                entry.get("reason", ""),
-                entry.get("status", "Pending"),
+                entry.get("notes", ""),
             ]
             for entry in requests
         ]

@@ -1,0 +1,2975 @@
+// ===== MOVE RED/GRADUATED TO ARCHIVE =====
+function withArchiveLock_(fn) {
+  const lock = LockService.getScriptLock();
+  const lockWaitMs = 60000;
+  if (!lock.tryLock(lockWaitMs)) {
+    Logger.log("Archive operation: lock not acquired within " + lockWaitMs + "ms — skipping to avoid concurrent deletes.");
+    return;
+  }
+  try {
+    fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Non–cell-roster tabs: same exclusions as the automated newcomers form (no bulk format, sort,
+ * archive sweep, age calc, attendance status passes, or onEdit roster metadata).
+ * Skips use nwstCgNormalizedSheetName_ + case-insensitive compare.
+ * ALL + Newcomers Form (Automated) live in NWST_CG_TABS_LIKE_AUTOMATED_FORM_; Attendance, Historical log, Newcomers (Copy) in aliases.
+ * Add other non–cell-roster tab names to NWST_CG_NON_ROSTER_TAB_ALIASES_ as needed.
+ */
+var NWST_CG_TABS_LIKE_AUTOMATED_FORM_ = ["Newcomers Form (Automated)", "ALL", "Leaders"];
+
+/** Canonical name of the Historical Cell Status log tab (must match the sheet). Non–cell-roster: never CG format/sort/age. */
+var HISTORICAL_CELL_STATUS_TAB = "Historical Cell Status";
+
+/** Non–cell-roster tabs: Attendance, Historical log, Newcomers (Copy) (+ any extras). Matching is case-insensitive. */
+var NWST_CG_NON_ROSTER_TAB_ALIASES_ = ["Attendance", HISTORICAL_CELL_STATUS_TAB, "Historical Ministry Status", "Newcomers (Copy)"];
+
+function nwstCgNonRosterTabNames_() {
+  return NWST_CG_TABS_LIKE_AUTOMATED_FORM_.concat(NWST_CG_NON_ROSTER_TAB_ALIASES_);
+}
+
+/** Trim + strip zero-width chars so getName() matches skip lists (e.g. "ALL " vs "ALL"). */
+function nwstCgNormalizedSheetName_(sheetName) {
+  return String(sheetName || "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+}
+
+function nwstCgIsLikeAutomatedFormTab_(sheetName) {
+  var n = nwstCgNormalizedSheetName_(sheetName).toLowerCase();
+  var names = nwstCgNonRosterTabNames_();
+  for (var i = 0; i < names.length; i++) {
+    if (nwstCgNormalizedSheetName_(names[i]).toLowerCase() === n) return true;
+  }
+  return false;
+}
+
+/** Use with SKIP_TABS from nwstCgNonRosterTabNames_().concat([...]). */
+function nwstCgSkipTab_(sheetName, skipTabs) {
+  var n = nwstCgNormalizedSheetName_(sheetName).toLowerCase();
+  for (var i = 0; i < skipTabs.length; i++) {
+    if (nwstCgNormalizedSheetName_(skipTabs[i]).toLowerCase() === n) return true;
+  }
+  return nwstCgIsLikeAutomatedFormTab_(sheetName);
+}
+
+// Menu / scheduled: sweep all sheets for archive statuses.
+function moveToArchive() {
+  withArchiveLock_(moveToArchiveBody);
+}
+
+// On edit: move only the row that was just set to Red/Graduated/Duplicate (single deleteRow).
+function moveSingleRowToArchive(sheet, rowNum) {
+  withArchiveLock_(function() {
+    moveSingleRowToArchiveBody(sheet, rowNum);
+  });
+}
+
+function moveSingleRowToArchiveBody(sheet, rowNum) {
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Archive", "Template", "Key Values"
+  ]);
+  const sheetName = sheet.getName();
+  if (nwstCgSkipTab_(sheetName, SKIP_TABS)) return;
+  if (rowNum < 2) return;
+
+  const STATUS_COL = 11;
+  const CELL_COL = 2;
+  const NOTES_COL = 18;
+  const LAST_UPDATE_COL = 21;
+
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+
+  // Sheet.getRange(r, c, numRows, numCols) — not (r1,c1,r2,c2)
+  const rowValues = sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+  const status = rowValues[STATUS_COL - 1];
+  if (!isArchiveStatus(status)) return;
+
+  const ss = sheet.getParent();
+  const sheets = ss.getSheets();
+
+  let archiveSheet = ss.getSheetByName("Archive");
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet("Archive");
+    const firstDataSheet = sheets.find(function(s) {
+      return !nwstCgSkipTab_(s.getName(), SKIP_TABS);
+    });
+    if (firstDataSheet) {
+      const headers = firstDataSheet.getRange(1, 1, 1, firstDataSheet.getLastColumn()).getValues();
+      archiveSheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+      archiveSheet.getRange(1, headers[0].length + 1).setValue("Source Tab");
+    }
+  }
+
+  const rowWithSource = rowValues.slice();
+  rowWithSource.push(sheetName);
+
+  const archiveLastRow = archiveSheet.getLastRow();
+  archiveSheet.getRange(archiveLastRow + 1, 1, 1, rowWithSource.length).setValues([rowWithSource]);
+
+  const newArchiveRow = archiveLastRow + 1;
+  sheet.deleteRow(rowNum);
+
+  const currentCell = archiveSheet.getRange(newArchiveRow, CELL_COL).getValue();
+  if (currentCell === "Archive") return;
+
+  const prevCell = currentCell;
+  const currentNotes = archiveSheet.getRange(newArchiveRow, NOTES_COL).getValue() || "";
+  archiveSheet.getRange(newArchiveRow, CELL_COL).setValue("Archive");
+  const prevCellText = "Prev cell: " + (prevCell || "N/A");
+  const newNotes = currentNotes ? currentNotes + " | " + prevCellText : prevCellText;
+  archiveSheet.getRange(newArchiveRow, NOTES_COL).setValue(newNotes);
+  archiveSheet.getRange(newArchiveRow, LAST_UPDATE_COL).setValue(formatMYTTimestamp());
+
+  Logger.log("moveSingleRowToArchive: moved row from " + sheetName + " row " + rowNum + " to Archive row " + newArchiveRow);
+  cgProminentToast_(
+    ss,
+    "ARCHIVE — ROW MOVED",
+    "Member row moved from " + sheetName + " to the Archive tab.\n\nOpen the Archive sheet to review.",
+    30
+  );
+}
+
+// On edit: when Column B (Cell) changes, move the row to the sheet tab that matches the new cell value (same lock pattern as single-row Archive).
+function moveSingleRowToCellTab(sheet, rowNum) {
+  withArchiveLock_(function() {
+    moveSingleRowToCellTabBody(sheet, rowNum);
+  });
+}
+
+function moveSingleRowToCellTabBody(sheet, rowNum) {
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Archive", "Template", "Key Values"
+  ]);
+  const sheetName = sheet.getName();
+  if (nwstCgSkipTab_(sheetName, SKIP_TABS)) return;
+  if (rowNum < 2) return;
+
+  const TARGET_LAST_COL = 23;
+  const NOTES_COL = 18;
+  const STATUS_COL = 11;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+
+  const rowValues = sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+  while (rowValues.length < TARGET_LAST_COL) rowValues.push("");
+  const newCell = String(rowValues[1] || "").trim();
+  const ss = sheet.getParent();
+  const targetSheet = resolveCgDataSheetForCellDropdown_(ss, newCell);
+  if (!targetSheet) {
+    Logger.log("moveSingleRowToCellTab: no sheet for Cell value: " + newCell);
+    return;
+  }
+  const targetName = targetSheet.getName();
+  if (targetName === sheetName) return;
+  if (targetName === "Archive") return;
+  if (nwstCgIsLikeAutomatedFormTab_(targetName)) return;
+
+  if (isArchiveStatus(rowValues[STATUS_COL - 1])) {
+    moveSingleRowToArchiveBody(sheet, rowNum);
+    return;
+  }
+
+  const currentNotes = rowValues[NOTES_COL - 1] ? String(rowValues[NOTES_COL - 1]).trim() : "";
+  const moveNote = "Moved from " + sheetName + " on " + formatMYTTimestamp();
+  rowValues[NOTES_COL - 1] = currentNotes ? currentNotes + " | " + moveNote : moveNote;
+
+  targetSheet.appendRow(rowValues.slice(0, TARGET_LAST_COL));
+  sheet.deleteRow(rowNum);
+  Logger.log("moveSingleRowToCellTab: moved row from " + sheetName + " row " + rowNum + " to " + targetName);
+  cgSpreadsheetToast_(ss, "Member row moved to tab:\n" + targetName, "ROW MOVED", 22);
+}
+
+function moveToArchiveBody() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  // Only these tabs are swept for archive-eligible rows.
+  const SOURCE_TABS = [
+    "Anchor", "Aster", "Fire", "Crown", "Fishers",
+    "Forth", "HIS", "Home", "King", "Life",
+    "Lights", "Meta", "Royal", "Runners",
+    "Via Dolorosa", "Shepherds", "Core Team"
+  ];
+  const isSourceTab = name => SOURCE_TABS.some(t => t.toLowerCase() === String(name || "").trim().toLowerCase());
+
+  const STATUS_COL = 11;  // Column K (Status)
+  const CELL_COL = 2;    // Column B (Cell)
+  const NOTES_COL = 18;  // Column R (Notes)
+  // Archive statuses now use definitions (e.g., "Red: Will no longer follow up...")
+  // Use isArchiveStatus() helper to check
+
+  // Get or create Archive sheet
+  let archiveSheet = ss.getSheetByName("Archive");
+  if (!archiveSheet) {
+    archiveSheet = ss.insertSheet("Archive");
+    // Copy headers from first data sheet
+    const firstDataSheet = sheets.find(s => isSourceTab(s.getName()));
+    if (firstDataSheet) {
+      const headers = firstDataSheet.getRange(1, 1, 1, firstDataSheet.getLastColumn()).getValues();
+      archiveSheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+      // Add "Source Tab" column
+      archiveSheet.getRange(1, headers[0].length + 1).setValue("Source Tab");
+    }
+  }
+
+  let totalMoved = 0;
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+
+    if (!isSourceTab(sheetName)) continue;
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2) continue;
+
+    // Data rows 2..lastRow: numRows = lastRow - 1 (getRange uses numRows, not end row)
+    const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
+    const data = dataRange.getValues();
+
+    const rowsToMove = [];
+    const rowIndicesToDelete = [];
+
+    // Find rows with Red, Graduated, or Duplicate status (including definitions)
+    for (let j = 0; j < data.length; j++) {
+      const status = data[j][STATUS_COL - 1];  // 0-indexed
+      if (isArchiveStatus(status)) {
+        // Add source tab info
+        const rowWithSource = data[j].slice();
+        rowWithSource.push(sheetName);
+        rowsToMove.push(rowWithSource);
+        rowIndicesToDelete.push(j + 2);  // +2 for 1-index and header
+      }
+    }
+
+    if (rowsToMove.length > 0) {
+      // Append to Archive
+      const archiveLastRow = archiveSheet.getLastRow();
+      archiveSheet.getRange(archiveLastRow + 1, 1, rowsToMove.length, rowsToMove[0].length)
+        .setValues(rowsToMove);
+
+      // Delete rows from source (in reverse order to maintain indices)
+      rowIndicesToDelete.sort((a, b) => b - a);
+      for (let k = 0; k < rowIndicesToDelete.length; k++) {
+        sheet.deleteRow(rowIndicesToDelete[k]);
+      }
+
+      Logger.log("Moved " + rowsToMove.length + " rows from " + sheetName + " to Archive");
+      totalMoved += rowsToMove.length;
+    }
+  }
+
+  // ===== UPDATE CELL COLUMN IN ARCHIVE =====
+  let cellsUpdated = 0;
+  const archiveLastRow = archiveSheet.getLastRow();
+  if (archiveLastRow >= 2) {
+    const archiveData = archiveSheet.getRange(2, 1, archiveLastRow - 1, archiveSheet.getLastColumn()).getValues();
+
+    for (let j = 0; j < archiveData.length; j++) {
+      const status = archiveData[j][STATUS_COL - 1];
+      const currentCell = archiveData[j][CELL_COL - 1];
+
+      // Skip if already set to Archive or status doesn't match
+      if (currentCell === "Archive") continue;
+      if (!isArchiveStatus(status)) continue;
+
+      const rowNum = j + 2;
+      const prevCell = currentCell;
+      const currentNotes = archiveData[j][NOTES_COL - 1] || "";
+
+      // Update Column B to "Archive"
+      archiveSheet.getRange(rowNum, CELL_COL).setValue("Archive");
+
+      // Append previous cell info to Column M
+      const prevCellText = "Prev cell: " + (prevCell || "N/A");
+      const newNotes = currentNotes ? currentNotes + " | " + prevCellText : prevCellText;
+      archiveSheet.getRange(rowNum, NOTES_COL).setValue(newNotes);
+
+      // Update Column U (Last Updated) with timestamp
+      const LAST_UPDATE_COL = 21;
+      archiveSheet.getRange(rowNum, LAST_UPDATE_COL).setValue(formatMYTTimestamp());
+
+      cellsUpdated++;
+    }
+    Logger.log("Updated " + cellsUpdated + " cells to Archive in Cell column");
+  }
+
+  Logger.log("Total rows moved to Archive: " + totalMoved);
+  const sweepBody =
+    totalMoved === 0 && cellsUpdated === 0
+      ? "No Red / Graduated / Duplicate rows found on cell tabs.\nNothing moved."
+      : totalMoved +
+        " row(s) moved from cell tabs to Archive." +
+        (cellsUpdated > 0
+          ? "\n\n" + cellsUpdated + " Archive row(s): Column B set to \"Archive\" (prev cell in Notes)."
+          : "") +
+        "\n\nOpen the Archive tab to review.";
+  cgProminentToast_(ss, "ARCHIVE SWEEP COMPLETE", sweepBody, 30);
+
+  // Rebuild ministry tabs and log their historical snapshot now that archived members are removed.
+  refreshAllMinistryTabsAndLog();
+}
+
+// ===== STANDALONE: RECALCULATE AGES =====
+// Note: syncNewcomersAndCellGroups has been moved to Newcomer Form script
+function recalculateAllAges() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  // DEBUG: Log when function starts (from trigger vs manual)
+  Logger.log("recalculateAllAges: START - Processing " + sheets.length + " sheets");
+
+  // Explicit redundant list: these tabs use IMPORTRANGE for column C, never overwrite
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST",
+    "Attendance",
+    "Historical Cell Status",
+    "Historical Ministry Status",
+    "ALL",
+    "Leaders"
+  ]);
+
+  // HARD-CODED SAFEGUARD: These tabs must NEVER have Column C written (IMPORTRANGE source)
+  const PROTECTED_COLUMN_C_TABS = ["attendance", "historical cell status", "historical ministry status", "all", "leaders"];
+
+  const AGE_COL = 3;       // Column C
+  const BIRTHDAY_COL = 12; // Column L
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+    const normalizedName = sheetName.toLowerCase().trim();
+
+    // DEBUG: Log each sheet being evaluated
+    Logger.log("recalculateAllAges: Evaluating sheet '" + sheetName + "' (normalized: '" + normalizedName + "')");
+
+    if (nwstCgSkipTab_(sheetName, SKIP_TABS)) {
+      Logger.log("recalculateAllAges: SKIPPED '" + sheetName + "' via nwstCgSkipTab_");
+      continue;
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      Logger.log("recalculateAllAges: SKIPPED '" + sheetName + "' - no data rows");
+      continue;
+    }
+
+    // HARD-CODED SAFEGUARD: Double-check before writing to Column C
+    if (PROTECTED_COLUMN_C_TABS.indexOf(normalizedName) !== -1) {
+      Logger.log("recalculateAllAges: SAFEGUARD BLOCKED write to '" + sheetName + "' - this tab should have been skipped!");
+      continue;
+    }
+
+    const birthdayRange = sheet.getRange(2, BIRTHDAY_COL, lastRow - 1, 1);
+    const birthdays = birthdayRange.getValues();
+
+    const ages = birthdays.map(function(row) {
+      const birthday = row[0];
+      if (!birthday) return [""];
+      return [calculateAge(birthday)];
+    });
+
+    const ageRange = sheet.getRange(2, AGE_COL, lastRow - 1, 1);
+    ageRange.setValues(ages);
+
+    Logger.log("recalculateAllAges: WROTE ages to '" + sheetName + "' (" + (lastRow - 1) + " rows)");
+  }
+
+  Logger.log("recalculateAllAges: COMPLETE");
+  updateColumnCFromKeyValues();
+}
+
+// ===== HELPER FUNCTIONS =====
+
+// Check if status should trigger archive (checks if status starts with archive prefixes)
+function isArchiveStatus(status) {
+  if (!status) return false;
+  const statusStr = status.toString().trim();
+  const ARCHIVE_PREFIXES = ["Red", "Graduated", "Duplicate"];
+  return ARCHIVE_PREFIXES.some(prefix => statusStr.startsWith(prefix));
+}
+
+function formatMYTTimestamp() {
+  const now = new Date();
+  const myt = new Date(now.getTime() + (8 * 60 * 60 * 1000)); // Add 8 hours for MYT
+  const year = myt.getUTCFullYear();
+  const month = String(myt.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(myt.getUTCDate()).padStart(2, '0');
+  const hours = String(myt.getUTCHours()).padStart(2, '0');
+  const minutes = String(myt.getUTCMinutes()).padStart(2, '0');
+  return year + '-' + month + '-' + day + ' ' + hours + ':' + minutes;
+}
+
+/**
+ * Grey bottom-right toast (non-blocking). Unlike getUi().alert, does not require clicking OK.
+ * Works from the menu with the spreadsheet open; from time triggers the toast may not appear (same as alerts).
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
+ * @param {string} message - Main text
+ * @param {string} [title] - Short title (optional)
+ * @param {number} [timeoutSeconds] - 1–30, default 12
+ */
+function cgSpreadsheetToast_(ss, message, title, timeoutSeconds) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  const t = timeoutSeconds == null ? 12 : Math.min(30, Math.max(1, timeoutSeconds));
+  const head = title != null && String(title) !== "" ? "► " + String(title) : "";
+  try {
+    ss.toast(String(message), head, t);
+  } catch (e) {
+    Logger.log((head ? head + " — " : "") + message);
+  }
+}
+
+/**
+ * Easier-to-notice toast: defaults to max allowed duration (–30s), larger visual block in the body.
+ * Google does not allow styling the bubble; duration + copy + ► title are the main levers.
+ */
+function cgProminentToast_(ss, title, bodyLines, timeoutSeconds) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  const t = timeoutSeconds == null ? 30 : Math.min(30, Math.max(8, timeoutSeconds));
+  const head = title != null && String(title) !== "" ? "► " + String(title) : "► Done";
+  const bar = "——————————————————";
+  const body = bar + "\n" + String(bodyLines || "").trim() + "\n" + bar;
+  try {
+    ss.toast(body, head, t);
+  } catch (e) {
+    Logger.log(head + "\n" + body);
+  }
+}
+
+function calculateAge(birthday) {
+  if (!birthday) return "";
+
+  const birthDate = new Date(birthday);
+  if (isNaN(birthDate.getTime())) return "";
+
+  const today = new Date();
+  return today.getFullYear() - birthDate.getFullYear();
+}
+
+function formatDate(date) {
+  if (!date) return "";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return date;
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "dd/MM/yyyy");
+}
+
+// Remove trailing whitespace from string cells only (dates/numbers unchanged).
+// Fixes pasted values like "John " (trailing space) so dropdowns and matching work.
+// - Never touches column C here: Age is often formulas or ARRAYFORMULA spill; getValues+setValues would paste numbers and erase formulas.
+// - Cells with a formula are left as formulas (not replaced by their display values).
+function stripTrailingWhitespaceInRange_(range) {
+  const numRows = range.getNumRows();
+  const numCols = range.getNumColumns();
+  if (numRows < 1 || numCols < 1) return;
+  const values = range.getValues();
+  const formulas = range.getFormulas();
+  const out = [];
+  for (let r = 0; r < values.length; r++) {
+    const row = [];
+    for (let c = 0; c < values[r].length; c++) {
+      const f = formulas[r][c];
+      if (f != null && String(f).trim() !== "") {
+        row.push(f);
+      } else {
+        const v = values[r][c];
+        row.push(typeof v === "string" ? v.replace(/\s+$/, "") : v);
+      }
+    }
+    out.push(row);
+  }
+  range.setValues(out);
+}
+
+function stripTrailingWhitespaceFromDataRows_(sheet, numDataRows) {
+  if (numDataRows < 1) return;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+  // Columns A–B only (skip C = Age)
+  const nAb = Math.min(2, lastCol);
+  stripTrailingWhitespaceInRange_(sheet.getRange(2, 1, numDataRows, nAb));
+  // Columns D–last (skip C)
+  if (lastCol >= 4) {
+    stripTrailingWhitespaceInRange_(sheet.getRange(2, 4, numDataRows, lastCol - 3));
+  }
+}
+
+function getExistingNames(sheet) {
+  const names = new Set();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0]) names.add(data[i][0].toString().toLowerCase());
+  }
+  return names;
+}
+
+// ===== REMOVE DUPLICATES FROM ARCHIVE =====
+// Removes rows where ALL columns are identical (exact duplicates)
+function removeDuplicatesFromArchive() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const archiveSheet = ss.getSheetByName("Archive");
+
+  if (!archiveSheet) {
+    cgProminentToast_(ss, "ARCHIVE — MISSING TAB", "Create or restore the sheet named \"Archive\" and try again.", 30);
+    Logger.log("Archive sheet not found!");
+    return;
+  }
+
+  const lastRow = archiveSheet.getLastRow();
+  const lastCol = archiveSheet.getLastColumn();
+
+  if (lastRow < 2) {
+    cgProminentToast_(ss, "ARCHIVE — NO DATA ROWS", "The Archive sheet has no data rows to de-duplicate.", 30);
+    Logger.log("Archive sheet has no data rows to process.");
+    return;
+  }
+
+  // Get all data including header
+  const allData = archiveSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  const header = allData[0];
+  const data = allData.slice(1);  // Data without header
+
+  // Track unique rows using a Set with stringified row data
+  const seen = new Set();
+  const uniqueRows = [];
+  let duplicateCount = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    // Create a unique key by joining all cell values
+    const rowKey = data[i].map(function(cell) {
+      // Handle dates specially for consistent comparison
+      if (cell instanceof Date) {
+        return cell.getTime();
+      }
+      return cell === null || cell === undefined ? "" : cell.toString().trim();
+    }).join("|||");
+
+    if (!seen.has(rowKey)) {
+      seen.add(rowKey);
+      uniqueRows.push(data[i]);
+    } else {
+      duplicateCount++;
+    }
+  }
+
+  if (duplicateCount === 0) {
+    cgProminentToast_(ss, "ARCHIVE — NO DUPLICATES", "No duplicate rows found.\nArchive rows are already unique.", 30);
+    Logger.log("No duplicate rows found in Archive.");
+    return;
+  }
+
+  // Clear existing data and rewrite with unique rows only
+  archiveSheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+
+  if (uniqueRows.length > 0) {
+    archiveSheet.getRange(2, 1, uniqueRows.length, lastCol).setValues(uniqueRows);
+  }
+
+  Logger.log("Removed " + duplicateCount + " duplicate rows from Archive. " + uniqueRows.length + " unique rows remain.");
+  cgProminentToast_(
+    ss,
+    "ARCHIVE — DUPLICATES REMOVED",
+    "Removed " + duplicateCount + " duplicate row(s).\n" + uniqueRows.length + " unique row(s) remain on Archive.",
+    30
+  );
+}
+
+// ===== MOVE BACK TO CELLS FROM ARCHIVE =====
+// Resolves sheet tab from Col S (Prev Cell) or, if empty, the last column ("Source Tab" from archive).
+function resolveArchiveTargetSheet_(ss, prevCellRaw, cellNameMap) {
+  const p = String(prevCellRaw || "").trim();
+  if (!p) return null;
+  const candidates = [p];
+  if (cellNameMap[p]) candidates.push(cellNameMap[p]);
+  for (const shortName in cellNameMap) {
+    if (cellNameMap[shortName] === p) candidates.push(shortName);
+  }
+  for (let i = 0; i < candidates.length; i++) {
+    const sh = ss.getSheetByName(candidates[i]);
+    if (sh) return sh;
+  }
+  return null;
+}
+
+/**
+ * Roster tab from Column B (Cell) dropdown / display value.
+ * Uses the same display→tab map as attendance (usfaCellNameToTabMap_), then short-tab→display fallbacks like resolveArchiveTargetSheet_.
+ */
+function resolveCgDataSheetForCellDropdown_(ss, cellDisplayRaw) {
+  const v = String(cellDisplayRaw || "").trim();
+  if (!v) return null;
+  const byDisplay = usfaCellNameToTabMap_();
+  if (byDisplay[v]) {
+    const sh = ss.getSheetByName(byDisplay[v]);
+    if (sh) return sh;
+  }
+  const TAB_TO_CELL_DISPLAY = {
+    Anchor: "Anchor Street",
+    Aster: "Aster Street",
+    Crown: "Crown Street",
+    Fire: "Street Fire",
+    Fishers: "Street Fishers",
+    Forth: "Street Forth",
+    HIS: "HIS Street",
+    Home: "Home Street",
+    King: "King Street",
+    Life: "Life Street",
+    Meta: "Meta Street",
+    Royal: "Royal Street",
+    Runners: "Street Runners",
+    Shepherds: "Shepherds Street",
+    Lights: "Street Lights",
+    "Via Dolorosa": "Via Dolorosa Street",
+    "Core Team": "Narrowstreet Core Team"
+  };
+  return resolveArchiveTargetSheet_(ss, v, TAB_TO_CELL_DISPLAY);
+}
+
+// Tab label on row (Col S) or last column when archiving added "Source Tab" after A–S data
+function getArchiveReturnTabName_(row) {
+  const fromS = String(row[18] || "").trim();
+  if (fromS) return fromS;
+  if (row.length > 0) return String(row[row.length - 1] || "").trim();
+  return "";
+}
+
+// Column B dropdown value when restoring (short tab, long tab, or display name)
+function archiveRestoredCellBValue_(returnTab, cellNameMap) {
+  const t = String(returnTab || "").trim();
+  if (cellNameMap[t]) return cellNameMap[t];
+  for (const shortName in cellNameMap) {
+    if (shortName === t || cellNameMap[shortName] === t) return cellNameMap[shortName];
+  }
+  return t + " Street";
+}
+
+// Moves rows back to their original cell tabs when Status is NOT Red, Graduated, or Duplicate (to delete)
+function moveBackToCells() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const archiveSheet = ss.getSheetByName('Archive');
+
+  if (!archiveSheet) {
+    cgProminentToast_(ss, "ARCHIVE — MISSING TAB", "The Archive sheet was not found.", 30);
+    Logger.log('Archive sheet not found!');
+    return;
+  }
+
+  const lastRow = archiveSheet.getLastRow();
+  const lastCol = archiveSheet.getLastColumn();
+  if (lastRow < 2) {
+    cgProminentToast_(ss, "ARCHIVE — EMPTY", "No data rows on Archive to restore.", 30);
+    Logger.log('No data in Archive.');
+    return;
+  }
+
+  const data = archiveSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+  // Statuses to KEEP in Archive - use isArchiveStatus() helper
+  // (Red, Graduated, Duplicate statuses with definitions)
+
+  const STATUS_COL = 11;  // Column K (1-indexed)
+  const CELL_COL = 2;     // Column B (1-indexed)
+  const NOTES_COL = 18;   // Column R (1-indexed)
+  const PREV_CELL_COL = 24; // Column X (1-indexed)
+
+  // Get current timestamp in MYT (Malaysia Time, UTC+8)
+  const dateStr = formatMYTTimestamp(); // YYYY-MM-DD HH:MM format
+
+  // Map Prev Cell (Col S) to Cell column value (Col B)
+  const cellNameMap = {
+    'Anchor': 'Anchor Street',
+    'Aster': 'Aster Street',
+    'Crown': 'Crown Street',
+    'Fire': 'Street Fire',
+    'Fishers': 'Street Fishers',
+    'Forth': 'Street Forth',
+    'HIS': 'HIS Street',
+    'Home': 'Home Street',
+    'King': 'King Street',
+    'Life': 'Life Street',
+    'Meta': 'Meta Street',
+    'Royal': 'Royal Street',
+    'Runners': 'Street Runners',
+    'Shepherds': 'Shepherds Street',
+    'Lights': 'Street Lights',
+    'Via Dolorosa': 'Via Dolorosa Street',
+    'Core Team': 'Narrowstreet Core Team'
+  };
+
+  const rowsToDelete = [];
+  let movedCount = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i].slice();
+    const status = String(row[STATUS_COL - 1]).trim(); // Column K (0-indexed: 10)
+    const returnTab = getArchiveReturnTabName_(row);
+
+    // Skip if status should stay in Archive (is archive status) or is empty
+    if (isArchiveStatus(status) || status === '' || status === 'undefined') {
+      continue;
+    }
+
+    if (!returnTab) {
+      Logger.log('moveBackToCells: no tab in Col S or Source Tab for row: ' + row[0]);
+      continue;
+    }
+
+    const targetSheet = resolveArchiveTargetSheet_(ss, returnTab, cellNameMap);
+    if (!targetSheet) {
+      Logger.log('Sheet not found for tab name: "' + returnTab + '" (Row: ' + row[0] + ')');
+      continue;
+    }
+    if (nwstCgIsLikeAutomatedFormTab_(targetSheet.getName())) {
+      Logger.log('moveBackToCells: skipping restore to tab treated like automated form (Row: ' + row[0] + ')');
+      continue;
+    }
+
+    // Update Column B to the cell dropdown value
+    row[CELL_COL - 1] = archiveRestoredCellBValue_(returnTab, cellNameMap);
+
+    // Append note to Column M (Notes)
+    const currentNotes = row[NOTES_COL - 1] ? String(row[NOTES_COL - 1]).trim() : '';
+    const moveNote = 'Was in Archive, restored to cell on ' + dateStr;
+    row[NOTES_COL - 1] = currentNotes ? currentNotes + ' | ' + moveNote : moveNote;
+
+    // Clear Prev Cell (Column S)
+    row[PREV_CELL_COL - 1] = '';
+
+    // Append to target sheet (columns A-W only, excluding Prev Cell col X and Source Tab)
+    // Target sheets should have 23 columns: A-W (Name through New Since)
+    const targetLastCol = 23;
+    targetSheet.appendRow(row.slice(0, targetLastCol));
+
+    rowsToDelete.push(i + 2); // +2 for header and 0-index
+    movedCount++;
+
+    Logger.log('Moved: ' + row[0] + ' to ' + returnTab + ' (Status was: ' + status + ')');
+  }
+
+  // Delete rows from Archive in reverse order
+  rowsToDelete.sort((a, b) => b - a);
+  for (let k = 0; k < rowsToDelete.length; k++) {
+    archiveSheet.deleteRow(rowsToDelete[k]);
+  }
+
+  Logger.log('Moved ' + movedCount + ' member(s) back to their cells.');
+  if (movedCount > 0) {
+    cgProminentToast_(
+      ss,
+      "ARCHIVE — RESTORED TO CELLS",
+      movedCount + " row(s) moved from Archive back to cell tabs.\n\nCheck the destination cell sheets.",
+      30
+    );
+  } else {
+    cgProminentToast_(
+      ss,
+      "ARCHIVE — NOTHING MOVED",
+      "No rows met the rules for restore.\n\n" +
+        "On Archive, set Status (F) to something other than Red / Graduated / Duplicate.\n" +
+        "Return tab: Column S (Prev Cell), or last column (Source Tab).\n" +
+        "Tab name must match the sheet (e.g. Core Team).",
+      30
+    );
+  }
+}
+
+// ===== AUTO-UPDATE LAST EDIT TIMESTAMP =====
+// Triggers on any edit, updates Column P with timestamp in "YYYY-MM-DD HH:MM MYT" format
+// Also triggers archive functions when Status column changes, and moves rows when Cell column (B) changes to another cell tab
+// Also updates Column Q (Role Last Updated) when Role column changes
+//
+// This function name `onEdit` is a SIMPLE TRIGGER: Sheets runs it on every edit automatically.
+// Simple onEdit often does NOT populate e.value (unlike installable onEdit). Use getEditCellValue_
+// so Status -> Red/etc. still works without a second trigger.
+//
+// Do NOT add installable On edit -> onEdit (runs this handler twice and can double-delete rows).
+// Do NOT add On edit -> moveToArchive (use menu / time trigger for full sweep instead).
+// Use Cell Management -> "Check duplicate ON_EDIT triggers" to audit this spreadsheet.
+// Prefer the cell over e.value: simple triggers omit e.value; dropdown edits can send e.value as ""
+// even when the cell already shows the new status (second change would not archive).
+function getEditCellValue_(e) {
+  const fromCell = e.range.getValue();
+  if (fromCell !== "" && fromCell != null) return fromCell;
+  const fromDisplay = e.range.getDisplayValue();
+  if (fromDisplay !== "" && fromDisplay != null) return fromDisplay;
+  if (e.value !== undefined && e.value !== null) return e.value;
+  return fromCell;
+}
+
+function onEdit(e) {
+  // Exit if no event object
+  if (!e) return;
+
+  const sheet = e.range.getSheet();
+  const sheetName = sheet.getName();
+
+  // Tabs to skip (no timestamp tracking) — same class as automated form + Key Values (Attendance in non-roster aliases)
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat(["Key Values"]);
+
+  if (nwstCgSkipTab_(sheetName, SKIP_TABS)) return;
+
+  const range = e.range;
+  const row = range.getRow();
+  const col = range.getColumn();
+
+  // Skip header row
+  if (row < 2) return;
+
+  // Column U = 21 (Last Updated)
+  // Column V = 22 (Role Last Updated)
+  // Column W = 23 (New Since)
+  // Column X = 24 (Prev Cell)
+  // Column E = 5 (Role)
+  // Column K = 11 (Status)
+  const LAST_UPDATE_COL = 21;
+  const ROLE_LAST_UPDATE_COL = 22;
+  const NEW_SINCE_COL = 23;
+  const PREV_CELL_COL = 24;
+  const ROLE_COL = 5;
+  const STATUS_COL = 11;
+  const CELL_COL = 2;
+
+  // Skip if editing timestamp columns or metadata columns (prevent infinite loop and unintended updates)
+  if (col === LAST_UPDATE_COL || col === ROLE_LAST_UPDATE_COL || col === NEW_SINCE_COL || col === PREV_CELL_COL) return;
+
+  // Update column P for the edited row with MYT timestamp
+  sheet.getRange(row, LAST_UPDATE_COL).setValue(formatMYTTimestamp());
+
+  // If Role column (E) or any ministry role/dept column (F–J) was edited, update Role Last Updated
+  if (col >= ROLE_COL && col <= 10) {
+    sheet.getRange(row, ROLE_LAST_UPDATE_COL).setValue(formatMYTTimestamp());
+  }
+
+  // Cell column (B): move row to the tab that matches the new cell value (single-cell edit only; Archive still via Status).
+  if (col === CELL_COL && range.getNumRows() === 1 && range.getNumColumns() === 1) {
+    const newCell = getEditCellValue_(e);
+    const ss = sheet.getParent();
+    const target = resolveCgDataSheetForCellDropdown_(ss, newCell);
+    if (target && target.getName() !== sheetName && target.getName() !== "Archive") {
+      moveSingleRowToCellTab(sheet, row);
+      return;
+    }
+  }
+
+  // If Status column (K) was edited, trigger archive functions
+  if (col === STATUS_COL) {
+    const newStatus = getEditCellValue_(e);
+
+    if (sheetName.toLowerCase() === "archive") {
+      // In Archive: if status changed to non-archive status, move back
+      if (newStatus != null && String(newStatus).trim() !== "" && !isArchiveStatus(newStatus)) {
+        moveBackToCells();
+      }
+    } else {
+      // In cell sheets: if status changed to archive status, move only this row (menu still runs full sweep)
+      if (isArchiveStatus(newStatus)) {
+        moveSingleRowToArchive(sheet, row);
+      }
+    }
+  }
+}
+
+// ===== FORMAT COLUMNS =====
+// Applies correct formatting and data validation to all columns.
+//
+// Split into two groups to avoid Apps Script execution time limits:
+//   formatColumnsGroup1() — Hype, Worship, Frontlines, VS, Archive, Anchor, Aster, Crown, Fire, Fishers
+//   formatColumnsGroup2() — Forth, HIS, Home, King, Life, Meta, Royal, Runners, Shepherds, Lights, Via Dolorosa, Core Team
+//   formatColumns()       — runs both groups sequentially (original entry point)
+
+var FORMAT_COLUMNS_GROUP1_ = [
+  "Hype", "Worship", "Frontlines", "VS",
+  "Archive", "Anchor", "Aster", "Crown", "Fire", "Fishers"
+];
+var FORMAT_COLUMNS_GROUP2_ = [
+  "Forth", "HIS", "Home", "King", "Life", "Meta",
+  "Royal", "Runners", "Shepherds", "Lights", "Via Dolorosa", "Core Team"
+];
+
+/** Format Group 1 tabs only (first half — runs faster, avoids timeout). */
+function formatColumnsGroup1() {
+  formatColumns_(FORMAT_COLUMNS_GROUP1_);
+}
+
+/** Format Group 2 tabs only (second half — runs faster, avoids timeout). */
+function formatColumnsGroup2() {
+  formatColumns_(FORMAT_COLUMNS_GROUP2_);
+}
+
+/** Format all tabs (original behaviour — may hit execution limit on large sheets). */
+function formatColumns() {
+  formatColumns_(null);
+}
+
+/**
+ * Core formatting logic.
+ * @param {string[]|null} tabAllowList  Only process tabs in this list; null = all eligible tabs.
+ */
+function formatColumns_(tabAllowList) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  const label = tabAllowList ? "formatColumns[" + tabAllowList.join(",") + "]" : "formatColumns";
+  Logger.log(label + ": START - Processing " + sheets.length + " sheets");
+
+  // Tabs to skip
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Template", "Key Values"
+  ]);
+
+  // HARD-CODED SAFEGUARD: These tabs must NEVER be formatted (IMPORTRANGE source)
+  const PROTECTED_TABS = ["attendance", "historical cell status", "historical ministry status", "all"];
+
+  // Get dropdown values from Key Values sheet
+  const keyValuesSheet = ss.getSheetByName("Key Values");
+  if (!keyValuesSheet) {
+    Logger.log("Key Values sheet not found!");
+    return;
+  }
+
+  const keyValuesData = keyValuesSheet.getDataRange().getValues();
+
+  // Extract values from each column (skip header row)
+  const CELL_VALUES = keyValuesData.slice(1).map(row => row[0]).filter(val => val !== "");
+  const ROLE_VALUES = keyValuesData.slice(1).map(row => row[1]).filter(val => val !== "");
+  const STATUS_VALUES = keyValuesData.slice(1).map(row => row[2]).filter(val => val !== ""); // Column C - Status
+  // Key Values col K (row[10]): shared Ministry Role dropdown for all 4 role cols
+  const MINISTRY_ROLE_VALUES = keyValuesData.slice(1).map(row => row[10]).filter(val => val !== "");
+  // Key Values col L (row[11]): Ministry Department dropdown
+  const MINISTRY_DEPT_VALUES = keyValuesData.slice(1).map(row => row[11]).filter(val => val !== "");
+
+  // These are unlikely to change, keep hardcoded
+  const GENDER_VALUES = ["Male", "Female"];
+
+  // Build a fast lookup set for the allow list (normalised to lower-case for comparison)
+  const allowSet = tabAllowList
+    ? tabAllowList.reduce(function(m, n) { m[n.toLowerCase().trim()] = true; return m; }, {})
+    : null;
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+    const normalizedName = sheetName.toLowerCase().trim();
+
+    // DEBUG: Log each sheet being evaluated
+    Logger.log(label + ": Evaluating sheet '" + sheetName + "'");
+
+    // If an allow list was supplied, skip anything not in it
+    if (allowSet && !allowSet[normalizedName]) {
+      Logger.log(label + ": SKIPPED '" + sheetName + "' (not in group)");
+      continue;
+    }
+
+    if (nwstCgSkipTab_(sheetName, SKIP_TABS)) {
+      Logger.log(label + ": SKIPPED '" + sheetName + "' via nwstCgSkipTab_");
+      continue;
+    }
+
+    // HARD-CODED SAFEGUARD: Double-check before formatting
+    if (PROTECTED_TABS.indexOf(normalizedName) !== -1) {
+      Logger.log(label + ": SAFEGUARD BLOCKED formatting '" + sheetName + "' - this tab should have been skipped!");
+      continue;
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      Logger.log(label + ": SKIPPED '" + sheetName + "' - no data rows");
+      continue;
+    }
+
+    const dataRows = lastRow - 1; // numRows for getRange(2, col, numRows, width); row 1 = header
+
+    // Column A (Name): Text - no special formatting needed
+
+    // Column B (Cell): Dropdown from Key Values Column A
+    const cellRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(CELL_VALUES, false)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange(2, 2, dataRows, 1).setDataValidation(cellRule);
+
+    // Column C (Age): Number format
+    sheet.getRange(2, 3, dataRows, 1).setNumberFormat("0");
+
+    // Column D (Gender): Dropdown
+    const genderRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(GENDER_VALUES, false)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange(2, 4, dataRows, 1).setDataValidation(genderRule);
+
+    // Column E (Role): Dropdown from Key Values Column B
+    const roleRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(ROLE_VALUES, false)
+      .setAllowInvalid(true) // Allow empty values
+      .build();
+    sheet.getRange(2, 5, dataRows, 1).setDataValidation(roleRule);
+
+    // Columns F–I (Hype Role, Frontlines Role, VS Role, Worship Role): Ministry Role dropdown
+    const ministryRoleRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(MINISTRY_ROLE_VALUES, false)
+      .setAllowInvalid(true).build();
+    sheet.getRange(2, 6, dataRows, 4).setDataValidation(ministryRoleRule); // F–I in one call
+
+    // Column J (Ministry Department): Ministry Department dropdown
+    const ministryDeptRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(MINISTRY_DEPT_VALUES, false)
+      .setAllowInvalid(true).build();
+    sheet.getRange(2, 10, dataRows, 1).setDataValidation(ministryDeptRule);
+
+    // Column K (Status): Dropdown from Key Values Column C
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(STATUS_VALUES, false)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange(2, 11, dataRows, 1).setDataValidation(statusRule);
+
+    // Apply conditional formatting for Status column
+    applyStatusConditionalFormatting(sheet, dataRows);
+
+    // Column L (Birthday): Date format DD MMM YYYY
+    sheet.getRange(2, 12, dataRows, 1).setNumberFormat("dd MMM yyyy");
+
+    // Column M (Contact No.): Text format (preserve leading zeros)
+    sheet.getRange(2, 13, dataRows, 1).setNumberFormat("@");
+
+    // Column N (Email Address): Text format
+    sheet.getRange(2, 14, dataRows, 1).setNumberFormat("@");
+
+    // Column O (Emergency Contact): Text format (preserve leading zeros)
+    sheet.getRange(2, 15, dataRows, 1).setNumberFormat("@");
+
+    // Columns P–S (Emergency Rel, School, Notes, blank): no special formatting
+
+    // Column T (Last Attended): Date format DD MMM YYYY
+    sheet.getRange(2, 20, dataRows, 1).setNumberFormat("dd MMM yyyy");
+
+    // Column U (Last Updated): DateTime format YYYY-MM-DD HH:MM
+    sheet.getRange(2, 21, dataRows, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+
+    // Column V (Role Last Updated): DateTime format YYYY-MM-DD HH:MM
+    sheet.getRange(2, 22, dataRows, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+
+    // Column W (New Since): Date format DD MMM YYYY
+    sheet.getRange(2, 23, dataRows, 1).setNumberFormat("dd MMM yyyy");
+
+    // Column X (Prev Cell): Text - no special formatting needed
+
+    stripTrailingWhitespaceFromDataRows_(sheet, dataRows);
+
+    Logger.log(label + ": FORMATTED sheet '" + sheetName + "' (" + dataRows + " rows)");
+  }
+
+  Logger.log(label + ": COMPLETE");
+  updateColumnCFromKeyValues();
+}
+
+// ===== APPLY STATUS CONDITIONAL FORMATTING =====
+// Applies color formatting to Column K based on status values from Key Values Column C
+// Colors are matched by prefix (e.g., "Regular: xxx" matches "Regular" color)
+function applyStatusConditionalFormatting(sheet, dataRows) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const statusRange = sheet.getRange(2, 11, dataRows, 1);
+
+  // Clear existing conditional formatting rules for this range
+  const existingRules = sheet.getConditionalFormatRules();
+  const newRules = existingRules.filter(function(rule) {
+    const ranges = rule.getRanges();
+    for (let i = 0; i < ranges.length; i++) {
+      if (ranges[i].getColumn() === 11) return false;
+    }
+    return true;
+  });
+
+  // Get status values from Key Values Column C
+  const keyValuesSheet = ss.getSheetByName("Key Values");
+  if (!keyValuesSheet) {
+    Logger.log("Key Values sheet not found for conditional formatting!");
+    return;
+  }
+
+  const keyValuesData = keyValuesSheet.getDataRange().getValues();
+  const statusValues = keyValuesData.slice(1).map(row => row[2]).filter(val => val !== ""); // Column C
+
+  // Status colors mapping by prefix
+  const colorMap = {
+    "Regular": { background: "#b6d7a8", fontColor: "#000000" },      // Light Green
+    "Irregular": { background: "#ffd966", fontColor: "#000000" },    // Yellow
+    "New": { background: "#a4c2f4", fontColor: "#000000" },          // Light Blue
+    "Follow Up": { background: "#f9cb9c", fontColor: "#000000" },    // Peach/Light Orange
+    "Red": { background: "#cc0000", fontColor: "#ffffff" },          // Dark Red
+    "Graduated": { background: "#666666", fontColor: "#ffffff" },    // Dark Gray
+    "Duplicate": { background: "#d9d9d9", fontColor: "#000000" }     // Light Gray
+  };
+
+  // Create conditional formatting rules for each status value from Key Values
+  for (let i = 0; i < statusValues.length; i++) {
+    const statusValue = statusValues[i].toString().trim();
+
+    // Find matching color based on prefix
+    let colors = null;
+    for (const prefix in colorMap) {
+      if (statusValue.startsWith(prefix)) {
+        colors = colorMap[prefix];
+        break;
+      }
+    }
+
+    if (colors) {
+      const rule = SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo(statusValue)
+        .setBackground(colors.background)
+        .setFontColor(colors.fontColor)
+        .setRanges([statusRange])
+        .build();
+      newRules.push(rule);
+    }
+  }
+
+  sheet.setConditionalFormatRules(newRules);
+}
+
+// ===== FORMAT SINGLE SHEET =====
+// Format columns for the active sheet only
+function formatActiveSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const sheetName = sheet.getName();
+
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Template", "Key Values"
+  ]);
+
+  if (nwstCgSkipTab_(sheetName, SKIP_TABS)) {
+    Logger.log("This sheet is in the skip list and cannot be formatted.");
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    Logger.log("No data rows to format.");
+    return;
+  }
+
+  // Get dropdown values from Key Values sheet
+  const keyValuesSheet = ss.getSheetByName("Key Values");
+  if (!keyValuesSheet) {
+    Logger.log("Key Values sheet not found!");
+    return;
+  }
+
+  const keyValuesData = keyValuesSheet.getDataRange().getValues();
+
+  // Extract values from each column (skip header row)
+  const CELL_VALUES = keyValuesData.slice(1).map(row => row[0]).filter(val => val !== "");
+  const ROLE_VALUES = keyValuesData.slice(1).map(row => row[1]).filter(val => val !== "");
+  const STATUS_VALUES = keyValuesData.slice(1).map(row => row[2]).filter(val => val !== ""); // Column C - Status
+  // Key Values col K (row[10]): shared Ministry Role dropdown for all 4 role cols
+  const MINISTRY_ROLE_VALUES = keyValuesData.slice(1).map(row => row[10]).filter(val => val !== "");
+  // Key Values col L (row[11]): Ministry Department dropdown
+  const MINISTRY_DEPT_VALUES = keyValuesData.slice(1).map(row => row[11]).filter(val => val !== "");
+
+  // These are unlikely to change, keep hardcoded
+  const GENDER_VALUES = ["Male", "Female"];
+
+  const dataRows = lastRow - 1; // numRows for getRange (row 1 = header)
+
+  // Apply all formatting
+  const cellRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(CELL_VALUES, false)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, 2, dataRows, 1).setDataValidation(cellRule);
+
+  sheet.getRange(2, 3, dataRows, 1).setNumberFormat("0");
+
+  const genderRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(GENDER_VALUES, false)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, 4, dataRows, 1).setDataValidation(genderRule);
+
+  const roleRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ROLE_VALUES, false)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, 5, dataRows, 1).setDataValidation(roleRule);
+
+  // Columns F–I (Hype Role, Frontlines Role, VS Role, Worship Role): Ministry Role dropdown
+  const ministryRoleRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(MINISTRY_ROLE_VALUES, false)
+    .setAllowInvalid(true).build();
+  sheet.getRange(2, 6, dataRows, 4).setDataValidation(ministryRoleRule); // F–I in one call
+
+  // Column J (Ministry Department): Ministry Department dropdown
+  const ministryDeptRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(MINISTRY_DEPT_VALUES, false)
+    .setAllowInvalid(true).build();
+  sheet.getRange(2, 10, dataRows, 1).setDataValidation(ministryDeptRule);
+
+  const statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(STATUS_VALUES, false)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, 11, dataRows, 1).setDataValidation(statusRule);
+
+  // Apply conditional formatting for Status column
+  applyStatusConditionalFormatting(sheet, dataRows);
+
+  sheet.getRange(2, 12, dataRows, 1).setNumberFormat("dd MMM yyyy");
+  sheet.getRange(2, 13, dataRows, 1).setNumberFormat("@");
+  sheet.getRange(2, 14, dataRows, 1).setNumberFormat("@");
+  sheet.getRange(2, 15, dataRows, 1).setNumberFormat("@");
+
+  sheet.getRange(2, 21, dataRows, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+  sheet.getRange(2, 22, dataRows, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+  sheet.getRange(2, 23, dataRows, 1).setNumberFormat("dd MMM yyyy");
+
+  stripTrailingWhitespaceFromDataRows_(sheet, dataRows);
+
+  Logger.log("Formatted sheet: " + sheetName);
+  updateColumnCFromKeyValues();
+}
+
+// ===== SORT ALL SHEETS =====
+// Sorts data by Status (F), then Role (E), then Name (A)
+function sortAllSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Template", "Key Values"
+  ]);
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+
+    if (nwstCgSkipTab_(sheetName, SKIP_TABS)) continue;
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2) continue;
+
+    // Get data range (excluding header)
+    const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
+
+    // Sort by Status (F=6), then Role (E=5), then Name (A=1)
+    dataRange.sort([
+      { column: 11, ascending: true }, // Status
+      { column: 5, ascending: true },  // Role
+      { column: 1, ascending: true }   // Name
+    ]);
+
+    Logger.log("Sorted sheet: " + sheetName);
+  }
+
+  Logger.log("All sheets sorted!");
+}
+
+// ===== SORT ACTIVE SHEET =====
+// Sorts the active sheet by Status (F), then Role (E), then Name (A)
+function sortActiveSheet() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheetName = sheet.getName();
+
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Template", "Key Values"
+  ]);
+
+  if (nwstCgSkipTab_(sheetName, SKIP_TABS)) {
+    Logger.log("This sheet cannot be sorted.");
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) {
+    Logger.log("No data to sort.");
+    return;
+  }
+
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
+
+  // Sort by Status (F=6), then Role (E=5), then Name (A=1)
+  dataRange.sort([
+    { column: 6, ascending: true },  // Status
+    { column: 5, ascending: true },  // Role
+    { column: 1, ascending: true }   // Name
+  ]);
+
+  Logger.log("Sorted sheet: " + sheetName);
+}
+
+// ===== CUSTOM SORT =====
+// Prompts user to choose columns to sort by using header names, applies to all sheets
+function customSort() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Template", "Key Values"
+  ]);
+
+  // Always get headers from Core Team tab
+  const coreTeamSheet = ss.getSheetByName("Core Team");
+  if (!coreTeamSheet) {
+    ui.alert("Core Team sheet not found.");
+    return;
+  }
+
+  const lastCol = coreTeamSheet.getLastColumn();
+  if (lastCol < 1) {
+    ui.alert("Core Team sheet has no columns.");
+    return;
+  }
+
+  const headers = coreTeamSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+
+  // Build header reference string
+  const headerList = headers
+    .map((h, i) => h ? h : "(Col " + String.fromCharCode(65 + i) + ")")
+    .filter(h => h)
+    .join(", ");
+
+  // Show column reference
+  const response = ui.prompt(
+    'Custom Sort (All Sheets)',
+    'Enter column names to sort by (comma-separated).\n\n' +
+    'Available columns:\n' + headerList + '\n\n' +
+    'Example: Gender, Age, Name\n' +
+    'Add "-" for descending (e.g., Age- for oldest first)',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const input = response.getResponseText().trim();
+  if (!input) {
+    ui.alert("No columns entered.");
+    return;
+  }
+
+  // Create header to column number map (case-insensitive)
+  const headerMap = {};
+  for (let i = 0; i < headers.length; i++) {
+    if (headers[i]) {
+      headerMap[headers[i].toString().toLowerCase().trim()] = i + 1;
+    }
+  }
+
+  // Parse input
+  const columns = input.split(',').map(col => col.trim());
+  const sortSpec = [];
+
+  for (let i = 0; i < columns.length; i++) {
+    let col = columns[i];
+    let ascending = true;
+
+    // Check for descending flag
+    if (col.endsWith('-')) {
+      ascending = false;
+      col = col.slice(0, -1).trim();
+    }
+
+    // Find column number from header name
+    const colNum = headerMap[col.toLowerCase()];
+
+    if (!colNum) {
+      ui.alert("Column not found: " + columns[i] + "\n\nAvailable columns:\n" + headerList);
+      return;
+    }
+
+    sortSpec.push({ column: colNum, ascending: ascending });
+  }
+
+  // Apply sort to all valid sheets
+  let sortedCount = 0;
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+
+    if (nwstCgSkipTab_(sheetName, SKIP_TABS)) continue;
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2) continue;
+
+    const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
+    dataRange.sort(sortSpec);
+
+    Logger.log("Sorted sheet: " + sheetName);
+    sortedCount++;
+  }
+
+  Logger.log("Custom sorted " + sortedCount + " sheets by: " + input);
+  ui.alert("Sorted " + sortedCount + " sheets by: " + input);
+}
+
+// ===== SORT CHANGE REQUESTS =====
+// Sorts the Change Requests sheet by Date (col A) then Time (col B), both descending
+function sortChangeRequests() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Change Requests");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert('"Change Requests" sheet not found.');
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) {
+    Logger.log("Change Requests: no data to sort.");
+    return;
+  }
+
+  sheet.getRange(2, 1, lastRow - 1, lastCol).sort([
+    { column: 1, ascending: false }, // Date
+    { column: 2, ascending: false }  // Time
+  ]);
+
+  Logger.log("Change Requests sorted by Date then Time (descending).");
+}
+
+// ===== REMOVE NON-NEW FROM NEWCOMERS (COPY) =====
+// Removes rows from Newcomers (Copy) tab where Status is NOT "New"
+// These members should already be in their respective cell tabs
+function removeNonNewFromNewcomers() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const newcomersSheet = ss.getSheetByName('Newcomers (Copy)');
+
+  if (!newcomersSheet) {
+    try {
+      SpreadsheetApp.getUi().alert('Newcomers (Copy) sheet not found!');
+    } catch (e) {
+      Logger.log('Newcomers (Copy) sheet not found!');
+    }
+    return;
+  }
+
+  const lastRow = newcomersSheet.getLastRow();
+  const lastCol = newcomersSheet.getLastColumn();
+  if (lastRow < 2) {
+    try {
+      SpreadsheetApp.getUi().alert('No data in Newcomers (Copy).');
+    } catch (e) {
+      Logger.log('No data in Newcomers (Copy).');
+    }
+    return;
+  }
+
+  const data = newcomersSheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+  const STATUS_COL = 11;  // Column K (1-indexed)
+
+  const rowsToDelete = [];
+  let removedCount = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const status = String(row[STATUS_COL - 1]).trim(); // Column K (0-indexed: 10)
+
+    // Skip if status is "New" or empty (keep these in Newcomers)
+    if (status === 'New' || status === '' || status === 'undefined') {
+      continue;
+    }
+
+    // Status is not "New", so this person should already be in their cell tab
+    rowsToDelete.push(i + 2); // +2 for header and 0-index
+    removedCount++;
+
+    Logger.log('Removing from Newcomers (Copy): ' + row[0] + ' (Status: ' + status + ')');
+  }
+
+  // Delete rows in reverse order to maintain indices
+  rowsToDelete.sort((a, b) => b - a);
+  for (let k = 0; k < rowsToDelete.length; k++) {
+    newcomersSheet.deleteRow(rowsToDelete[k]);
+  }
+
+  Logger.log('Removed ' + removedCount + ' non-new member(s) from Newcomers (Copy).');
+  try {
+    SpreadsheetApp.getUi().alert('Removed ' + removedCount + ' member(s) from Newcomers (Copy).\nThese members are no longer "New" status.');
+  } catch (e) {
+    Logger.log('Alert skipped (running from trigger)');
+  }
+}
+
+// ===== HISTORICAL CELL STATUS =====
+// Run from the menu: "Log Historical Cell Status" (after "Update Status from Attendance" succeeds).
+// One row per mapped cell tab per run. Col B = Saturday that starts the snapshot week Sat–Fri (MYT calendar day → week key). WoW = mix Δpp vs latest prior row for same Cell.
+// Tab name: HISTORICAL_CELL_STATUS_TAB (top of file; also in NWST_CG_NON_ROSTER_TAB_ALIASES_).
+
+var HISTORICAL_STATUS_BUCKETS = ["New", "Regular", "Irregular", "Follow Up", "Red", "Graduated", "Duplicate", "Other"];
+
+function extractStatusBucketForHistory_(status) {
+  const s = String(status || "").trim();
+  if (!s) return "Other";
+  if (s.indexOf("Regular") === 0) return "Regular";
+  if (s.indexOf("Irregular") === 0) return "Irregular";
+  if (s.indexOf("New") === 0) return "New";
+  if (s.indexOf("Follow Up") === 0) return "Follow Up";
+  if (s.indexOf("Red") === 0) return "Red";
+  if (s.indexOf("Graduated") === 0) return "Graduated";
+  if (s.indexOf("Duplicate") === 0) return "Duplicate";
+  return "Other";
+}
+
+function isCellTabSkippedForHistory_(sheetName) {
+  const SKIP = [
+    "MASTERLIST",
+    "Template",
+    "Key Values",
+    "NEW COMERS FORM (TEMP_"
+  ];
+  if (nwstCgSkipTab_(sheetName, SKIP)) return true;
+  if (String(sheetName || "").indexOf("NEW COMERS FORM (TEMP_") === 0) return true;
+  return false;
+}
+
+/** Tab short name → Cell column display (Key Values), same idea as updateStatusFromAttendance. */
+function tabNameToDisplayCellForHistory_() {
+  return {
+    Archive: "Archive",
+    Anchor: "Anchor Street",
+    Aster: "Aster Street",
+    Crown: "Crown Street",
+    Fire: "Street Fire",
+    Fishers: "Fishers Street",
+    Forth: "Street Forth",
+    HIS: "HIS Street",
+    Home: "Home Street",
+    King: "King Street",
+    Life: "Life Street",
+    Meta: "Meta Street",
+    Royal: "Royal Street",
+    Runners: "Street Runners",
+    Shepherds: "Shepherds Street",
+    Lights: "Street Lights",
+    "Via Dolorosa": "Via Dolorosa Street",
+    "Core Team": "Narrowstreet Core Team"
+  };
+}
+
+function ensureHistoricalCellStatusSheet_(ss) {
+  let sh = ss.getSheetByName(HISTORICAL_CELL_STATUS_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(HISTORICAL_CELL_STATUS_TAB);
+  }
+  const h0 = String(sh.getRange(1, 1).getValue() || "").trim();
+  if (sh.getLastRow() < 1 || h0 === "") {
+    const headers = [
+      "Logged At (MYT)",
+      "Week of (Sat)",
+      "Cell",
+      "Tab",
+      "Total",
+      "New",
+      "Regular",
+      "Irregular",
+      "Follow Up",
+      "Red",
+      "Graduated",
+      "Duplicate",
+      "Other",
+      "d_Total",
+      "d_New",
+      "d_Regular",
+      "d_Irregular",
+      "d_Follow Up",
+      "d_Red",
+      "d_Graduated",
+      "d_Duplicate",
+      "d_Other",
+      "WoW mix Δpp New",
+      "WoW mix Δpp Regular",
+      "WoW mix Δpp Irregular",
+      "WoW mix Δpp Follow Up",
+      "WoW mix Δpp Red",
+      "WoW mix Δpp Graduated",
+      "WoW mix Δpp Duplicate",
+      "WoW mix Δpp Other"
+    ];
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/** Normalize week column (col B) for dedupe — string or Date → yyyy-MM-dd calendar date. */
+function historicalSnapshotDateToKey_(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.substring(0, 10);
+  }
+  return s;
+}
+
+/** Any calendar yyyy-MM-dd → Saturday opening that week (Sat–Fri), yyyy-MM-dd via UTC date math. */
+function historicalWeekStartSaturdayFromYyyyMmDd_(yyyyMmDd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(yyyyMmDd || "").trim());
+  if (!m) return "";
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const d = parseInt(m[3], 10);
+  const anchor = new Date(Date.UTC(y, mo, d));
+  const dow = anchor.getUTCDay();
+  const daysBackFromSaturday = (dow + 1) % 7;
+  const saturday = new Date(anchor.getTime() - daysBackFromSaturday * 86400000);
+  return Utilities.formatDate(saturday, "GMT", "yyyy-MM-dd");
+}
+
+/**
+ * Remove all log rows whose week column (col B) falls in the same week as snapshotWeekKey (opening Saturday yyyy-MM-dd).
+ * Any trigger during that week replaces the snapshot instead of appending.
+ * WoW still uses the latest remaining row per Cell (typically the prior week).
+ */
+function deleteHistoricalRowsMatchingSnapshotDate_(histSheet, snapshotWeekKey) {
+  const lastRow = histSheet.getLastRow();
+  if (lastRow < 2 || !snapshotWeekKey) {
+    return;
+  }
+  const colB = histSheet.getRange(2, 2, lastRow, 2).getValues();
+  const toDelete = [];
+  for (let i = 0; i < colB.length; i++) {
+    const key = historicalSnapshotDateToKey_(colB[i][0]);
+    const rowWeek = historicalWeekStartSaturdayFromYyyyMmDd_(key);
+    if (rowWeek === snapshotWeekKey) {
+      toDelete.push(i + 2);
+    }
+  }
+  toDelete.sort(function (a, b) {
+    return b - a;
+  });
+  for (let k = 0; k < toDelete.length; k++) {
+    histSheet.deleteRow(toDelete[k]);
+  }
+  if (toDelete.length > 0) {
+    Logger.log(
+      "Historical Cell Status: removed " +
+        toDelete.length +
+        " row(s) for week of " +
+        snapshotWeekKey +
+        " (dedupe)."
+    );
+  }
+}
+
+/**
+ * This tab must NOT use CG roster data validation (Week of is not a Cell dropdown, etc.).
+ * Also force number formats so counts are not shown as dates (e.g. Regular = 9 → 1900).
+ */
+function resetHistoricalCellStatusSheetLayout_(histSheet) {
+  const lr = histSheet.getLastRow();
+  const lc = Math.max(30, histSheet.getLastColumn());
+  if (lr < 1) {
+    return;
+  }
+  histSheet.getRange(1, 1, lr, lc).clearDataValidations();
+  if (lr < 2) {
+    return;
+  }
+  histSheet.getRange(2, 1, lr, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+  histSheet.getRange(2, 2, lr, 1).setNumberFormat("yyyy-MM-dd");
+  histSheet.getRange(2, 3, lr, 2).setNumberFormat("@");
+  histSheet.getRange(2, 5, lr, 13).setNumberFormat("0");
+  histSheet.getRange(2, 14, lr, 22).setNumberFormat("0");
+  histSheet.getRange(2, 23, lr, 30).setNumberFormat("0.##");
+}
+
+/** Latest prior snapshot per Cell (column C), bottom-up scan. */
+function getLastHistoricalSnapshotByCell_(histSheet) {
+  const lastRow = histSheet.getLastRow();
+  const byCell = {};
+  if (lastRow < 2) return byCell;
+
+  const data = histSheet.getRange(2, 1, lastRow, 13).getValues();
+  for (let i = data.length - 1; i >= 0; i--) {
+    const cellName = String(data[i][2] || "").trim();
+    if (!cellName || byCell[cellName]) continue;
+
+    let total = Number(data[i][4]);
+    if (isNaN(total)) total = 0;
+    const counts = { Total: total };
+    for (let b = 0; b < HISTORICAL_STATUS_BUCKETS.length; b++) {
+      let n = Number(data[i][5 + b]);
+      if (isNaN(n)) n = 0;
+      counts[HISTORICAL_STATUS_BUCKETS[b]] = n;
+    }
+    byCell[cellName] = counts;
+  }
+  return byCell;
+}
+
+function aggregateStatusCountsPerCellTab_(ss) {
+  const tabToDisplay = tabNameToDisplayCellForHistory_();
+  const sheets = ss.getSheets();
+  const STATUS_COL = 11;  // Column K (Status) — same as updateStatusFromAttendance
+  const out = {};
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+    if (isCellTabSkippedForHistory_(sheetName)) continue;
+
+    const displayCell = tabToDisplay[sheetName];
+    if (!displayCell) continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) continue;
+
+    const counts = {};
+    for (let k = 0; k < HISTORICAL_STATUS_BUCKETS.length; k++) {
+      counts[HISTORICAL_STATUS_BUCKETS[k]] = 0;
+    }
+
+    const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+    for (let r = 0; r < data.length; r++) {
+      const bucket = extractStatusBucketForHistory_(data[r][STATUS_COL - 1]);
+      counts[bucket]++;
+    }
+
+    out[sheetName] = {
+      displayCell: displayCell,
+      counts: counts,
+      memberCount: data.length
+    };
+  }
+  return out;
+}
+
+function mixPct_(count, total) {
+  if (!total || total <= 0) return 0;
+  return (100 * count) / total;
+}
+
+function round2History_(x) {
+  return Math.round(x * 100) / 100;
+}
+
+function logHistoricalCellStatusAfterAttendanceRun_(ss) {
+  const hist = ensureHistoricalCellStatusSheet_(ss);
+
+  const loggedAt = formatMYTTimestamp();
+  const now = new Date();
+  const myt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const snapY = myt.getUTCFullYear();
+  const snapM = String(myt.getUTCMonth() + 1).padStart(2, "0");
+  const snapD = String(myt.getUTCDate()).padStart(2, "0");
+  const todayInMyt = snapY + "-" + snapM + "-" + snapD;
+  const snapshotDate = historicalWeekStartSaturdayFromYyyyMmDd_(todayInMyt);
+
+  // Strip accidental CG "Format All" validation; fix number formats (counts vs dates).
+  resetHistoricalCellStatusSheetLayout_(hist);
+  deleteHistoricalRowsMatchingSnapshotDate_(hist, snapshotDate);
+
+  const prevByCell = getLastHistoricalSnapshotByCell_(hist);
+  const agg = aggregateStatusCountsPerCellTab_(ss);
+
+  const tabNames = Object.keys(agg).sort();
+  const rows = [];
+
+  for (let t = 0; t < tabNames.length; t++) {
+    const tab = tabNames[t];
+    const pack = agg[tab];
+    const cts = pack.counts;
+    const total = pack.memberCount;
+    const displayCell = pack.displayCell;
+    const prev = prevByCell[displayCell];
+
+    const row = [loggedAt, snapshotDate, displayCell, tab, total];
+    for (let b = 0; b < HISTORICAL_STATUS_BUCKETS.length; b++) {
+      row.push(cts[HISTORICAL_STATUS_BUCKETS[b]]);
+    }
+
+    if (prev) {
+      row.push(total - prev.Total);
+    } else {
+      row.push("");
+    }
+
+    for (let b2 = 0; b2 < HISTORICAL_STATUS_BUCKETS.length; b2++) {
+      const key = HISTORICAL_STATUS_BUCKETS[b2];
+      if (!prev) {
+        row.push("");
+      } else {
+        const pN = prev[key] != null ? prev[key] : 0;
+        row.push(cts[key] - pN);
+      }
+    }
+
+    for (let b3 = 0; b3 < HISTORICAL_STATUS_BUCKETS.length; b3++) {
+      const key3 = HISTORICAL_STATUS_BUCKETS[b3];
+      if (!prev || !prev.Total) {
+        row.push("");
+      } else {
+        const pN3 = prev[key3] != null ? prev[key3] : 0;
+        const deltaPp = mixPct_(cts[key3], total) - mixPct_(pN3, prev.Total);
+        row.push(round2History_(deltaPp));
+      }
+    }
+
+    rows.push(row);
+  }
+
+  if (rows.length === 0) {
+    Logger.log("Historical Cell Status: no mapped cell tabs to log.");
+    return;
+  }
+
+  const startRow = hist.getLastRow() + 1;
+  // getRange(row, column, numRows, numColumns) — NOT (row1,col1,row2,col2)
+  hist.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
+  resetHistoricalCellStatusSheetLayout_(hist);
+  Logger.log("Historical Cell Status: wrote " + rows.length + " row(s) for week of " + snapshotDate + " (Sat MYT).");
+}
+
+/**
+ * Menu: append/replace this week’s snapshot on Historical Cell Status (dedupe by week of Saturday MYT, Sat–Fri).
+ * Run this only after "Update Status from Attendance" (and its New-date pass) has finished,
+ * so counts match current Column F on each cell tab.
+ */
+function logHistoricalCellStatusSnapshot() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  logHistoricalCellStatusAfterAttendanceRun_(ss);
+  try {
+    SpreadsheetApp.getUi().alert(
+      "Historical Cell Status log updated.\n\n" +
+        "Tip: run this right after a successful Update Status from Attendance so WoW matches sheet statuses."
+    );
+  } catch (e) {
+    Logger.log("logHistoricalCellStatusSnapshot: done (no UI)");
+  }
+}
+
+/** Menu: fix mistaken CG validation / date formats on Historical Cell Status (no attendance run). */
+function repairHistoricalCellStatusTab() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hist = ensureHistoricalCellStatusSheet_(ss);
+  resetHistoricalCellStatusSheetLayout_(hist);
+  try {
+    SpreadsheetApp.getUi().alert(
+      "Historical Cell Status: removed data validation and reapplied log number formats.\n\n" +
+        "Use this if this tab was ever hit by Format All Sheet before it was excluded."
+    );
+  } catch (e) {
+    Logger.log("repairHistoricalCellStatusTab: done");
+  }
+}
+
+// ===== UPDATE STATUS BASED ON ATTENDANCE =====
+// Matches by Name (A) + Cell (B). Regular ≥75% of rolling 12-week service columns (header dates from latest column date). Protected: New, Red, Graduated, Duplicate.
+// Perf: one read + one write per cell tab; heavy Logger.log removed from loops (set USFA_DEBUG_LOGS = true to debug).
+//
+// Time triggers (two installable triggers a few minutes apart avoids 6‑min limit):
+//   1) updateStatusFromAttendanceSilent
+//   2) updateStatusFromAttendancePhase2NewDates
+// Menu “+ New (full)” = both passes in one run: updateStatusFromAttendanceFullPipeline
+
+var USFA_DEBUG_LOGS = false;
+/** Rolling attendance window: use the N most recent service columns, regardless of calendar span. */
+var USFA_ROLLING_SERVICES = 12;
+
+function usfaCellNameToTabMap_() {
+  return {
+    "Anchor Street": "Anchor",
+    "Aster Street": "Aster",
+    "Crown Street": "Crown",
+    "Street Fire": "Fire",
+    "Fishers Street": "Fishers",
+    "Street Forth": "Forth",
+    "HIS Street": "HIS",
+    "Home Street": "Home",
+    "King Street": "King",
+    "Life Street": "Life",
+    "Meta Street": "Meta",
+    "Royal Street": "Royal",
+    "Street Runners": "Runners",
+    "Shepherds Street": "Shepherds",
+    "Street Lights": "Lights",
+    "Via Dolorosa Street": "Via Dolorosa",
+    "Narrowstreet Core Team": "Core Team"
+  };
+}
+
+/**
+ * Parse Attendance sheet row-1 dates (from attendanceStartCol). Keep the N most recent service
+ * columns by date, regardless of calendar span. This ensures the denominator is always consistent
+ * (not affected by weeks where no service was held).
+ * @returns {{ error: string } | { columnsForPeriod: number[], totalServices: number, latestDate: Date, cutoff: Date }}
+ */
+function usfaColumnsForRollingServices_(headerRow, attendanceStartCol, numServices) {
+  const columnEntries = [];
+  for (let i = 0; i < headerRow.length; i++) {
+    const dateStr = headerRow[i];
+    if (!dateStr || dateStr === "") continue;
+    try {
+      let dateToUse = null;
+      if (dateStr instanceof Date) {
+        dateToUse = dateStr;
+      } else {
+        const parts = String(dateStr).trim().split("/");
+        if (parts.length === 3) {
+          const day = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10);
+          const year = parseInt(parts[2], 10);
+          if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+            dateToUse = new Date(year, month - 1, day);
+          }
+        }
+      }
+      if (dateToUse && !isNaN(dateToUse.getTime())) {
+        columnEntries.push({ col: attendanceStartCol + i, date: dateToUse });
+      }
+    } catch (e) {
+      if (USFA_DEBUG_LOGS) {
+        Logger.log("usfa header parse: " + e);
+      }
+    }
+  }
+  if (columnEntries.length === 0) {
+    return { error: "No parseable date columns in Attendance (row 1 from column D)." };
+  }
+  columnEntries.sort(function(a, b) { return a.date - b.date; });
+  const window = columnEntries.slice(-numServices);
+  const latestDate = window[window.length - 1].date;
+  const cutoff = window[0].date;
+  return {
+    columnsForPeriod: window.map(function(e) { return e.col; }),
+    columnDates: window,          // [{col, date}] for the rolling window — used for scoped-ratio scoring
+    allColumnDates: columnEntries, // full sorted list — used to infer first-attendance date
+    totalServices: window.length,
+    latestDate: latestDate,
+    cutoff: cutoff
+  };
+}
+
+/** Parse a "New Since" cell value (Date object or "D/M/YYYY" string). Returns null if unparseable. */
+function usfaParseNewSinceDate_(val) {
+  if (!val || val === '') return null;
+  if (val instanceof Date && !isNaN(val.getTime())) return val;
+  try {
+    const parts = String(val).trim().split('/');
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * Re-score a New member using only services held on/after their join date.
+ * Fairer denominator: only counts services the person was eligible to attend.
+ * @param {{[col:number]: number}} rawByCol  colIndex → 1 (attended) | 0 (absent)
+ * @param {{col:number, date:Date}[]} columnDates  rolling window, sorted ascending
+ * @param {Date} newSinceDate
+ * @returns {{count:number, total:number, ratio:number, statusKey:string}}
+ */
+function usfaNewMemberScopedRatio_(rawByCol, columnDates, newSinceDate) {
+  const since = new Date(newSinceDate.getFullYear(), newSinceDate.getMonth(), newSinceDate.getDate());
+  const eligible = columnDates.filter(function(e) { return e.date >= since; });
+  const total = eligible.length;
+  let count = 0;
+  for (let k = 0; k < eligible.length; k++) {
+    if (rawByCol[eligible[k].col]) count++;
+  }
+  const ratio = total > 0 ? count / total : 0;
+  let statusKey = 'Follow Up';
+  if (ratio >= 0.75) statusKey = 'Regular';
+  else if (ratio > 0) statusKey = 'Irregular';
+  return { count: count, total: total, ratio: ratio, statusKey: statusKey };
+}
+
+/** @returns {{ attendanceMap: Object } | { error: string }} */
+function usfaBuildAttendanceMap_(ss) {
+  const attendanceSheet = ss.getSheetByName("Attendance");
+  if (!attendanceSheet) {
+    return { error: "Attendance sheet not found!" };
+  }
+
+  const attendanceLastRow = attendanceSheet.getLastRow();
+  const attendanceLastCol = attendanceSheet.getLastColumn();
+  if (attendanceLastRow < 2) {
+    return { error: "No data in Attendance sheet." };
+  }
+
+  const keyValuesSheet = ss.getSheetByName("Key Values");
+  if (!keyValuesSheet) {
+    return { error: "Key Values sheet not found!" };
+  }
+
+  const ATTENDANCE_START_COL = 4;
+  const keyValuesData = keyValuesSheet.getDataRange().getValues();
+  const validCellNames = [];
+  for (let i = 1; i < keyValuesData.length; i++) {
+    const cellName = String(keyValuesData[i][0]).trim();
+    if (cellName) {
+      validCellNames.push(cellName);
+    }
+  }
+  validCellNames.sort(function (a, b) {
+    return b.length - a.length;
+  });
+
+  const headerRow = attendanceSheet
+    .getRange(1, ATTENDANCE_START_COL, 1, attendanceLastCol - ATTENDANCE_START_COL + 1)
+    .getValues()[0];
+
+  const weekWin = usfaColumnsForRollingServices_(headerRow, ATTENDANCE_START_COL, USFA_ROLLING_SERVICES);
+  if (weekWin.error) {
+    return { error: weekWin.error };
+  }
+  const columnsForMonth = weekWin.columnsForPeriod;
+  const totalServices = weekWin.totalServices;
+  Logger.log(
+    "USFA rolling " +
+      USFA_ROLLING_SERVICES +
+      " services: " +
+      weekWin.cutoff.toDateString() +
+      " .. " +
+      weekWin.latestDate.toDateString() +
+      " | services=" +
+      totalServices
+  );
+
+  function parseNameAndCell(fullText) {
+    const text = String(fullText).trim();
+    for (let vi = 0; vi < validCellNames.length; vi++) {
+      const cellName = validCellNames[vi];
+      const pattern = " - " + cellName;
+      if (text.endsWith(pattern)) {
+        return {
+          name: text.substring(0, text.length - pattern.length).trim(),
+          cell: cellName
+        };
+      }
+    }
+    const lastHyphenIndex = text.lastIndexOf(" - ");
+    if (lastHyphenIndex > 0) {
+      return {
+        name: text.substring(0, lastHyphenIndex).trim(),
+        cell: text.substring(lastHyphenIndex + 3).trim()
+      };
+    }
+    return { name: text, cell: "" };
+  }
+
+  const STATUS_VALUES = {
+    Regular: "Regular: Comes 3 or more times a month",
+    Irregular: "Irregular: Comes 2 or less times a month",
+    "Follow Up": "Follow Up: Haven't seen in them in 2 months"
+  };
+
+  const attendanceMap = {};
+  const attendanceDataFull = attendanceSheet.getRange(2, 1, attendanceLastRow - 1, attendanceLastCol).getValues();
+
+  for (let ri = 0; ri < attendanceDataFull.length; ri++) {
+    const row = attendanceDataFull[ri];
+    const fullText = String(row[0]).trim();
+    if (!fullText || fullText === "#REF!") continue;
+    const parsed = parseNameAndCell(fullText);
+    if (!parsed.name || !parsed.cell) continue;
+    const key = parsed.name + "|||" + parsed.cell;
+    let attendanceCount = 0;
+    const rawByCol = {};
+    for (let j = 0; j < columnsForMonth.length; j++) {
+      const colIndex = columnsForMonth[j];
+      const val = row[colIndex - 1];
+      rawByCol[colIndex] = (val === 1 || val === "1") ? 1 : 0;
+      if (rawByCol[colIndex]) attendanceCount++;
+    }
+    // Infer join date from earliest attended service across ALL columns (fallback when "New Since" is blank)
+    let inferredNewSince = null;
+    for (let k = 0; k < weekWin.allColumnDates.length; k++) {
+      const c = weekWin.allColumnDates[k];
+      if (row[c.col - 1] === 1 || row[c.col - 1] === "1") {
+        inferredNewSince = c.date; // allColumnDates sorted ascending → first hit = earliest
+        break;
+      }
+    }
+    let statusKey = "Follow Up";
+    let ratio = 0;
+    if (totalServices > 0) {
+      ratio = attendanceCount / totalServices;
+      if (ratio >= 0.75) {
+        statusKey = "Regular";
+      } else if (ratio > 0) {
+        statusKey = "Irregular";
+      }
+    }
+    attendanceMap[key] = {
+      statusKey: statusKey,
+      status: STATUS_VALUES[statusKey],
+      ratio: ratio,
+      count: attendanceCount,
+      total: totalServices,
+      rawByCol: rawByCol,
+      inferredNewSince: inferredNewSince
+    };
+  }
+
+  return { attendanceMap: attendanceMap, columnDates: weekWin.columnDates };
+}
+
+/** One sheet read per tab; one Column F write per tab when anything changed. */
+function usfaApplyAttendanceMapToTabs_(ss, attendanceMap, columnDates) {
+  const cellNameToTabMap = usfaCellNameToTabMap_();
+  const STATUS_VALUES = {
+    Regular: "Regular: Comes 3 or more times a month",
+    Irregular: "Irregular: Comes 2 or less times a month",
+    "Follow Up": "Follow Up: Haven't seen in them in 2 months"
+  };
+  const PROTECTED_STATUSES = ["New", "Red", "Graduated", "Duplicate"];
+  const STATUS_COL = 11;
+  const NAME_COL = 1;
+  const CELL_COL = 2;
+  const NEW_SINCE_COL = 23;
+
+  const byTab = {};
+  for (let attendanceKey in attendanceMap) {
+    const parts = attendanceKey.split("|||");
+    if (parts.length !== 2) continue;
+    const cellName = parts[1];
+    const tabName = cellNameToTabMap[cellName];
+    if (!tabName) {
+      if (USFA_DEBUG_LOGS) {
+        Logger.log("USFA: no tab for cell " + cellName);
+      }
+      continue;
+    }
+    if (!byTab[tabName]) {
+      byTab[tabName] = [];
+    }
+    byTab[tabName].push({
+      key: attendanceKey,
+      name: parts[0],
+      cellName: cellName,
+      info: attendanceMap[attendanceKey]
+    });
+  }
+
+  let totalUpdated = 0;
+  const tabNames = Object.keys(byTab);
+  for (let t = 0; t < tabNames.length; t++) {
+    const tabName = tabNames[t];
+    const sheet = ss.getSheetByName(tabName);
+    if (!sheet) continue;
+    if (nwstCgIsLikeAutomatedFormTab_(sheet.getName())) continue;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) continue;
+    const lastCol = sheet.getLastColumn();
+    const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    const rowByKey = {};
+    for (let i = 0; i < data.length; i++) {
+      const rowName = String(data[i][NAME_COL - 1]).trim();
+      const rowCellValue = String(data[i][CELL_COL - 1]).trim();
+      rowByKey[rowName + "|||" + rowCellValue] = i;
+    }
+
+    const items = byTab[tabName];
+    let changed = 0;
+    for (let j = 0; j < items.length; j++) {
+      const item = items[j];
+      const i = rowByKey[item.key];
+      if (i === undefined) continue;
+      const row = data[i];
+      const currentStatus = String(row[STATUS_COL - 1]).trim();
+      const newStatus = item.info.status;
+      let isProtected = false;
+      for (let p = 0; p < PROTECTED_STATUSES.length; p++) {
+        if (currentStatus.startsWith(PROTECTED_STATUSES[p])) {
+          isProtected = true;
+          break;
+        }
+      }
+      // For "New" members: re-score using only services since their join date.
+      // A newcomer who hits ≥75% within their eligible window earns Regular immediately.
+      if (currentStatus === "New" && columnDates && item.info.rawByCol) {
+        const effectiveNewSince = usfaParseNewSinceDate_(row[NEW_SINCE_COL - 1]) || item.info.inferredNewSince;
+        if (effectiveNewSince) {
+          const scoped = usfaNewMemberScopedRatio_(item.info.rawByCol, columnDates, effectiveNewSince);
+          if (scoped.statusKey === "Regular") {
+            row[STATUS_COL - 1] = STATUS_VALUES["Regular"];
+            if (USFA_DEBUG_LOGS) {
+              Logger.log("USFA New→Regular (scoped " + scoped.count + "/" + scoped.total + "): " + item.name);
+            }
+            changed++;
+            totalUpdated++;
+            continue;
+          }
+        }
+      }
+      if (isProtected && newStatus !== STATUS_VALUES["Regular"]) {
+        continue;
+      }
+      if (newStatus !== currentStatus) {
+        row[STATUS_COL - 1] = newStatus;
+        changed++;
+        totalUpdated++;
+      }
+    }
+    if (changed > 0) {
+      const colF = data.map(function (r) {
+        return [r[STATUS_COL - 1]];
+      });
+      // getRange(row, column, numRows, numColumns) — NOT (r1,c1,r2,c2); width must be 1 for column K only
+      sheet.getRange(2, STATUS_COL, colF.length, 1).setValues(colF);
+    }
+  }
+  return totalUpdated;
+}
+
+/**
+ * @param {boolean} showUiAlert - false for time triggers (no SpreadsheetApp.getUi)
+ * @returns {number} rows updated
+ */
+function usfaRunAttendanceStatusPass_(showUiAlert) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const built = usfaBuildAttendanceMap_(ss);
+  if (built.error) {
+    if (showUiAlert) {
+      try {
+        SpreadsheetApp.getUi().alert(built.error);
+      } catch (e) {
+        Logger.log(built.error);
+      }
+    } else {
+      Logger.log(built.error);
+    }
+    return 0;
+  }
+  const n = usfaApplyAttendanceMapToTabs_(ss, built.attendanceMap, built.columnDates);
+  Logger.log("USFA attendance pass complete: " + n + " cell rows updated.");
+  if (showUiAlert) {
+    cgProminentToast_(
+      ss,
+      "STATUS UPDATE COMPLETE",
+      (n === 0
+        ? "No status changes this run.\n(Protected rows or already up to date.)"
+        : n + " member(s) updated\nacross all cell tabs.") +
+        "\n\nCheck column F (Status) on cell tabs.",
+      30
+    );
+  }
+  return n;
+}
+
+/** Phase 1 — attendance only. Safe for time-driven triggers if Phase 2 is separate. */
+function updateStatusFromAttendance() {
+  usfaRunAttendanceStatusPass_(true);
+}
+
+/** Same as menu item but no modal (use in installable time triggers). */
+function updateStatusFromAttendanceSilent() {
+  usfaRunAttendanceStatusPass_(false);
+}
+
+/**
+ * Phase 2 after Phase 1 (or run standalone): "New" members by New Since + attendance rules.
+ * Pair with a second trigger ~2–5 min after updateStatusFromAttendanceSilent.
+ */
+function updateStatusFromAttendancePhase2NewDates() {
+  updateNewStatusBasedOnDate();
+}
+
+/** One-shot: Phase 1 + Phase 2 (may exceed 6 min on very large books — prefer split triggers). */
+function updateStatusFromAttendanceFullPipeline() {
+  usfaRunAttendanceStatusPass_(true);
+  Logger.log("USFA: starting New (2+ month) pass");
+  updateNewStatusBasedOnDate();
+}
+
+// ===== UPDATE NEW STATUS BASED ON ATTENDANCE & DATE =====
+// Priority: 1) If Regular attendance, update to Regular immediately
+//           2) If not Regular AND 2+ months passed, assign status based on attendance
+//           3) Otherwise, keep as "New"
+// Uses rolling 12-week attendance (same window as Update Status from Attendance) for Regular / Irregular / Follow Up
+function updateNewStatusBasedOnDate() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const attendanceSheet = ss.getSheetByName('Attendance');
+
+  // Tabs to skip
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Archive", "Template", "Key Values", "NEW COMERS FORM (TEMP_"
+  ]);
+
+  // Column positions
+  const STATUS_COL = 11;     // Column K
+  const NAME_COL = 1;        // Column A
+  const CELL_COL = 2;        // Column B
+  const NEW_SINCE_COL = 23;  // Column W (1-indexed)
+
+  // Get current date in MYT
+  const now = new Date();
+  const myt = new Date(now.getTime() + (8 * 60 * 60 * 1000)); // Add 8 hours for MYT
+  const currentDate = new Date(myt.getUTCFullYear(), myt.getUTCMonth(), myt.getUTCDate());
+
+  // Get attendance data to build attendance map
+  const attendanceMap = {};
+  let columnDates = []; // rolling-window [{col, date}] — needed for scoped-ratio scoring of New members
+
+  if (attendanceSheet) {
+    const attendanceLastRow = attendanceSheet.getLastRow();
+    const attendanceLastCol = attendanceSheet.getLastColumn();
+
+    if (attendanceLastRow >= 2) {
+      // Get valid cell names from Key Values sheet
+      const keyValuesSheet = ss.getSheetByName("Key Values");
+      const keyValuesData = keyValuesSheet ? keyValuesSheet.getDataRange().getValues() : [];
+      const validCellNames = [];
+      for (let i = 1; i < keyValuesData.length; i++) {
+        const cellName = String(keyValuesData[i][0]).trim();
+        if (cellName && cellName !== '') {
+          validCellNames.push(cellName);
+        }
+      }
+      validCellNames.sort((a, b) => b.length - a.length);
+
+      // Parse attendance data to build attendance map
+      const ATTENDANCE_START_COL = 4;   // Column D (first attendance date)
+      const headerRow = attendanceSheet.getRange(1, ATTENDANCE_START_COL, 1, attendanceLastCol - ATTENDANCE_START_COL + 1).getValues()[0];
+
+      const weekWin = usfaColumnsForRollingServices_(headerRow, ATTENDANCE_START_COL, USFA_ROLLING_SERVICES);
+      if (!weekWin.error) {
+        const columnsForMonth = weekWin.columnsForPeriod;
+        const totalServices = weekWin.totalServices;
+        columnDates = weekWin.columnDates;
+
+        Logger.log(
+          'Analyzing rolling ' +
+            USFA_ROLLING_SERVICES +
+            ' services: ' +
+            weekWin.cutoff.toDateString() +
+            ' .. ' +
+            weekWin.latestDate.toDateString() +
+            ' | ' +
+            totalServices +
+            ' total services'
+        );
+        const attendanceDataFull = attendanceSheet.getRange(2, 1, attendanceLastRow - 1, attendanceLastCol).getValues();
+
+        // Helper function to parse "Name - Cell Name"
+        function parseNameAndCell(fullText) {
+          const text = String(fullText).trim();
+          for (let i = 0; i < validCellNames.length; i++) {
+            const cellName = validCellNames[i];
+            const pattern = ' - ' + cellName;
+            if (text.endsWith(pattern)) {
+              const nameEndIndex = text.length - pattern.length;
+              const name = text.substring(0, nameEndIndex).trim();
+              return { name: name, cell: cellName };
+            }
+          }
+          const lastHyphenIndex = text.lastIndexOf(' - ');
+          if (lastHyphenIndex > 0) {
+            const name = text.substring(0, lastHyphenIndex).trim();
+            const cell = text.substring(lastHyphenIndex + 3).trim();
+            return { name: name, cell: cell };
+          }
+          return { name: text, cell: '' };
+        }
+
+        // Build attendance map
+        for (let i = 0; i < attendanceDataFull.length; i++) {
+          const row = attendanceDataFull[i];
+          const fullText = String(row[0]).trim();
+          if (!fullText || fullText === '#REF!') continue;
+
+          const parsed = parseNameAndCell(fullText);
+          const name = parsed.name;
+          const cellGroup = parsed.cell;
+          if (!name || !cellGroup) continue;
+
+          const key = name + '|||' + cellGroup;
+          let attendanceCount = 0;
+          const rawByCol = {};
+
+          for (let j = 0; j < columnsForMonth.length; j++) {
+            const colIndex = columnsForMonth[j];
+            const val = row[colIndex - 1];
+            rawByCol[colIndex] = (val === 1 || val === '1') ? 1 : 0;
+            if (rawByCol[colIndex]) attendanceCount++;
+          }
+
+          // Infer join date from earliest attended service across ALL columns (fallback when "New Since" is blank)
+          let inferredNewSince = null;
+          const allCols = weekWin.allColumnDates;
+          for (let k = 0; k < allCols.length; k++) {
+            if (row[allCols[k].col - 1] === 1 || row[allCols[k].col - 1] === '1') {
+              inferredNewSince = allCols[k].date; // allColumnDates sorted ascending → first hit = earliest
+              break;
+            }
+          }
+
+          let statusKey = 'Follow Up';
+          let ratio = 0;
+          if (totalServices > 0) {
+            ratio = attendanceCount / totalServices;
+            if (ratio >= 0.75) {
+              statusKey = 'Regular';
+            } else if (ratio > 0) {
+              statusKey = 'Irregular';
+            }
+          }
+
+          const STATUS_VALUES = {
+            'Regular': 'Regular: Comes 3 or more times a month',
+            'Irregular': 'Irregular: Comes 2 or less times a month',
+            'Follow Up': 'Follow Up: Haven\'t seen in them in 2 months'
+          };
+
+          attendanceMap[key] = {
+            status: STATUS_VALUES[statusKey],
+            statusKey: statusKey,
+            ratio: ratio,
+            count: attendanceCount,
+            total: totalServices,
+            rawByCol: rawByCol,
+            inferredNewSince: inferredNewSince
+          };
+        }
+      }
+    }
+  }
+
+  // Cell name to tab name mapping
+  const cellNameToTabMap = {
+    'Anchor Street': 'Anchor',
+    'Aster Street': 'Aster',
+    'Crown Street': 'Crown',
+    'Street Fire': 'Fire',
+    'Fishers Street': 'Fishers',
+    'Street Forth': 'Forth',
+    'HIS Street': 'HIS',
+    'Home Street': 'Home',
+    'King Street': 'King',
+    'Life Street': 'Life',
+    'Meta Street': 'Meta',
+    'Royal Street': 'Royal',
+    'Street Runners': 'Runners',
+    'Shepherds Street': 'Shepherds',
+    'Street Lights': 'Lights',
+    'Via Dolorosa Street': 'Via Dolorosa',
+    'Narrowstreet Core Team': 'Core Team'
+  };
+
+  let totalUpdated = 0;
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+
+    if (nwstCgSkipTab_(sheetName, SKIP_TABS)) continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) continue;
+
+    const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+    let changed = 0;
+    for (let j = 0; j < data.length; j++) {
+      const row = data[j];
+      const status = String(row[STATUS_COL - 1]).trim();
+
+      // Only process "New" status
+      if (!status.startsWith('New')) continue;
+
+      const name = String(row[NAME_COL - 1]).trim();
+      const cellName = String(row[CELL_COL - 1]).trim();
+
+      // Convert cell name to standard format for attendance map lookup
+      let lookupCellName = cellName;
+      for (const stdCellName in cellNameToTabMap) {
+        if (cellName.includes(stdCellName.split(' ')[0])) {
+          lookupCellName = stdCellName;
+          break;
+        }
+      }
+
+      const key = name + '|||' + lookupCellName;
+      const attendanceInfo = attendanceMap[key];
+
+      // PRIORITY 1: Check Regular attendance using scoped denominator (services since join date).
+      // Fairer than full rolling window: a newcomer attending 3 of 4 eligible services (75%)
+      // qualifies as Regular even if the full 12-service window score would be much lower.
+      if (attendanceInfo) {
+        const effectiveNewSince = usfaParseNewSinceDate_(row[NEW_SINCE_COL - 1]) || attendanceInfo.inferredNewSince;
+        const evalInfo = (effectiveNewSince && attendanceInfo.rawByCol)
+          ? usfaNewMemberScopedRatio_(attendanceInfo.rawByCol, columnDates, effectiveNewSince)
+          : attendanceInfo;
+        if (evalInfo.statusKey === 'Regular') {
+          row[STATUS_COL - 1] = 'Regular: Comes 3 or more times a month';
+          Logger.log('New→Regular (scoped ' + evalInfo.count + '/' + evalInfo.total + '): ' + name + ' (' + cellName + ')');
+          changed++;
+          totalUpdated++;
+          continue;
+        }
+      }
+
+      // PRIORITY 2: Check if 2+ months have passed
+      const newSinceDate = usfaParseNewSinceDate_(row[NEW_SINCE_COL - 1]);
+      if (!newSinceDate) continue;
+
+      // Check if 2 months or more have passed
+      const diffTime = currentDate.getTime() - newSinceDate.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      const twoMonthsInDays = 60;  // Approximately 2 months
+
+      if (diffDays < twoMonthsInDays) continue;  // Less than 2 months, keep as "New"
+
+      // 2+ months have passed — assign status using scoped ratio (services since join date)
+      let graduateStatus;
+      let reason;
+      if (attendanceInfo && attendanceInfo.rawByCol) {
+        const scoped = usfaNewMemberScopedRatio_(attendanceInfo.rawByCol, columnDates, newSinceDate);
+        const STATUS_VALS = {
+          'Regular': 'Regular: Comes 3 or more times a month',
+          'Irregular': 'Irregular: Comes 2 or less times a month',
+          'Follow Up': "Follow Up: Haven't seen in them in 2 months"
+        };
+        graduateStatus = STATUS_VALS[scoped.statusKey];
+        reason = ' (scoped ' + scoped.count + '/' + scoped.total + ' = ' + (scoped.ratio * 100).toFixed(0) + '%)';
+      } else {
+        graduateStatus = attendanceInfo
+          ? attendanceInfo.status
+          : "Follow Up: Haven't seen in them in 2 months";
+        reason = attendanceInfo
+          ? ' (' + attendanceInfo.count + '/' + attendanceInfo.total + ' = ' + (attendanceInfo.ratio * 100).toFixed(0) + '%)'
+          : ' (no attendance data)';
+      }
+
+      row[STATUS_COL - 1] = graduateStatus;
+      Logger.log('New→' + graduateStatus.split(':')[0].trim() + ' (2+ months)' + reason + ': ' + name + ' (' + cellName + ')');
+      changed++;
+      totalUpdated++;
+    }
+    if (changed > 0) {
+      const colK = data.map(function(r) { return [r[STATUS_COL - 1]]; });
+      sheet.getRange(2, STATUS_COL, colK.length, 1).setValues(colK);
+    }
+  }
+
+  Logger.log('New status update complete: ' + totalUpdated + ' members updated from "New" status');
+  cgProminentToast_(
+    ss,
+    '"NEW" STATUS PASS COMPLETE',
+    totalUpdated +
+      ' member(s) moved off "New" (where rules applied).\n\n' +
+      "Regular attendance first; then 2+ months + attendance.",
+    30
+  );
+}
+
+// Lists installable ON_EDIT triggers for THIS spreadsheet and warns if they duplicate simple `onEdit`
+// or call moveToArchive directly. Simple triggers are not listed in the API — they always run when
+// `function onEdit(e)` exists, which is why installable ON_EDIT -> onEdit is always wrong.
+function auditArchiveOnEditTriggers() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ssId = ss.getId();
+  const triggers = ScriptApp.getProjectTriggers();
+  const onEditHere = triggers.filter(function (t) {
+    return (
+      t.getEventType() === ScriptApp.EventType.ON_EDIT &&
+      t.getTriggerSource() === ScriptApp.TriggerSource.SPREADSHEETS &&
+      t.getTriggerSourceId() === ssId
+    );
+  });
+
+  const lines = onEditHere.map(function (t) {
+    return "• ON_EDIT → " + t.getHandlerFunction();
+  });
+
+  let msg = "Installable ON_EDIT triggers for this file:\n";
+  msg += lines.length ? lines.join("\n") : "(none — good; only the simple onEdit runs on edit)";
+  msg += "\n\nThe function onEdit(e) in this project is ALSO a simple trigger (automatic). ";
+  msg += "If you added On edit → onEdit here, remove it — that runs onEdit twice per edit.";
+  msg += "\nIf you have On edit → moveToArchive, remove it — onEdit already calls moveToArchive for Status changes.";
+
+  const hasInstallableOnEdit = onEditHere.some(function (t) {
+    return t.getHandlerFunction() === "onEdit";
+  });
+  const hasDirectMoveToArchive = onEditHere.some(function (t) {
+    return t.getHandlerFunction() === "moveToArchive";
+  });
+
+  if (hasInstallableOnEdit) {
+    msg += "\n\n⚠ Action: Delete the installable trigger that calls onEdit (Triggers panel / clock icon).";
+  }
+  if (hasDirectMoveToArchive) {
+    msg += "\n\n⚠ Action: Delete the installable trigger that calls moveToArchive on every edit.";
+  }
+  if (!hasInstallableOnEdit && !hasDirectMoveToArchive && onEditHere.length === 0) {
+    msg += "\n\n✓ No conflicting installable ON_EDIT handlers detected for this spreadsheet.";
+  } else if (!hasInstallableOnEdit && !hasDirectMoveToArchive && onEditHere.length > 0) {
+    msg += "\n\nOther ON_EDIT functions are listed above; keep them only if they should run on every edit.";
+  }
+
+  try {
+    SpreadsheetApp.getUi().alert("Check duplicate ON_EDIT triggers", msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (err) {
+    Logger.log(msg);
+  }
+}
+function updateColumnCFromKeyValues() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const attendanceSheet = ss.getSheetByName("Attendance");
+  const allSheet = ss.getSheetByName("ALL");
+  const leadersSheet = ss.getSheetByName("Leaders");
+  const historicalSheet = ss.getSheetByName("Historical Cell Status");
+  const keyValuesSheet = ss.getSheetByName("Key Values");
+
+  // ===== 1. CLEAR COLUMN C (ONLY FROM ROW 2 ONWARDS) =====
+  [attendanceSheet, allSheet, leadersSheet].forEach(sheet => {
+    if (!sheet) return;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+
+    // Row 2 → last row
+    sheet.getRange(2, 3, lastRow - 1, 1).clearContent();
+  });
+
+  // ===== 2. BUILD LOOKUP MAP (Key Values J → I) =====
+  const keyLastRow = keyValuesSheet.getLastRow();
+  if (keyLastRow < 2) return;
+
+  const keyData = keyValuesSheet.getRange(2, 9, keyLastRow - 1, 2).getValues();
+  // Column I = row[0], Column J = row[1]
+
+  const lookupMap = {};
+  keyData.forEach(row => {
+    const keyJ = String(row[1] || "").trim(); // match
+    const valueI = row[0];                    // return
+
+    if (keyJ) {
+      lookupMap[keyJ] = valueI;
+    }
+  });
+
+  // ===== 3. UPDATE HISTORICAL COLUMN C (BASED ON D) =====
+  const histLastRow = historicalSheet.getLastRow();
+  if (histLastRow < 2) return;
+
+  const histDValues = historicalSheet.getRange(2, 4, histLastRow - 1, 1).getValues();
+
+  const updatedC = histDValues.map(row => {
+    const dValue = String(row[0] || "").trim();
+    return [lookupMap[dValue] !== undefined ? lookupMap[dValue] : ""];
+  });
+
+  historicalSheet.getRange(2, 3, updatedC.length, 1).setValues(updatedC);
+
+  // ===== 4. UPDATE HISTORICAL MINISTRY STATUS COLUMN C (COPY FROM D) =====
+  const ministryHistSheet = ss.getSheetByName("Historical Ministry Status");
+  if (ministryHistSheet) {
+    const mLastRow = ministryHistSheet.getLastRow();
+    if (mLastRow >= 2) {
+      const mDValues = ministryHistSheet.getRange(2, 4, mLastRow - 1, 1).getValues();
+      ministryHistSheet.getRange(2, 3, mDValues.length, 1).setValues(mDValues);
+      Logger.log("Done: Updated Historical Ministry Status col C from col D (" + mDValues.length + " rows).");
+    }
+  }
+
+  Logger.log("Done: Cleared Attendance & ALL (from row 2), updated Historical C via J → I mapping.");
+}
+// ===== UPDATE LAST ATTENDED (COLUMN T) FROM ATTENDANCE SHEET =====
+/**
+ * Scans the Attendance sheet and writes each member's most-recently attended
+ * service date to column T ("Last Attended") of their cell tab, formatted as
+ * "DD MMM YYYY" (e.g. "09 Oct 2026") to match the Birthday column style.
+ *
+ * CG Combined is skipped — it auto-updates from cell tab formulas.
+ */
+function updateLastAttendedDates() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const tz  = Session.getScriptTimeZone();
+  const LAST_ATTENDED_COL    = 20;  // Column T (1-based)
+  const ATTENDANCE_START_COL = 4;   // Column D in Attendance sheet
+  const NAME_COL = 1;
+  const CELL_COL = 2;
+
+  Logger.log("updateLastAttendedDates: START");
+
+  // ── 1. Load Attendance sheet ──────────────────────────────────────────────
+  const attendanceSheet = ss.getSheetByName("Attendance");
+  if (!attendanceSheet) {
+    Logger.log("updateLastAttendedDates: ERROR — Attendance sheet not found.");
+    SpreadsheetApp.getUi().alert("Attendance sheet not found.");
+    return;
+  }
+  const attLastRow = attendanceSheet.getLastRow();
+  const attLastCol = attendanceSheet.getLastColumn();
+  Logger.log("updateLastAttendedDates: Attendance sheet — " + (attLastRow - 1) + " data row(s), " + attLastCol + " column(s).");
+  if (attLastRow < 2 || attLastCol < ATTENDANCE_START_COL) {
+    Logger.log("updateLastAttendedDates: ERROR — No usable data in Attendance sheet.");
+    SpreadsheetApp.getUi().alert("No data in Attendance sheet.");
+    return;
+  }
+
+  // ── 2. Parse date headers (row 1, columns D onward) ──────────────────────
+  // Build [{i (offset from col D), date}] sorted descending so the first "1"
+  // hit when scanning a row is the most recent attendance.
+  const headerVals = attendanceSheet
+    .getRange(1, ATTENDANCE_START_COL, 1, attLastCol - ATTENDANCE_START_COL + 1)
+    .getValues()[0];
+
+  const colDates = [];
+  for (let i = 0; i < headerVals.length; i++) {
+    const raw = headerVals[i];
+    let d = null;
+    if (raw instanceof Date && !isNaN(raw.getTime())) {
+      d = raw;
+    } else if (raw) {
+      const parts = String(raw).trim().split("/");
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10), month = parseInt(parts[1], 10), year = parseInt(parts[2], 10);
+        if (!isNaN(day) && !isNaN(month) && !isNaN(year)) d = new Date(year, month - 1, day);
+      }
+    }
+    if (d && !isNaN(d.getTime())) colDates.push({ i: i, date: d });
+  }
+  if (colDates.length === 0) {
+    Logger.log("updateLastAttendedDates: ERROR — No parseable date columns in Attendance row 1.");
+    SpreadsheetApp.getUi().alert("No parseable date columns found in Attendance row 1.");
+    return;
+  }
+  colDates.sort(function(a, b) { return b.date - a.date; }); // newest first
+  Logger.log("updateLastAttendedDates: " + colDates.length + " date column(s) found. Newest: " +
+    Utilities.formatDate(colDates[0].date, tz, "dd MMM yyyy") + ", oldest: " +
+    Utilities.formatDate(colDates[colDates.length - 1].date, tz, "dd MMM yyyy") + ".");
+
+  // ── 3. Load Key Values for name/cell parsing (same as usfaBuildAttendanceMap_) ──
+  const kvSheet = ss.getSheetByName("Key Values");
+  const validCellNames = [];
+  if (kvSheet) {
+    const kvData = kvSheet.getDataRange().getValues();
+    for (let i = 1; i < kvData.length; i++) {
+      const n = String(kvData[i][0]).trim();
+      if (n) validCellNames.push(n);
+    }
+    validCellNames.sort(function(a, b) { return b.length - a.length; }); // longest first to avoid partial matches
+  }
+
+  function parseNameAndCell(fullText) {
+    const text = String(fullText).trim();
+    for (let vi = 0; vi < validCellNames.length; vi++) {
+      const pat = " - " + validCellNames[vi];
+      if (text.endsWith(pat)) return { name: text.slice(0, -pat.length).trim(), cell: validCellNames[vi] };
+    }
+    const idx = text.lastIndexOf(" - ");
+    if (idx > 0) return { name: text.slice(0, idx).trim(), cell: text.slice(idx + 3).trim() };
+    return { name: text, cell: "" };
+  }
+
+  // ── 4. Build map: "Name|||Cell" → "DD MMM YYYY" ───────────────────────────
+  const lastAttendedMap = {};
+  const attData = attendanceSheet.getRange(2, 1, attLastRow - 1, attLastCol).getValues();
+
+  for (let ri = 0; ri < attData.length; ri++) {
+    const row = attData[ri];
+    const fullText = String(row[0]).trim();
+    if (!fullText || fullText === "#REF!") continue;
+    const parsed = parseNameAndCell(fullText);
+    if (!parsed.name || !parsed.cell) continue;
+
+    for (let k = 0; k < colDates.length; k++) {
+      const rowIdx = ATTENDANCE_START_COL - 1 + colDates[k].i; // 0-based row index
+      const val = row[rowIdx];
+      if (val === 1 || val === "1") {
+        lastAttendedMap[parsed.name + "|||" + parsed.cell] =
+          Utilities.formatDate(colDates[k].date, tz, "dd MMM yyyy");
+        break; // sorted descending — first hit is most recent
+      }
+    }
+  }
+
+  // ── 5. Write column T to each cell tab ───────────────────────────────────
+  const cellNameToTabMap = usfaCellNameToTabMap_();
+  const tabNames = Object.values(cellNameToTabMap).filter(function(v, i, a) { return a.indexOf(v) === i; });
+  Logger.log("updateLastAttendedDates: " + Object.keys(lastAttendedMap).length + " member(s) in attendance map. Processing " + tabNames.length + " tab(s).");
+  let totalUpdated = 0;
+
+  for (let t = 0; t < tabNames.length; t++) {
+    const tabName = tabNames[t];
+    const sheet = ss.getSheetByName(tabName);
+    if (!sheet) {
+      Logger.log("  [" + tabName + "] — sheet not found, skipping.");
+      continue;
+    }
+    const sheetLastRow = sheet.getLastRow();
+    if (sheetLastRow < 2) {
+      Logger.log("  [" + tabName + "] — no data rows, skipping.");
+      continue;
+    }
+
+    Logger.log("  [" + tabName + "] — checking " + (sheetLastRow - 1) + " row(s)...");
+    const readCols = Math.max(sheet.getLastColumn(), LAST_ATTENDED_COL);
+    const data = sheet.getRange(2, 1, sheetLastRow - 1, readCols).getValues();
+    let tabUpdated = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const name = String(data[i][NAME_COL - 1]).trim();
+      const cell = String(data[i][CELL_COL - 1]).trim();
+      if (!name) continue;
+      const dateStr = lastAttendedMap[name + "|||" + cell] || "";
+      const current = String(data[i][LAST_ATTENDED_COL - 1] || "").trim();
+      if (dateStr !== current) {
+        data[i][LAST_ATTENDED_COL - 1] = dateStr;
+        tabUpdated++;
+        totalUpdated++;
+      }
+    }
+
+    if (tabUpdated > 0) {
+      const colT = data.map(function(r) { return [r[LAST_ATTENDED_COL - 1]]; });
+      sheet.getRange(2, LAST_ATTENDED_COL, colT.length, 1).setValues(colT);
+      Logger.log("  [" + tabName + "] — " + tabUpdated + " row(s) updated.");
+    } else {
+      Logger.log("  [" + tabName + "] — no changes.");
+    }
+  }
+
+  Logger.log("updateLastAttendedDates: DONE — " + totalUpdated + " total row(s) updated across " + tabNames.length + " tab(s).");
+  cgSpreadsheetToast_(ss, totalUpdated + " rows updated.", "Last Attended — Done", 8);
+}
+
+// ===== CUSTOM MENU =====
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Cell Management')
+    .addItem('Update Status from Attendance', 'updateStatusFromAttendance')
+    .addItem('Update Status from Attendance + New (full)', 'updateStatusFromAttendanceFullPipeline')
+    .addItem('Update Last Attended Dates', 'updateLastAttendedDates')
+    .addItem('Update New Status (2+ months old)', 'updateNewStatusBasedOnDate')
+    .addItem('Log Historical Cell Status', 'logHistoricalCellStatusSnapshot')
+    .addItem('Repair Historical Cell Status tab (formats)', 'repairHistoricalCellStatusTab')
+    .addSeparator()
+    .addItem('Move Red/Graduated to Archive', 'moveToArchive')
+    .addItem('Move Back to Cells', 'moveBackToCells')
+    .addSeparator()
+    .addItem('Recalculate All Ages', 'recalculateAllAges')
+    .addItem('Remove Duplicates from Archive', 'removeDuplicatesFromArchive')
+    .addSeparator()
+    .addItem('Format All Sheets', 'formatColumns')
+    .addItem('Format Sheets – Group 1 (Hype/Worship/Frontlines/VS/Archive/Anchor/Aster/Crown/Fire/Fishers)', 'formatColumnsGroup1')
+    .addItem('Format Sheets – Group 2 (Forth/HIS/Home/King/Life/Meta/Royal/Runners/Shepherds/Lights/Via Dolorosa/Core Team)', 'formatColumnsGroup2')
+    .addItem('Format Active Sheet', 'formatActiveSheet')
+    .addSeparator()
+    .addItem('Sort All Sheets', 'sortAllSheets')
+    .addItem('Sort Active Sheet', 'sortActiveSheet')
+    .addItem('Custom Sort...', 'customSort')
+    .addItem('Sort Change Requests (Date/Time ↓)', 'sortChangeRequests')
+    .addSeparator()
+    .addItem('Check duplicate ON_EDIT triggers', 'auditArchiveOnEditTriggers')
+    .addItem('Clean Newcomers (Copy)', 'removeNonNewFromNewcomers')
+    .addSeparator()
+    .addItem('Backfill New Since dates from form responses', 'backfillNewSinceDates')
+    .addToUi();
+}
+
+// ===== ONE-TIME BACKFILL: NEW SINCE (COLUMN W) FROM FORM RESPONSES =====
+// Reads "Copy of Copy of Form Responses 1", matches by name + cell,
+// and stamps column W for any row whose Status (K) = "New" and W is empty.
+function backfillNewSinceDates() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const SKIP_TABS = nwstCgNonRosterTabNames_().concat([
+    "MASTERLIST", "Archive", "Template", "Key Values",
+    "Hype", "Frontlines", "VS", "Worship",
+    "CG Combined", "Ministries Combined",
+    "Copy of Copy of Form Responses 1",
+    "Change Requests",
+  ]);
+
+  // ── Step 1: build name|cell → Date map from form responses ──────────────────
+  const formSheet = ss.getSheetByName("Copy of Copy of Form Responses 1");
+  if (!formSheet) {
+    SpreadsheetApp.getUi().alert('Sheet "Copy of Copy of Form Responses 1" not found.');
+    return;
+  }
+
+  const formData = formSheet.getDataRange().getValues();
+  const lookup = new Map(); // key: "name|cell" → Date
+  for (let i = 1; i < formData.length; i++) {
+    const ts   = formData[i][0]; // Column A – Timestamp
+    const name = formData[i][1]; // Column B – Full Name
+    const cell = formData[i][2]; // Column C – Assigned Cell
+    if (!name || !ts) continue;
+    const parsed = parseFormTimestamp_(ts);
+    if (!parsed) continue;
+    const key = String(name).trim().toLowerCase() + "|" + String(cell || "").trim().toLowerCase();
+    if (!lookup.has(key)) lookup.set(key, parsed);
+  }
+  Logger.log("backfillNewSinceDates: loaded " + lookup.size + " entries from form responses.");
+
+  // ── Steps 2–3: iterate valid cell tabs ──────────────────────────────────────
+  const NAME_COL      = 1;  // A
+  const CELL_COL      = 2;  // B
+  const STATUS_COL    = 11; // K
+  const NEW_SINCE_COL = 23; // W
+
+  let totalUpdated = 0;
+
+  ss.getSheets().forEach(function(sheet) {
+    const tabName = sheet.getName();
+    if (SKIP_TABS.some(s => s.toLowerCase() === tabName.toLowerCase())) return;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    const numRows = lastRow - 1;
+
+    // Batch-read A, B, K, W
+    const names    = sheet.getRange(2, NAME_COL,      numRows, 1).getValues();
+    const cells    = sheet.getRange(2, CELL_COL,      numRows, 1).getValues();
+    const statuses = sheet.getRange(2, STATUS_COL,    numRows, 1).getValues();
+    const newSince = sheet.getRange(2, NEW_SINCE_COL, numRows, 1).getValues();
+
+    let changed = false;
+    const updated = newSince.map(function(row, idx) {
+      if (row[0]) return row;                                          // already filled
+      if (String(statuses[idx][0]).trim().toLowerCase() !== "new") return row; // not New
+      const key = String(names[idx][0]).trim().toLowerCase() + "|" +
+                  String(cells[idx][0]).trim().toLowerCase();
+      const date = lookup.get(key);
+      if (!date) return row;
+      changed = true;
+      return [date];
+    });
+
+    if (!changed) return;
+
+    const range = sheet.getRange(2, NEW_SINCE_COL, numRows, 1);
+    range.setValues(updated);
+    range.setNumberFormat("dd MMM yyyy");
+
+    const count = updated.filter(function(row, idx) { return row[0] !== newSince[idx][0]; }).length;
+    totalUpdated += count;
+    Logger.log("backfillNewSinceDates: " + tabName + " → " + count + " cell(s) updated.");
+  });
+
+  SpreadsheetApp.getUi().alert(
+    "Backfill complete. " + totalUpdated + " New Since date(s) written across all cell tabs."
+  );
+}
+
+function parseFormTimestamp_(ts) {
+  if (!ts) return null;
+  if (ts instanceof Date) return ts;
+  const m = String(ts).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+}

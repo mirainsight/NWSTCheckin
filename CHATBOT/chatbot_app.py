@@ -1967,6 +1967,8 @@ def _render_cr_wizard() -> None:
                     st.rerun()
             else:
                 # Search bar
+                if st.session_state.pop("cr_batch_search_clear", False):
+                    st.session_state.pop("cr_batch_search_input", None)
                 _bsc1, _bsc2 = st.columns([3, 1])
                 with _bsc1:
                     _bsq = st.text_input(
@@ -1993,7 +1995,7 @@ def _render_cr_wizard() -> None:
                             st.rerun()
                         elif len(_bfound) == 1:
                             data.setdefault("batch_extra_members", []).append(_bfound[0])
-                            st.session_state["cr_batch_search_input"] = ""
+                            st.session_state["cr_batch_search_clear"] = True
                             st.rerun()
                         else:
                             data["batch_search_matches"] = _bfound
@@ -2046,7 +2048,7 @@ def _render_cr_wizard() -> None:
                             pass
                 if _cr_gc and _cr_sid:
                     _cr_sp = _cr_gc.open_by_key(_cr_sid)
-                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Status"]
+                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Notes"]
                     try:
                         _cr_ws = _cr_sp.worksheet("Change Requests")
                     except _gspread.exceptions.WorksheetNotFound:
@@ -2055,6 +2057,9 @@ def _render_cr_wizard() -> None:
                     if not _cr_ws.row_values(1):
                         _cr_ws.append_row(_cr_headers)
                     _myt_now = datetime.now(MYT)
+                    _cr_req_name = data.get("requester", "").split(" - ")[0].strip()
+                    _cr_date_str = _myt_now.strftime("%d %b %Y")
+                    _cr_reason = data.get("reason", "")
                     _rows_cr = []
                     # Build ordered target list: primary member first, then batch members
                     _cr_targets = [{"name": data.get("member_name", ""), "cell": data.get("member_cell", ""), "row": None}]
@@ -2064,6 +2069,8 @@ def _render_cr_wizard() -> None:
                     for ch in pending:
                         for _tgt in _cr_targets:
                             _cur_val = ch.get("current_value", "") if _tgt["row"] is None else _tgt["row"].get(ch["field"], "")
+                            _cur_notes = (st.session_state.cr_member_row or {}).get("Notes", "") if _tgt["row"] is None else _tgt["row"].get("Notes", "")
+                            _cr_notes_val = (f"{_cur_notes} " if _cur_notes else "") + f"| Change requested on {_cr_date_str} by {_cr_req_name}, {_cr_reason}"
                             _rows_cr.append([
                                 _myt_now.strftime("%Y-%m-%d"),
                                 _myt_now.strftime("%H:%M:%S"),
@@ -2073,8 +2080,7 @@ def _render_cr_wizard() -> None:
                                 ch["field"],
                                 _cur_val,
                                 ch["new_value"],
-                                data.get("reason", ""),
-                                "Pending",
+                                _cr_notes_val,
                             ])
                     _cr_ws.append_rows(_rows_cr)
                     _cr_written = True
@@ -2092,9 +2098,14 @@ def _render_cr_wizard() -> None:
                         if len(pending) == 1:
                             for _bm in data.get("batch_extra_members", []):
                                 _fb_targets.append({"name": _bm.get("Name", ""), "cell": _bm.get("Cell", ""), "row": _bm})
+                        _fb_req_name = data.get("requester", "").split(" - ")[0].strip()
+                        _fb_date_str = datetime.now(MYT).strftime("%d %b %Y")
+                        _fb_reason = data.get("reason", "")
                         for ch in pending:
                             for _tgt in _fb_targets:
                                 _cur_val = ch.get("current_value", "") if _tgt["row"] is None else _tgt["row"].get(ch["field"], "")
+                                _fb_cur_notes = (st.session_state.cr_member_row or {}).get("Notes", "") if _tgt["row"] is None else _tgt["row"].get("Notes", "")
+                                _fb_notes_val = (f"{_fb_cur_notes} " if _fb_cur_notes else "") + f"| Change requested on {_fb_date_str} by {_fb_req_name}, {_fb_reason}"
                                 _submit_cr(_rc_cr, {
                                     "requester":     data.get("requester", ""),
                                     "member_name":   _tgt["name"],
@@ -2103,6 +2114,7 @@ def _render_cr_wizard() -> None:
                                     "current_value": _cur_val,
                                     "new_value":     ch["new_value"],
                                     "reason":        data.get("reason", ""),
+                                    "notes":         _fb_notes_val,
                                 })
                         _cr_fallback = True
                     else:

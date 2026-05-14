@@ -1,0 +1,365 @@
+// ===== MINISTRY TABS (Hype / Worship / VS / Frontlines) =====
+//
+// Column layout (same as all cell tabs):
+//   A(1)  Name
+//   B(2)  Cell
+//   C(3)  Age
+//   D(4)  Gender
+//   E(5)  Role
+//   F(6)  Hype Role
+//   G(7)  Frontlines Role
+//   H(8)  VS Role
+//   I(9)  Worship Role
+//   J(10) Ministry Department
+//   … (rest of columns follow)
+//
+// Each ministry tab shows every person (across ALL cell tabs) whose
+// respective role column is non-empty.
+// Excluded tabs: ALL, Newcomers Form (Automated), Attendance,
+//   Historical Cell Status, Newcomers (Copy), MASTERLIST, Archive,
+//   Template, Key Values, and the four ministry tabs themselves.
+
+var MINISTRY_TAB_CONFIG_ = [
+  { tabName: "Hype",       roleCol: 6,  roleHeader: "Hype Role"       },
+  { tabName: "Frontlines", roleCol: 7,  roleHeader: "Frontlines Role"  },
+  { tabName: "VS",         roleCol: 8,  roleHeader: "VS Role"          },
+  { tabName: "Worship",    roleCol: 9,  roleHeader: "Worship Role"     }
+];
+
+// Tabs that are treated as cell-roster sources for ministry tab rebuilds.
+var MINISTRY_SOURCE_TABS_ = [
+  "Anchor", "Aster", "Fire", "Crown", "Fishers",
+  "Forth", "HIS", "Home", "King", "Life",
+  "Lights", "Meta", "Royal", "Runners",
+  "Via Dolorosa", "Shepherds", "Core Team"
+];
+
+function ministryIsSourceTab_(name) {
+  var n = String(name || "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
+  for (var i = 0; i < MINISTRY_SOURCE_TABS_.length; i++) {
+    if (MINISTRY_SOURCE_TABS_[i].toLowerCase() === n) return true;
+  }
+  return false;
+}
+
+// ── Core helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Rebuild one ministry tab from all cell-roster tabs.
+ * @param {string} tabName   - Sheet name to create/overwrite (e.g. "Hype")
+ * @param {number} roleCol   - 1-based column index of the role to filter on
+ */
+function refreshMinistryTab_(tabName, roleCol) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // ── Resolve (or create) the target sheet ──
+  var dest = ss.getSheetByName(tabName);
+  if (!dest) {
+    dest = ss.insertSheet(tabName);
+  } else {
+    // Clear existing data rows; keep row 1 for headers
+    var lastRow = dest.getLastRow();
+    if (lastRow > 1) {
+      dest.getRange(2, 1, lastRow - 1, dest.getLastColumn() || 1).clearContent();
+    }
+  }
+
+  // ── Collect header from Core Team (or first available roster tab) ──
+  var headerRow = null;
+  var numCols = 0;
+  var coreTeamSheet = ss.getSheetByName("Core Team");
+  if (coreTeamSheet && coreTeamSheet.getLastColumn() > 0) {
+    numCols = coreTeamSheet.getLastColumn();
+    headerRow = coreTeamSheet.getRange(1, 1, 1, numCols).getValues()[0];
+  }
+
+  // ── Collect matching rows from all source tabs ──
+  var sheets = ss.getSheets();
+  var collectedRows = [];
+
+  for (var s = 0; s < sheets.length; s++) {
+    var sheet = sheets[s];
+    if (!ministryIsSourceTab_(sheet.getName())) continue;
+
+    var lastDataRow = sheet.getLastRow();
+    var lastDataCol = sheet.getLastColumn();
+    if (lastDataRow < 2 || lastDataCol < roleCol) continue;
+
+    // If we haven't found headers yet, use this sheet
+    if (!headerRow) {
+      numCols = lastDataCol;
+      headerRow = sheet.getRange(1, 1, 1, numCols).getValues()[0];
+    }
+
+    // Read all data rows (skip header row 1)
+    var data = sheet.getRange(2, 1, lastDataRow - 1, lastDataCol).getValues();
+
+    for (var r = 0; r < data.length; r++) {
+      var roleValue = String(data[r][roleCol - 1] || "").trim();
+      if (roleValue !== "") {
+        // Truncate or pad row to exactly numCols
+        var row = data[r].slice(0, numCols);
+        while (row.length < numCols) row.push("");
+        collectedRows.push(row);
+      }
+    }
+  }
+
+  // ── Write header ──
+  if (headerRow && numCols > 0) {
+    dest.getRange(1, 1, 1, numCols).setValues([headerRow]);
+    dest.setFrozenRows(1);
+  }
+
+  // ── Write data rows ──
+  if (collectedRows.length > 0) {
+    dest.getRange(2, 1, collectedRows.length, numCols).setValues(collectedRows);
+  }
+
+  Logger.log(tabName + ": " + collectedRows.length + " row(s) written.");
+}
+
+// ── Public entry points ───────────────────────────────────────────────────────
+
+/** Refresh all four ministry tabs at once (usable from menu or trigger). */
+function refreshAllMinistryTabs() {
+  for (var i = 0; i < MINISTRY_TAB_CONFIG_.length; i++) {
+    var cfg = MINISTRY_TAB_CONFIG_[i];
+    refreshMinistryTab_(cfg.tabName, cfg.roleCol);
+  }
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    "Hype, Frontlines, VS, and Worship tabs refreshed.",
+    "Ministry Tabs Updated",
+    5
+  );
+}
+
+function refreshHypeTab()       { refreshMinistryTab_("Hype",       6); }
+function refreshFrontlinesTab() { refreshMinistryTab_("Frontlines", 7); }
+function refreshVSTab()         { refreshMinistryTab_("VS",         8); }
+function refreshWorshipTab()    { refreshMinistryTab_("Worship",    9); }
+
+// ── Optional: wire into the spreadsheet menu ──────────────────────────────────
+// Call addMinistryTabsMenu() from your existing onOpen() function, or use it
+// as a standalone onOpen if you don't have one yet.
+//
+// function onOpen() {
+//   addMinistryTabsMenu();
+// }
+
+function addMinistryTabsMenu() {
+  SpreadsheetApp.getActiveSpreadsheet()
+    .getUi()
+    .createMenu("Ministry Tabs")
+    .addItem("Refresh All (Hype / Frontlines / VS / Worship)", "refreshAllMinistryTabs")
+    .addItem("Refresh All + Log History",                      "refreshAllMinistryTabsAndLog")
+    .addSeparator()
+    .addItem("Refresh Hype",       "refreshHypeTab")
+    .addItem("Refresh Frontlines", "refreshFrontlinesTab")
+    .addItem("Refresh VS",         "refreshVSTab")
+    .addItem("Refresh Worship",    "refreshWorshipTab")
+    .addSeparator()
+    .addItem("Log Historical Ministry Status", "logHistoricalMinistryStatusSnapshot")
+    .addToUi();
+}
+
+// ── Convenience: refresh all four tabs then log history in one step ───────────
+
+/** Refresh all four ministry tabs, then append a Historical Ministry Status snapshot. */
+function refreshAllMinistryTabsAndLog() {
+  refreshAllMinistryTabs();
+  logHistoricalMinistryStatusSnapshot();
+}
+
+// ===== HISTORICAL MINISTRY STATUS =====
+//
+// One row per ministry (Hype / Frontlines / VS / Worship) per run.
+// Column layout identical to Historical Cell Status so all shared Python/GS helpers work.
+// Col A: Logged At (MYT)   Col B: Week of (Sat)   Col C: "Cell" (stores ministry name)
+// Col D: Tab               Col E: Total            Cols F–M: New/Regular/…/Other counts
+// Cols N–V: d_ deltas      Cols W–AD: WoW mix Δpp
+//
+// Relies on helpers defined in MASTER DATABASE.txt (same Apps Script project):
+//   HISTORICAL_STATUS_BUCKETS, extractStatusBucketForHistory_, mixPct_, round2History_,
+//   historicalWeekStartSaturdayFromYyyyMmDd_, deleteHistoricalRowsMatchingSnapshotDate_,
+//   formatMYTTimestamp
+// ─────────────────────────────────────────────────────────────────────────────
+
+var HISTORICAL_MINISTRY_STATUS_TAB = "Historical Ministry Status";
+
+function ensureHistoricalMinistryStatusSheet_(ss) {
+  var sh = ss.getSheetByName(HISTORICAL_MINISTRY_STATUS_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(HISTORICAL_MINISTRY_STATUS_TAB);
+  }
+  var h0 = String(sh.getRange(1, 1).getValue() || "").trim();
+  if (sh.getLastRow() < 1 || h0 === "") {
+    var headers = [
+      "Logged At (MYT)", "Week of (Sat)",
+      "Cell",            // stores ministry name; named "Cell" so shared Python helpers work
+      "Tab",
+      "Total",
+      "New", "Regular", "Irregular", "Follow Up", "Red", "Graduated", "Duplicate", "Other",
+      "d_Total",
+      "d_New", "d_Regular", "d_Irregular", "d_Follow Up", "d_Red", "d_Graduated", "d_Duplicate", "d_Other",
+      "WoW mix \u0394pp New", "WoW mix \u0394pp Regular", "WoW mix \u0394pp Irregular",
+      "WoW mix \u0394pp Follow Up", "WoW mix \u0394pp Red", "WoW mix \u0394pp Graduated",
+      "WoW mix \u0394pp Duplicate", "WoW mix \u0394pp Other"
+    ];
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function resetHistoricalMinistryStatusSheetLayout_(sh) {
+  var lr = sh.getLastRow();
+  var lc = Math.max(30, sh.getLastColumn());
+  if (lr < 1) return;
+  sh.getRange(1, 1, lr, lc).clearDataValidations();
+  if (lr < 2) return;
+  sh.getRange(2, 1, lr, 1).setNumberFormat("yyyy-MM-dd HH:mm");
+  sh.getRange(2, 2, lr, 1).setNumberFormat("yyyy-MM-dd");
+  sh.getRange(2, 3, lr, 2).setNumberFormat("@");
+  sh.getRange(2, 5, lr, 13).setNumberFormat("0");
+  sh.getRange(2, 18, lr, 9).setNumberFormat("0");
+  sh.getRange(2, 27, lr, 8).setNumberFormat("0.##");
+}
+
+/** Bottom-up scan: latest prior snapshot per ministry (column C). */
+function getLastHistoricalSnapshotByMinistry_(sh) {
+  var lastRow = sh.getLastRow();
+  var byMinistry = {};
+  if (lastRow < 2) return byMinistry;
+  var data = sh.getRange(2, 1, lastRow - 1, 13).getValues();
+  for (var i = data.length - 1; i >= 0; i--) {
+    var ministry = String(data[i][2] || "").trim();
+    if (!ministry || byMinistry[ministry]) continue;
+    var total = Number(data[i][4]);
+    if (isNaN(total)) total = 0;
+    var counts = { Total: total };
+    for (var b = 0; b < HISTORICAL_STATUS_BUCKETS.length; b++) {
+      var n = Number(data[i][5 + b]);
+      counts[HISTORICAL_STATUS_BUCKETS[b]] = isNaN(n) ? 0 : n;
+    }
+    byMinistry[ministry] = counts;
+  }
+  return byMinistry;
+}
+
+/**
+ * Count status buckets for each of the four ministry tabs.
+ * Uses STATUS_COL = 6 (col F), same position as cell roster tabs.
+ */
+function aggregateStatusCountsPerMinistryTab_(ss) {
+  // Status is col K (11): Name,Cell,Age,Gender,Role,HypeRole,FrontlinesRole,VSRole,WorshipRole,MinistryDept,Status
+  var STATUS_COL = 11;
+  var out = {};
+  for (var i = 0; i < MINISTRY_TAB_CONFIG_.length; i++) {
+    var cfg = MINISTRY_TAB_CONFIG_[i];
+    var sheet = ss.getSheetByName(cfg.tabName);
+    if (!sheet) continue;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) continue;
+    var lastCol = Math.max(STATUS_COL, sheet.getLastColumn());
+    var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    var counts = {};
+    for (var k = 0; k < HISTORICAL_STATUS_BUCKETS.length; k++) {
+      counts[HISTORICAL_STATUS_BUCKETS[k]] = 0;
+    }
+    for (var r = 0; r < data.length; r++) {
+      var bucket = extractStatusBucketForHistory_(data[r][STATUS_COL - 1]);
+      counts[bucket]++;
+    }
+    out[cfg.tabName] = { ministry: cfg.tabName, counts: counts, memberCount: data.length };
+  }
+  return out;
+}
+
+function logHistoricalMinistryStatusSnapshot_(ss) {
+  var hist = ensureHistoricalMinistryStatusSheet_(ss);
+
+  // Snapshot date: Saturday of the current MYT week (Sat–Fri)
+  var now = new Date();
+  var myt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  var snapY  = myt.getUTCFullYear();
+  var snapM  = String(myt.getUTCMonth() + 1).padStart(2, "0");
+  var snapD  = String(myt.getUTCDate()).padStart(2, "0");
+  var todayInMyt   = snapY + "-" + snapM + "-" + snapD;
+  var snapshotDate = historicalWeekStartSaturdayFromYyyyMmDd_(todayInMyt);
+  var loggedAt     = formatMYTTimestamp();
+
+  resetHistoricalMinistryStatusSheetLayout_(hist);
+  // Reuse cell-status dedupe helper (same col B structure)
+  deleteHistoricalRowsMatchingSnapshotDate_(hist, snapshotDate);
+
+  var prevByMinistry = getLastHistoricalSnapshotByMinistry_(hist);
+  var agg = aggregateStatusCountsPerMinistryTab_(ss);
+
+  var ministryNames = Object.keys(agg).sort();
+  var rows = [];
+
+  for (var t = 0; t < ministryNames.length; t++) {
+    var ministry = ministryNames[t];
+    var pack = agg[ministry];
+    var cts   = pack.counts;
+    var total = pack.memberCount;
+    var prev  = prevByMinistry[ministry];
+
+    // [LoggedAt, WeekOf, Cell(=ministry), Tab, Total, New…Other]
+    var row = [loggedAt, snapshotDate, ministry, ministry, total];
+    for (var b = 0; b < HISTORICAL_STATUS_BUCKETS.length; b++) {
+      row.push(cts[HISTORICAL_STATUS_BUCKETS[b]]);
+    }
+
+    // d_Total then d_ per bucket
+    row.push(prev ? total - prev.Total : "");
+    for (var b2 = 0; b2 < HISTORICAL_STATUS_BUCKETS.length; b2++) {
+      var key2 = HISTORICAL_STATUS_BUCKETS[b2];
+      row.push(prev ? cts[key2] - (prev[key2] || 0) : "");
+    }
+
+    // WoW mix Δpp per bucket
+    for (var b3 = 0; b3 < HISTORICAL_STATUS_BUCKETS.length; b3++) {
+      var key3 = HISTORICAL_STATUS_BUCKETS[b3];
+      if (!prev || !prev.Total) {
+        row.push("");
+      } else {
+        var deltaPp = mixPct_(cts[key3], total) - mixPct_(prev[key3] || 0, prev.Total);
+        row.push(round2History_(deltaPp));
+      }
+    }
+
+    rows.push(row);
+  }
+
+  if (rows.length === 0) {
+    Logger.log("Historical Ministry Status: no ministry tabs to log.");
+    return;
+  }
+
+  var startRow = hist.getLastRow() + 1;
+  hist.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
+  resetHistoricalMinistryStatusSheetLayout_(hist);
+  Logger.log(
+    "Historical Ministry Status: wrote " + rows.length +
+    " row(s) for week of " + snapshotDate + " (Sat MYT)."
+  );
+}
+
+/**
+ * Menu: append/replace this week's ministry snapshot (dedupe by Sat MYT week).
+ * Run after "Refresh All Ministry Tabs" so statuses reflect the latest roster data.
+ */
+function logHistoricalMinistryStatusSnapshot() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  logHistoricalMinistryStatusSnapshot_(ss);
+  try {
+    SpreadsheetApp.getUi().alert(
+      "Historical Ministry Status log updated.\n\n" +
+      "Tip: run this right after Refresh All Ministry Tabs so WoW reflects current statuses."
+    );
+  } catch (e) {
+    Logger.log("logHistoricalMinistryStatusSnapshot: done (no UI)");
+  }
+}

@@ -1,0 +1,378 @@
+function onFormSubmit(e) {
+  const STATUS_COL = 16;  // Column P
+  const CHECKBOX_COLS = [17, 18, 19];  // Columns Q, R, S
+  const CHECK_COL = 13;   // Column M
+  const TRIGGER_TEXT = "I attend Narrowstreet";
+  const TIMESTAMP_COL = 1; // Column A
+
+  const sheet = e.range.getSheet();
+  const row = e.range.getRow();
+
+  // Get the value in column M
+  const checkValue = sheet.getRange(row, CHECK_COL).getValue();
+
+  // Only set "New" if column M does NOT contain the trigger text and status is empty
+  const statusCell = sheet.getRange(row, STATUS_COL);
+  if (!checkValue.toString().includes(TRIGGER_TEXT) && !statusCell.getValue()) {
+    statusCell.setValue("New");
+  }
+
+  // Add unchecked checkboxes to columns Q, R, S
+  const checkboxRule = SpreadsheetApp.newDataValidation()
+    .requireCheckbox()
+    .build();
+
+  CHECKBOX_COLS.forEach(col => {
+    const cell = sheet.getRange(row, col);
+    cell.setDataValidation(checkboxRule);
+    cell.setValue(false);
+  });
+
+  // Sort by Timestamp (Column A) descending - newest on top
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow > 1) {
+    const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol); // Exclude header row
+    dataRange.sort({ column: TIMESTAMP_COL, ascending: false });
+  }
+}
+
+// ===== THEME OVERRIDE TAB: AUTO-DATE (MYT) =====
+// Bound script: runs on simple trigger onEdit. When primary_hex (B) or banner (C) changes,
+// sets column A to today's date in Asia/Kuala_Lumpur as YYYY-MM-DD; clears A if B and C are both empty.
+const THEME_OVERRIDE_SHEET_NAME = "Theme Override";
+const THEME_COL_DATE = 1;         // A
+const THEME_COL_PRIMARY_HEX = 2; // B
+const THEME_COL_BANNER = 3;       // C
+const MYT_TIMEZONE = "Asia/Kuala_Lumpur";
+
+function themeOverrideRowDateFromHexAndBanner_(sheet, row) {
+  const bVal = sheet.getRange(row, THEME_COL_PRIMARY_HEX).getValue();
+  const cVal = sheet.getRange(row, THEME_COL_BANNER).getValue();
+  const bEmpty = themeOverrideIsEmpty_(bVal);
+  const cEmpty = themeOverrideIsEmpty_(cVal);
+  const dateCell = sheet.getRange(row, THEME_COL_DATE);
+  if (bEmpty && cEmpty) {
+    dateCell.setValue("");
+  } else {
+    dateCell.setValue(Utilities.formatDate(new Date(), MYT_TIMEZONE, "yyyy-MM-dd"));
+  }
+}
+
+function themeOverrideIsEmpty_(v) {
+  if (v === null || v === undefined || v === "") return true;
+  if (typeof v === "string") return v.trim() === "";
+  return false;
+}
+
+function onEdit(e) {
+  const sheet = e.source.getActiveSheet();
+  if (sheet.getName() !== THEME_OVERRIDE_SHEET_NAME) return;
+
+  const range = e.range;
+  const startRow = range.getRow();
+  const endRow = range.getLastRow();
+  const startCol = range.getColumn();
+  const endCol = range.getLastColumn();
+
+  if (startRow < 2) return;
+  // Only react when B and/or C changed
+  if (endCol < THEME_COL_PRIMARY_HEX || startCol > THEME_COL_BANNER) return;
+
+  for (let row = Math.max(2, startRow); row <= endRow; row++) {
+    themeOverrideRowDateFromHexAndBanner_(sheet, row);
+  }
+}
+
+// ===== MANUAL: SYNC NEWCOMERS TO DESTINATION SHEET =====
+// This syncs newcomers data to a separate spreadsheet for CG management
+// Only imports rows where Column Q is unchecked AND Column R (Approved) is checked
+// OPTIMIZED: Uses batch operations for speed
+function syncNewcomersAndCellGroups() {
+  // Source: Current spreadsheet (Newcomers Form)
+  const sourceSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSheet = sourceSpreadsheet.getSheetByName("Form Responses 1");
+
+  // Destination: Different spreadsheet for CG data
+  const DEST_SHEET_ID = "1SpjMNcXSfU1F-44KeKMAAN6ctvjEGhN16vmi8LU-tTU";
+  const destSpreadsheet = SpreadsheetApp.openById(DEST_SHEET_ID);
+  const newcomersSheet = destSpreadsheet.getSheetByName("Newcomers (Copy)");
+
+  const CELL_TAB_MAP = {
+    "Anchor Street": "Anchor",
+    "Aster Street": "Aster",
+    "Crown Street": "Crown",
+    "Fishers Street": "Fishers",
+    "HIS Street": "HIS",
+    "Home Street": "Home",
+    "King Street": "King",
+    "Life Street": "Life",
+    "Meta Street": "Meta",
+    "Royal Street": "Royal",
+    "Shepherds Street": "Shepherds",
+    "Street Fire": "Fire",
+    "Street Forth": "Forth",
+    "Street Lights": "Lights",
+    "Street Runners": "Runners",
+    "Via Dolorosa Street": "Via Dolorosa",
+    "Narrowstreet Core Team": "Core Team"
+  };
+
+  const data = sourceSheet.getDataRange().getValues();
+  const existingNewcomers = getExistingNames(newcomersSheet);
+
+  // Pre-load all cell group sheets and their existing names
+  const cellGroupCache = {};
+  const cellSheetCache = {};
+  for (const cellName in CELL_TAB_MAP) {
+    const tabName = CELL_TAB_MAP[cellName];
+    const cellSheet = destSpreadsheet.getSheetByName(tabName);
+    if (cellSheet) {
+      cellSheetCache[tabName] = cellSheet;
+      cellGroupCache[tabName] = getExistingNames(cellSheet);
+    }
+  }
+
+  // Collect rows to batch insert
+  const newcomersRows = [];
+  const cellGroupRows = {}; // { tabName: [rows] }
+  const importedRowNumbers = []; // Track source row numbers to mark as processed
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+
+    const name = row[1];           // B - Full Name
+    const cell = row[2];           // C - Assigned Cell
+    const gender = row[3];         // D - Gender
+    const phone = row[4];          // E - Phone No.
+    const email = row[5];          // F - Email
+    const emergencyPhone = row[6]; // G - Emergency Contact
+    const emergencyRel = row[7];   // H - Relationship
+    const howFound = row[8];       // I - How did you find out
+    const invitedBy = row[9];      // J - Invited by
+    const birthday = row[10];      // K - Birthday
+    const school = row[11];        // L - School
+    const status = row[15];        // P - Status
+    const processed = row[16];     // Q - Processed? (should be false)
+    const approved = row[17];      // R - Approved? (should be true)
+
+    if (!name) continue;
+
+    // Only import if: Q (Processed?) is false AND R (Approved?) is true
+    if (processed === true || approved !== true) continue;
+
+    const notesParts = [];
+    if (howFound) notesParts.push("Found via: " + howFound);
+    if (invitedBy) notesParts.push("Invited by: " + invitedBy);
+    const notes = notesParts.join(" | ");
+
+    const destRow = [
+      name,                 // A - Name
+      cell,                 // B - Cell
+      "",                   // C - Age (will be calculated)
+      gender,               // D - Gender
+      "",                   // E - Role
+      "",                   // F - Hype Role
+      "",                   // G - Frontlines Role
+      "",                   // H - VS Role
+      "",                   // I - Worship Role
+      "",                   // J - Ministry Department
+      status,               // K - Status (from Column P)
+      formatDate(birthday), // L - Birthday
+      phone,                // M - Contact No.
+      email,                // N - Email Address
+      emergencyPhone,       // O - Emergency Contact
+      emergencyRel,         // P - Emergency Relationship
+      school,               // Q - School / Work
+      notes,                // R - Notes
+      "",                   // S - (blank)
+      "",                   // T - Attendance
+      new Date(),           // U - Last Updated
+      "",                   // V - (blank)
+      new Date()            // W - New Since
+    ];
+
+    let imported = false;
+
+    // If status is "New", queue for Newcomers tab
+    if (status === "New") {
+      if (!existingNewcomers.has(name.toLowerCase())) {
+        newcomersRows.push(destRow);
+        existingNewcomers.add(name.toLowerCase());
+        imported = true;
+      }
+    }
+
+    // If they have an assigned cell, queue for that cell group tab
+    if (cell) {
+      const tabName = CELL_TAB_MAP[cell];
+      if (tabName && cellSheetCache[tabName]) {
+        if (!cellGroupCache[tabName].has(name.toLowerCase())) {
+          if (!cellGroupRows[tabName]) {
+            cellGroupRows[tabName] = [];
+          }
+          cellGroupRows[tabName].push(destRow);
+          cellGroupCache[tabName].add(name.toLowerCase());
+          imported = true;
+        }
+      }
+    }
+
+    if (imported) {
+      importedRowNumbers.push(i + 1); // 1-indexed for sheet
+    }
+  }
+
+  // Batch write to Newcomers sheet
+  if (newcomersRows.length > 0) {
+    const lastRow = newcomersSheet.getLastRow();
+    newcomersSheet.getRange(lastRow + 1, 1, newcomersRows.length, newcomersRows[0].length)
+      .setValues(newcomersRows);
+  }
+
+  // Batch write to each cell group sheet
+  for (const tabName in cellGroupRows) {
+    const rows = cellGroupRows[tabName];
+    if (rows.length > 0) {
+      const cellSheet = cellSheetCache[tabName];
+      const lastRow = cellSheet.getLastRow();
+      cellSheet.getRange(lastRow + 1, 1, rows.length, rows[0].length)
+        .setValues(rows);
+    }
+  }
+
+  // Batch mark imported rows as processed (Column Q = true)
+  if (importedRowNumbers.length > 0) {
+    const PROCESSED_COL = 17; // Column Q (1-indexed)
+    // Use getRangeList for batch update of non-contiguous cells
+    const rangeList = importedRowNumbers.map(rowNum => "Q" + rowNum);
+    sourceSheet.getRangeList(rangeList).setValue(true);
+  }
+
+  // Recalculate ages after syncing (on destination spreadsheet)
+  recalculateAllAges(destSpreadsheet);
+
+  Logger.log("Sync completed! Imported " + importedRowNumbers.length + " rows.");
+}
+
+// ===== STANDALONE: RECALCULATE AGES =====
+function recalculateAllAges(spreadsheet) {
+  // If no spreadsheet passed, use the destination sheet
+  if (!spreadsheet) {
+    const DEST_SHEET_ID = "1SpjMNcXSfU1F-44KeKMAAN6ctvjEGhN16vmi8LU-tTU";
+    spreadsheet = SpreadsheetApp.openById(DEST_SHEET_ID);
+  }
+
+  const sheets = spreadsheet.getSheets();
+  const SKIP_TABS = ["Newcomers Form (Automated)"];
+
+  const AGE_COL = 3;       // Column C
+  const BIRTHDAY_COL = 12; // Column L
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const sheetName = sheet.getName();
+
+    if (SKIP_TABS.includes(sheetName)) continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) continue;
+
+    const birthdayRange = sheet.getRange(2, BIRTHDAY_COL, lastRow - 1, 1);
+    const birthdays = birthdayRange.getValues();
+
+    const ages = birthdays.map(function(row) {
+      const birthday = row[0];
+      if (!birthday) return [""];
+      return [calculateAge(birthday)];
+    });
+
+    const ageRange = sheet.getRange(2, AGE_COL, lastRow - 1, 1);
+    ageRange.setValues(ages);
+  }
+
+  Logger.log("Age recalculation completed!");
+}
+
+// ===== ATTENDANCE: NORMALIZE COLUMN B (DOUBLE SPACES) =====
+// Collapses runs of two or more consecutive spaces in Attendance column B to a single space.
+// Batch getValues/setValues. Run from the spreadsheet that contains the Attendance tab (bound script / active file).
+function normalizeAttendanceColumnBDoubleSpaces() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName("Attendance");
+  if (!sheet) {
+    Logger.log("normalizeAttendanceColumnBDoubleSpaces: Attendance sheet not found.");
+    try {
+      SpreadsheetApp.getUi().alert("Attendance sheet not found.");
+    } catch (e) {}
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  const COL_B = 2;
+  if (lastRow < 2) {
+    try {
+      SpreadsheetApp.getUi().alert("No data rows in Attendance.");
+    } catch (e) {}
+    return;
+  }
+
+  const numRows = lastRow - 1;
+  const range = sheet.getRange(2, COL_B, numRows, 1);
+  const values = range.getValues();
+  const normalized = values.map(function (row) {
+    const v = row[0];
+    if (typeof v !== "string" || v.indexOf("  ") === -1) {
+      return row;
+    }
+    return [v.replace(/ {2,}/g, " ")];
+  });
+
+  let changed = false;
+  for (let r = 0; r < values.length; r++) {
+    if (values[r][0] !== normalized[r][0]) {
+      changed = true;
+      break;
+    }
+  }
+
+  if (changed) {
+    range.setValues(normalized);
+    Logger.log("normalizeAttendanceColumnBDoubleSpaces: updated column B.");
+    try {
+      SpreadsheetApp.getUi().alert("Attendance column B: double spaces were replaced with a single space.");
+    } catch (e) {}
+  } else {
+    Logger.log("normalizeAttendanceColumnBDoubleSpaces: no double spaces in column B.");
+    try {
+      SpreadsheetApp.getUi().alert("No consecutive double spaces found in Attendance column B.");
+    } catch (e) {}
+  }
+}
+
+// ===== HELPER FUNCTIONS =====
+function calculateAge(birthday) {
+  if (!birthday) return "";
+
+  const birthDate = new Date(birthday);
+  if (isNaN(birthDate.getTime())) return "";
+
+  const today = new Date();
+  return today.getFullYear() - birthDate.getFullYear();
+}
+
+function formatDate(date) {
+  if (!date) return "";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return date;
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "dd/MM/yyyy");
+}
+
+function getExistingNames(sheet) {
+  const names = new Set();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0]) names.add(data[i][0].toString().toLowerCase());
+  }
+  return names;
+}
