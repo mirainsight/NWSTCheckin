@@ -182,10 +182,10 @@ def _ensure_change_requests_worksheet(spreadsheet):
     try:
         ws = spreadsheet.worksheet("Change Requests")
     except gspread.exceptions.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet("Change Requests", rows=5000, cols=10)
+        ws = spreadsheet.add_worksheet("Change Requests", rows=5000, cols=12)
         ws.append_row(
             ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
-             "Field", "Current Value", "New Value", "Reason", "Notes"],
+             "Field", "Current Value", "New Value", "Reason", "Notes", "Done", "Rejected"],
             value_input_option="USER_ENTERED",
         )
         return ws
@@ -193,7 +193,7 @@ def _ensure_change_requests_worksheet(spreadsheet):
     if not ws.row_values(1):
         ws.append_row(
             ["Date", "Time (MYT)", "Requested By", "Name", "Cell",
-             "Field", "Current Value", "New Value", "Reason", "Notes"],
+             "Field", "Current Value", "New Value", "Reason", "Notes", "Done", "Rejected"],
             value_input_option="USER_ENTERED",
         )
     return ws
@@ -241,6 +241,21 @@ def sync_change_requests() -> None:
             for entry in requests
         ]
         ws.insert_rows(rows, row=2, value_input_option="USER_ENTERED")
+        spreadsheet.batch_update({"requests": [
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "startRowIndex": 1,
+                        "endRowIndex": 1 + len(rows),
+                        "startColumnIndex": col_idx,
+                        "endColumnIndex": col_idx + 1,
+                    },
+                    "rule": {"condition": {"type": "BOOLEAN"}, "showCustomUi": True},
+                }
+            }
+            for col_idx in [10, 11]  # K=Done, L=Rejected
+        ]})
         mark_change_requests_synced(r, yesterday_str)
     except Exception:
         pass  # retry on next sync

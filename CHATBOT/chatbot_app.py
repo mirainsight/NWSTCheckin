@@ -2057,7 +2057,7 @@ def _render_cr_wizard() -> None:
                             pass
                 if _cr_gc and _cr_sid:
                     _cr_sp = _cr_gc.open_by_key(_cr_sid)
-                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Notes"]
+                    _cr_headers = ["Date", "Time", "Requested By", "Member", "Cell", "Field", "Current Value", "New Value", "Reason", "Notes", "Done", "Rejected"]
                     try:
                         _cr_ws = _cr_sp.worksheet("Change Requests")
                     except _gspread.exceptions.WorksheetNotFound:
@@ -2093,6 +2093,21 @@ def _render_cr_wizard() -> None:
                                 _cr_notes_val,
                             ])
                     _cr_ws.insert_rows(_rows_cr, row=2, value_input_option="USER_ENTERED")
+                    _cr_sp.batch_update({"requests": [
+                        {
+                            "setDataValidation": {
+                                "range": {
+                                    "sheetId": _cr_ws.id,
+                                    "startRowIndex": 1,
+                                    "endRowIndex": 1 + len(_rows_cr),
+                                    "startColumnIndex": col_idx,
+                                    "endColumnIndex": col_idx + 1,
+                                },
+                                "rule": {"condition": {"type": "BOOLEAN"}, "showCustomUi": True},
+                            }
+                        }
+                        for col_idx in [10, 11]  # K=Done?, L=Rejected?
+                    ]})
                     _cr_written = True
                 else:
                     _cr_err = "CHANGE_REQ_SHEET_ID / CHATBOT_SHEET_ID not configured."
