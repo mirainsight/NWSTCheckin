@@ -681,6 +681,8 @@ def _cr_field_col_idx(cols: list, field: str) -> int:
     if f == "role last updated":
         i = _cr_find_all(cols, ["role", "updated"])
         return i if i != -1 else _cr_find_any(cols, ["role last", "last updated"])
+    if f == "new since":
+        return _cr_find_any(cols, ["new since", "new_since"])
     return -1
 
 
@@ -926,6 +928,34 @@ def _cr_reset() -> None:
     st.session_state.pop("cr_val_error", None)
     st.session_state.pop("cr_edit_return", None)
     st.session_state.pop("cr_edit_original", None)
+
+
+_BATCH_ELIGIBLE_PAIRS: list[frozenset] = [
+    frozenset({"Role", "Role Last Updated"}),
+    frozenset({"Status", "New Since"}),
+]
+
+_BATCH_PAIR_PRIMARY: dict[frozenset, str] = {
+    frozenset({"Role", "Role Last Updated"}): "Role",
+    frozenset({"Status", "New Since"}): "Status",
+}
+
+
+def _is_batch_eligible(pending: list) -> bool:
+    if len(pending) == 1:
+        return True
+    if len(pending) == 2:
+        return frozenset(ch["field"] for ch in pending) in _BATCH_ELIGIBLE_PAIRS
+    return False
+
+
+def _batch_primary_field(pending: list) -> str:
+    if len(pending) == 1:
+        return pending[0]["field"]
+    if len(pending) == 2:
+        key = frozenset(ch["field"] for ch in pending)
+        return _BATCH_PAIR_PRIMARY.get(key, pending[0]["field"])
+    return ""
 
 
 def _render_cr_wizard() -> None:
@@ -1683,7 +1713,23 @@ def _render_cr_wizard() -> None:
                                 "current_value": _rlu_cur,
                                 "new_value": _today_str,
                             })
-                    if len(st.session_state.cr_data.get("pending_changes", [])) > 1:
+                    # auto-queue New Since = today when Status is set to a New value
+                    if field == "Status" and str_val.lower().startswith("new"):
+                        _pending_fields = {ch["field"] for ch in st.session_state.cr_data.get("pending_changes", [])}
+                        if "New Since" not in _pending_fields:
+                            _now = datetime.now(MYT)
+                            _today_str = f"{_now.day:02d} {_MONTH_ABBR[_now.month - 1]} {_now.year}"
+                            _member_r = st.session_state.cr_member_row or {}
+                            _mcols_r = list(_member_r.keys())
+                            _ns_fi = _cr_field_col_idx(_mcols_r, "New Since")
+                            _ns_cur = str(_member_r.get(_mcols_r[_ns_fi], "") or "").strip() if _ns_fi != -1 else ""
+                            st.session_state.cr_data["pending_changes"].append({
+                                "field": "New Since",
+                                "current_value": _ns_cur,
+                                "new_value": _today_str,
+                            })
+                    _pending_now = st.session_state.cr_data.get("pending_changes", [])
+                    if not _is_batch_eligible(_pending_now):
                         st.session_state.cr_data["batch_extra_members"] = []
                         st.session_state.cr_data.pop("batch_search_matches", None)
                     if _add_more:
@@ -1842,10 +1888,11 @@ def _render_cr_wizard() -> None:
             height=_iframe_h,
         )
 
-        # ── Batch section (only when exactly one field is being changed) ──────
-        if len(pending) == 1:
-            _batch_field   = pending[0]["field"]
-            _batch_new_val = pending[0]["new_value"]
+        # ── Batch section (single field or eligible pair) ──────────────────────
+        if _is_batch_eligible(pending):
+            _batch_field   = _batch_primary_field(pending)
+            _batch_pch     = next((ch for ch in pending if ch["field"] == _batch_field), pending[0])
+            _batch_new_val = _batch_pch["new_value"]
             _batch_members = data.get("batch_extra_members", [])
             _batch_matches = data.get("batch_search_matches", [])
 
@@ -2072,7 +2119,7 @@ def _render_cr_wizard() -> None:
                     _rows_cr = []
                     # Build ordered target list: primary member first, then batch members
                     _cr_targets = [{"name": data.get("member_name", ""), "cell": data.get("member_cell", ""), "row": None}]
-                    if len(pending) == 1:
+                    if _is_batch_eligible(pending):
                         for _bm in data.get("batch_extra_members", []):
                             _cr_targets.append({"name": _bm.get("Name", ""), "cell": _bm.get("Cell", ""), "row": _bm})
                     for ch in pending:
@@ -2409,14 +2456,18 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
 
         # ── Keyword-based value inference (before LLM) ──────────────────
         _kw_val = ""
-        for _f in _avail:
+        # Field keywords (e.g. "worship") narrow the search before value lookup,
+        # so "potential core worship" hits Worship Role instead of Role.
+        _field_cands_pre = _cr_fuzzy_match_fields(_q, _avail)
+        _kw_search = _field_cands_pre if _field_cands_pre else _avail
+        for _f in _kw_search:
             _kv = _cr_keyword_infer_value(_f, _q)
             if _kv:
                 _kw_val = _kv
                 _cands = [_f]
                 break
         else:
-            _cands = _cr_fuzzy_match_fields(_q, _avail)
+            _cands = _field_cands_pre
             if len(_cands) != 1:
                 _show_thinking_overlay()
                 _llm_cands = _cr_infer_field_llm(_q, _avail)
