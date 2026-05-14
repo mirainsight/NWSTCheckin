@@ -152,11 +152,12 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
             if fi != -1:
                 v = str(member.get(mcols[fi], "") or "").strip()
             val_style = (_status_style(v) if field == "Status" and v else ("color:#ffffff" if v else "color:#333333"))
-            val_text = v if v else "—"
+            _safe_v = v.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>") if v else ""
+            val_text = _safe_v if _safe_v else "—"
             rows += (
                 f'<tr style="border-top:1px solid #141414;">'
                 f'<td style="padding:5px 8px 5px 16px;color:#999999;font-size:0.82rem;width:38%;white-space:nowrap;">{field}</td>'
-                f'<td style="padding:5px 16px 5px 0;{val_style};font-size:0.82rem;">{val_text}</td>'
+                f'<td style="padding:5px 16px 5px 0;{val_style};font-size:0.82rem;word-break:break-word;">{val_text}</td>'
                 f'</tr>'
             )
         top_border = "" if first_group else f"border-top:1px solid rgba({pr},{pg},{pb},0.12);"
@@ -335,8 +336,127 @@ _CR_FIELD_ALIASES: dict[str, str] = {
     "vs": "VS Role", "volunteer": "VS Role",
     "note": "Notes", "notes": "Notes", "remark": "Notes", "remarks": "Notes",
     "sex": "Gender",
-    "archive": "Cell", "transfer": "Cell", "move": "Cell",
-    "duplicate": "Status",
+    "transfer": "Cell", "move": "Cell",
+    "archive": "Status", "duplicate": "Status",
+    # cell short names → Cell field
+    "anchor": "Cell", "aster": "Cell", "crown": "Cell", "fire": "Cell",
+    "fishers": "Cell", "forth": "Cell", "his": "Cell", "home": "Cell",
+    "king": "Cell", "meta": "Cell", "royal": "Cell", "runners": "Cell",
+    "shepherds": "Cell",
+    # role abbreviations → Role field
+    "cgl": "Role", "acgl": "Role", "cgc": "Role", "zl": "Role",
+}
+
+_CR_CELL_ALIASES: dict[str, str] = {
+    "anchor": "Anchor Street",
+    "aster": "Aster Street",
+    "core team": "Narrowstreet Co",
+    "crown": "Crown Street",
+    "fire": "Street Fire",
+    "fishers": "Fishers Street",
+    "forth": "Street Forth",
+    "his": "HIS Street",
+    "home": "Home Street",
+    "king": "King Street",
+    "lights": "Street Lights",
+    "meta": "Meta Street",
+    "royal": "Royal Street",
+    "runners": "Street Runners",
+    "shepherds": "Shepherds Street",
+    "via dolorosa": "Via Dolorosa Street",
+    # full names also mapped for completeness
+    "anchor street": "Anchor Street",
+    "aster street": "Aster Street",
+    "narrowstreet co": "Narrowstreet Co",
+    "crown street": "Crown Street",
+    "street fire": "Street Fire",
+    "fishers street": "Fishers Street",
+    "street forth": "Street Forth",
+    "his street": "HIS Street",
+    "home street": "Home Street",
+    "king street": "King Street",
+    "street lights": "Street Lights",
+    "meta street": "Meta Street",
+    "royal street": "Royal Street",
+    "street runners": "Street Runners",
+    "shepherds street": "Shepherds Street",
+    "via dolorosa street": "Via Dolorosa Street",
+}
+
+_CR_EMERGENCY_RELATIONS: dict[str, str] = {
+    "mom": "Mother", "mother": "Mother", "mum": "Mother",
+    "mummy": "Mother", "mama": "Mother",
+    "pa": "Father", "father": "Father", "dad": "Father",
+    "daddy": "Father", "papa": "Father",
+    "brother": "Brother", "bro": "Brother",
+    "sister": "Sister", "sis": "Sister",
+    "grandma": "Grandmother", "grandmother": "Grandmother", "nana": "Grandmother",
+    "grandpa": "Grandfather", "grandfather": "Grandfather",
+    "aunty": "Aunt", "auntie": "Aunt", "aunt": "Aunt",
+    "uncle": "Uncle",
+    "guardian": "Guardian",
+    "spouse": "Spouse", "husband": "Spouse", "wife": "Spouse",
+}
+
+_CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
+    "Status": {
+        "red": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "changed church": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "archive": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "graduated": "Graduated: Will no longer follow up. Moved to different ministry",
+        "new member": "New Member",
+        "newcomer": "New Member",
+        "new": "New Member",
+    },
+    "Gender": {
+        "male": "Male", "m": "Male", "boy": "Male",
+        "female": "Female", "f": "Female", "girl": "Female",
+    },
+    "Role": {
+        "cgl": "CG Leader", "leader": "CG Leader",
+        "acgl": "Assistant CG Leader",
+        "core": "CG Core", "cgc": "CG Core",
+        "potential": "Potential CG Core", "pcgc": "Potential CG Core",
+        "ministry leader": "Ministry Leader", "ml": "Ministry Leader",
+        "assistant ministry leader": "Assistant Ministry Leader", "aml": "Assistant Ministry Leader",
+        "ministry core": "Ministry Core", "mc": "Ministry Core",
+        "potential ministry": "Potential Ministry Core", "potential ministry core": "Potential Ministry Core",
+        "zone leader": "Zone Leader", "zl": "Zone Leader",
+    },
+    "Hype Role": {
+        "leader": "Ministry Leader", "ml": "Ministry Leader",
+        "aml": "Assistant Ministry Leader",
+        "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
+        "potential": "Potential Ministry Core",
+        "member": "Member", "advisor": "Advisor",
+    },
+    "Frontlines Role": {
+        "leader": "Ministry Leader", "ml": "Ministry Leader",
+        "aml": "Assistant Ministry Leader",
+        "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
+        "potential": "Potential Ministry Core",
+        "member": "Member", "advisor": "Advisor",
+    },
+    "VS Role": {
+        "leader": "Ministry Leader", "ml": "Ministry Leader",
+        "aml": "Assistant Ministry Leader",
+        "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
+        "potential": "Potential Ministry Core",
+        "member": "Member", "advisor": "Advisor",
+    },
+    "Worship Role": {
+        "leader": "Ministry Leader", "ml": "Ministry Leader",
+        "aml": "Assistant Ministry Leader",
+        "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
+        "potential": "Potential Ministry Core",
+        "member": "Member", "advisor": "Advisor",
+    },
+    "Ministry Department": {
+        "band": "Band", "dance": "Dance", "sound": "Sound",
+        "vocals": "Vocals", "lights": "Lights",
+        "lcd": "LCD", "slides": "LCD", "pp": "LCD",
+        "propresenter": "LCD", "resolume": "LCD",
+    },
 }
 
 _CR_FIELD_DESCRIPTIONS: dict[str, str] = {
@@ -618,7 +738,7 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
             "Reply in this exact format: "
             "REASON: <one short sentence in second person, e.g. 'Sounds like you want to update their cell!'> | "
             "FIELDS: <field1>, <field2> (max 3, exact names from the list) | "
-            "VALUE: <the new value the user specified, or 'none' if not mentioned>\n"
+            "VALUE: <if the user mentions a value (e.g. 'Red', 'Graduated', 'Male'), return the FULL matching option from the valid values list — e.g. if user says 'Red' and valid values include 'Red: Will no longer follow up...', return that full string; otherwise return 'none'>\n"
             "If nothing matches, reply: REASON: Hmm, not sure what you mean — try again? | FIELDS: none | VALUE: none"
         )
         resp = client.chat.completions.create(
@@ -648,6 +768,70 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
     except Exception:
         return []
 
+
+
+def _cr_keyword_infer_value(field: str, query: str) -> str:
+    """Return a full value string if the query contains a known keyword for this field."""
+    q = query.strip().lower()
+    kw_map = _CR_VALUE_KEYWORDS.get(field, {})
+    # check multi-word keywords first (longest match wins)
+    for kw in sorted(kw_map, key=len, reverse=True):
+        if re.search(r'\b' + re.escape(kw) + r'\b', q):
+            return kw_map[kw]
+    if field in ("Cell", "Prev Cell"):
+        for alias in sorted(_CR_CELL_ALIASES, key=len, reverse=True):
+            if re.search(r'\b' + re.escape(alias) + r'\b', q):
+                return _CR_CELL_ALIASES[alias]
+    return ""
+
+
+def _cr_detect_emergency_pair(query: str) -> "tuple[str, str] | None":
+    """Return (normalized_relationship, phone_digits) if query contains a relation word + phone number."""
+    q = query.strip().lower()
+    relation = ""
+    for kw in sorted(_CR_EMERGENCY_RELATIONS, key=len, reverse=True):
+        if re.search(r'\b' + re.escape(kw) + r'\b', q):
+            relation = _CR_EMERGENCY_RELATIONS[kw]
+            break
+    if not relation:
+        return None
+    digits = re.sub(r'[^\d+]', '', re.sub(r'\s', '', query))
+    digits = re.sub(r'[^\d]', '', digits)
+    if len(digits) >= 8:
+        return relation, digits
+    return None
+
+
+def _cr_expand_to_option(field: str, partial: str) -> str:
+    """Expand a partial value (e.g. 'Red') to the full dropdown option ('Red: Will no longer...')."""
+    if not partial:
+        return partial
+    # keyword dict check first (works for both dropdown and free-text fields)
+    kw_result = _cr_keyword_infer_value(field, partial)
+    if kw_result:
+        return kw_result
+    if field not in _CR_DROPDOWN_FIELDS:
+        return partial
+    options = _load_key_values_dropdowns().get(field, [])
+    pl = partial.strip().lower()
+    # exact match
+    for o in options:
+        if o.lower() == pl:
+            return o
+    # strip numeric prefix then exact
+    for o in options:
+        if re.sub(r'^\d+\.\s*', '', o).strip().lower() == pl:
+            return o
+    # leading-word match: option starts with partial + ":"
+    for o in options:
+        if o.lower().startswith(pl + ":"):
+            return o
+    # leading-word match without colon separator
+    for o in options:
+        head = o.lower().split(":")[0].strip()
+        if head == pl:
+            return o
+    return partial
 
 
 _CARD_QUIPS = [
@@ -785,8 +969,6 @@ def _render_cr_wizard() -> None:
                     if not raw_name:
                         continue
                     raw_cell = (row[cell_idx] if cell_idx != -1 and cell_idx < len(row) else "") or ""
-                    if str(raw_cell).strip().lower() == "archive":
-                        continue
                     if query in _cr_normalize(raw_name):
                         matches.append({
                             "label": _cr_member_label(str(raw_name), str(raw_cell).strip()),
@@ -1215,6 +1397,18 @@ def _render_cr_wizard() -> None:
                              if re.sub(r'^\d+\.\s*', '', o).strip().lower() == prefill_lower),
                             None,
                         )
+                    if prefill_idx is None:
+                        prefill_idx = next(
+                            (i for i, o in enumerate(options)
+                             if o.lower().startswith(prefill_lower + ":")),
+                            None,
+                        )
+                    if prefill_idx is None:
+                        prefill_idx = next(
+                            (i for i, o in enumerate(options)
+                             if o.lower().split(":")[0].strip() == prefill_lower),
+                            None,
+                        )
                 else:
                     prefill_idx = None
                 default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
@@ -1469,6 +1663,21 @@ def _render_cr_wizard() -> None:
                         "current_value": current,
                         "new_value": str_val,
                     })
+                    # auto-queue Role Last Updated = today when Role is changed
+                    if field == "Role":
+                        _pending_fields = {ch["field"] for ch in st.session_state.cr_data.get("pending_changes", [])}
+                        if "Role Last Updated" not in _pending_fields:
+                            _now = datetime.now(MYT)
+                            _today_str = f"{_now.day:02d} {_MONTH_ABBR[_now.month - 1]} {_now.year}"
+                            _member_r = st.session_state.cr_member_row or {}
+                            _mcols_r = list(_member_r.keys())
+                            _rlu_fi = _cr_field_col_idx(_mcols_r, "Role Last Updated")
+                            _rlu_cur = str(_member_r.get(_mcols_r[_rlu_fi], "") or "").strip() if _rlu_fi != -1 else ""
+                            st.session_state.cr_data["pending_changes"].append({
+                                "field": "Role Last Updated",
+                                "current_value": _rlu_cur,
+                                "new_value": _today_str,
+                            })
                     if _add_more:
                         st.session_state.pop("cr_edit_return", None)
                         st.session_state.pop("cr_edit_original", None)
@@ -1955,20 +2164,57 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         _queued = {ch["field"] for ch in (st.session_state.cr_data or {}).get("pending_changes", [])}
         _avail = [f for f in _CR_FIELDS if f not in _queued]
         _q = _typed.strip()
-        _cands = _cr_fuzzy_match_fields(_q, _avail)
-        if len(_cands) != 1:
-            _show_thinking_overlay()
-            _llm_cands = _cr_infer_field_llm(_q, _avail)
-            if _llm_cands:
-                _cands = _llm_cands
+
+        # ── Emergency pair detection (relation word + phone number) ──────
+        _emerg_pair = _cr_detect_emergency_pair(_q)
+        if _emerg_pair and "Emergency Contact" in _avail:
+            _emerg_rel, _emerg_phone = _emerg_pair
+            _mcols = list(_m.keys())
+            _ni = _cr_find_any(_mcols, ["name", "member"])
+            _ci = _cr_find_any(_mcols, ["cell", "group"])
+            _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
+            _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
+            # queue Emergency Relationship immediately if not already queued
+            if "Emergency Relationship" not in _queued:
+                _er_fi = _cr_field_col_idx(_mcols, "Emergency Relationship")
+                _er_cur = str(_m.get(_mcols[_er_fi], "") or "").strip() if _er_fi != -1 else ""
+                st.session_state.cr_data.setdefault("pending_changes", []).append({
+                    "field": "Emergency Relationship",
+                    "current_value": _er_cur,
+                    "new_value": _emerg_rel,
+                })
+            st.session_state.cr_data["prefill_value"] = _emerg_phone
+            st.session_state["cr_field_candidates"] = ["Emergency Contact"]
+            st.session_state["cr_field_query"] = _q
+            _cr_advance_to_field("Emergency Contact", _m, _mcols, _name_val, _cell_val)
+
+        # ── Keyword-based value inference (before LLM) ──────────────────
+        _kw_val = ""
+        for _f in _avail:
+            _kv = _cr_keyword_infer_value(_f, _q)
+            if _kv:
+                _kw_val = _kv
+                _cands = [_f]
+                break
+        else:
+            _cands = _cr_fuzzy_match_fields(_q, _avail)
+            if len(_cands) != 1:
+                _show_thinking_overlay()
+                _llm_cands = _cr_infer_field_llm(_q, _avail)
+                if _llm_cands:
+                    _cands = _llm_cands
+
         if len(_cands) == 1:
             _mcols = list(_m.keys())
             _ni = _cr_find_any(_mcols, ["name", "member"])
             _ci = _cr_find_any(_mcols, ["cell", "group"])
             _name_val = str(_m.get(_mcols[_ni], "") or "").strip() if _ni != -1 else ""
             _cell_val = str(_m.get(_mcols[_ci], "") or "").strip() if _ci != -1 else ""
-            _inferred_val = st.session_state.pop("cr_inferred_value", "")
+            _inferred_val = _kw_val or st.session_state.pop("cr_inferred_value", "")
+            if not _kw_val:
+                st.session_state.pop("cr_inferred_value", None)
             if _inferred_val:
+                _inferred_val = _cr_expand_to_option(_cands[0], _inferred_val)
                 st.session_state.cr_data["prefill_value"] = _inferred_val
             _cr_advance_to_field(_cands[0], _m, _mcols, _name_val, _cell_val)
         st.session_state["cr_field_candidates"] = _cands
