@@ -1726,6 +1726,20 @@ def _render_cr_wizard() -> None:
                                 "current_value": _rlu_cur,
                                 "new_value": _today_str,
                             })
+                    # auto-queue Worship Role = Member when Ministry Department is set and Worship Role is empty
+                    if field == "Ministry Department":
+                        _pending_fields = {ch["field"] for ch in st.session_state.cr_data.get("pending_changes", [])}
+                        if "Worship Role" not in _pending_fields:
+                            _member_r = st.session_state.cr_member_row or {}
+                            _mcols_r = list(_member_r.keys())
+                            _wr_fi = _cr_field_col_idx(_mcols_r, "Worship Role")
+                            _wr_cur = str(_member_r.get(_mcols_r[_wr_fi], "") or "").strip() if _wr_fi != -1 else ""
+                            if not _wr_cur:
+                                st.session_state.cr_data["pending_changes"].append({
+                                    "field": "Worship Role",
+                                    "current_value": _wr_cur,
+                                    "new_value": "Member",
+                                })
                     # auto-queue New Since = today when Status is set to a New value
                     if field == "Status" and str_val.lower().startswith("new"):
                         _pending_fields = {ch["field"] for ch in st.session_state.cr_data.get("pending_changes", [])}
