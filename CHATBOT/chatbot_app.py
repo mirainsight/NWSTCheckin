@@ -402,6 +402,14 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
     "Status": {
         "red": "Red: Will no longer follow up. Don't wanna come church anymore",
         "changed church": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "another church": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "kingdom city": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "just visiting": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "come to events only": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "events only": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "camp only": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "non christian": "Red: Will no longer follow up. Don't wanna come church anymore",
+        "not christian": "Red: Will no longer follow up. Don't wanna come church anymore",
         "archive": "Red: Will no longer follow up. Don't wanna come church anymore",
         "graduated": "Graduated: Will no longer follow up. Moved to different ministry",
         "moved to cc": "Graduated: Will no longer follow up. Moved to different ministry",
@@ -467,7 +475,7 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
 _CR_FIELD_DESCRIPTIONS: dict[str, str] = {
     "Name":                   "member or individual or youth's full name (could be someone filing on behalf of another, typically a mentor like leader or pastor or zone leader)",
     "Cell":                   "cell group/cell that the individual currently belongs to",
-    "Status":                 "attendance health — tracks how regularly a member attends (Regular 75% or more attendance for past 12 services, Irregular less than 75% attendance but attends for past 12 services, New Member, Follow Up 0% for past 12 services, Red as no longer comes to church, Graduated as moved on to another ministry — also infer Graduated when user says: moved to CC, moved to YA, campus community, young adults, campus; these are NOT cell names)",
+    "Status":                 "attendance health — tracks how regularly a member attends (Regular 75% or more attendance for past 12 services, Irregular less than 75% attendance but attends for past 12 services, New Member, Follow Up 0% for past 12 services, Red as no longer comes to church, Graduated as moved on to another ministry — also infer Graduated when user says: moved to CC, moved to YA, campus community, young adults, campus; these are NOT cell names — also infer Red when user says: kingdom city, another church, changed church, just visiting, come to events only, events only, camp only, non christian, not christian)",
     "Prev Cell":              "previous cell group before a transfer",
     "Role":                   "leadership or ministry serving role, includes: 1. CG Leader, 2. Assistant CG Leader, 3. CG Core, 4. Potential CG Core, 5. Ministry Leader, 6. Assistant Ministry Leader, 7. Ministry Core, 8. Potential Ministry Core, 9. Zone Leader",
     "Role Last Updated":      "date the role was last changed",
