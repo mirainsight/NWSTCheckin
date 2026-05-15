@@ -466,9 +466,16 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
     },
     "Ministry Department": {
         "band": "Band", "dance": "Dance", "sound": "Sound",
-        "vocals": "Vocals", "lights": "Lights",
+        "vocals": "Vocals", "vocalist": "Vocals", "singer": "Vocals",
+        "lights": "Lights",
         "lcd": "LCD", "slides": "LCD", "pp": "LCD",
         "propresenter": "LCD", "resolume": "LCD",
+        "drums": "Band", "drummer": "Band",
+        "bass": "Band", "bassist": "Band",
+        "acoustic guitar": "Band", "electric guitar": "Band",
+        "guitar": "Band", "guitarist": "Band",
+        "acoustic": "Band", "electric": "Band",
+        "piano": "Band", "keys": "Band", "keyboard": "Band", "pads": "Band",
     },
 }
 
@@ -483,7 +490,7 @@ _CR_FIELD_DESCRIPTIONS: dict[str, str] = {
     "Frontlines Role":        "role within Frontlines ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
     "VS Role":                "role within VS (visual storyteller; media team) ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
     "Worship Role":           "role within Worship ministry team can include: 1. Ministry Leader, 2. Assistant Ministry Leader, 3. Ministry Core, 4. Potential Ministry Core, 5. Member, 6. Advisor",
-    "Ministry Department":    "ministry or department the member serves in: mainly related to worship such as Band, LCD, Dance, Sound, Vocals, Lights",
+    "Ministry Department":    "ministry or department the member serves in: Band, LCD, Dance, Sound, Vocals, Lights — infer Band for: drummer/drums, bassist/bass, guitarist/guitar/electric/acoustic/electric guitar/acoustic guitar, pianist/piano/keys/keyboard/pads; infer Vocals for: singer/vocalist",
     "Gender":                 "Male or Female",
     "Birthday":               "date of birth",
     "School / Work":          "school name or current workplace",
