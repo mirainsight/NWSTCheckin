@@ -946,11 +946,13 @@ def _cr_reset() -> None:
 _BATCH_ELIGIBLE_PAIRS: list[frozenset] = [
     frozenset({"Role", "Role Last Updated"}),
     frozenset({"Status", "New Since"}),
+    frozenset({"Ministry Department", "Worship Role"}),
 ]
 
 _BATCH_PAIR_PRIMARY: dict[frozenset, str] = {
     frozenset({"Role", "Role Last Updated"}): "Role",
     frozenset({"Status", "New Since"}): "Status",
+    frozenset({"Ministry Department", "Worship Role"}): "Ministry Department",
 }
 
 
