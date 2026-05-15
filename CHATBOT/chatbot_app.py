@@ -1363,7 +1363,7 @@ def _render_cr_wizard() -> None:
         else:
             with st.form("cr_show_info_done"):
                 c1, c2 = st.columns([3, 1])
-                _review = c1.form_submit_button("Submit", use_container_width=True)
+                _review = c1.form_submit_button("Next →", use_container_width=True)
                 _cancel = c2.form_submit_button("Cancel", use_container_width=True)
             if _cancel:
                 _cr_reset()
