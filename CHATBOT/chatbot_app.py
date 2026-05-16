@@ -232,31 +232,18 @@ def _get_openai_key() -> str:
     return key
 
 
-def _get_login_config() -> tuple[str, list[str]]:
-    """Return (password, allowed_emails) from Streamlit secrets or env."""
-    password = ""
+def _get_allowed_emails() -> list[str]:
+    """Return allowed_emails from Streamlit secrets or env."""
     raw_emails: object = ""
     try:
-        password = (st.secrets.get("CHATBOT_PASSWORD") or "").strip()
         raw_emails = st.secrets.get("CHATBOT_ALLOWED_EMAILS") or ""
     except Exception:
         pass
-    if not password:
-        password = os.getenv("CHATBOT_PASSWORD", "").strip()
     if not raw_emails:
         raw_emails = os.getenv("CHATBOT_ALLOWED_EMAILS", "")
     if isinstance(raw_emails, (list, tuple)):
-        allowed = [e.strip().lower() for e in raw_emails if str(e).strip()]
-    else:
-        allowed = [e.strip().lower() for e in str(raw_emails).split(",") if e.strip()]
-    return password, allowed
-
-
-def _check_login(email: str, password: str) -> bool:
-    correct_pw, allowed = _get_login_config()
-    if not correct_pw or not allowed:
-        return False
-    return email.strip().lower() in allowed and password == correct_pw
+        return [e.strip().lower() for e in raw_emails if str(e).strip()]
+    return [e.strip().lower() for e in str(raw_emails).split(",") if e.strip()]
 
 
 def _lookup_member_by_email(email: str) -> dict | None:
@@ -2338,7 +2325,7 @@ st.markdown(
 )
 
 st.title("NWST Assistant")
-if not st.session_state.get("authenticated", False):
+if not st.user.is_logged_in:
     st.caption("Ask about cell health, check-in, members, or newcomers")
 
 # ── identity + login gate ──────────────────────────────────────────────────────
@@ -2370,20 +2357,22 @@ if "cr_field_candidates" not in st.session_state:
 if "cr_field_query" not in st.session_state:
     st.session_state.cr_field_query = ""
 
-# Login gate — show sign-in form and halt if not authenticated
-if not st.session_state.authenticated:
-    with st.form("login_form"):
-        _email_input = st.text_input("Email address", placeholder="your@email.com")
-        _pw_input = st.text_input("Password", type="password")
-        _sign_in = st.form_submit_button("Sign in", use_container_width=True)
-    if _sign_in:
-        if _check_login(_email_input, _pw_input):
-            st.session_state.authenticated = True
-            st.session_state.login_email = _email_input.strip().lower()
-            st.rerun()
-        else:
-            st.error("Incorrect email or password.")
+# Login gate — redirect to Auth0 if not authenticated
+if not st.user.is_logged_in:
+    st.button("Sign in", on_click=st.login, args=("auth0",), use_container_width=True)
     st.stop()
+
+# Email allowlist check — reject accounts not in CHATBOT_ALLOWED_EMAILS
+_authed_email = (st.user.email or "").strip().lower()
+_allowed_emails = _get_allowed_emails()
+if _allowed_emails and _authed_email not in _allowed_emails:
+    st.error(f"**{_authed_email}** is not authorised to access this app. Contact your administrator.")
+    st.button("Sign out", on_click=st.logout)
+    st.stop()
+
+# Sync OAuth identity into session state (keeps rest of app unchanged)
+st.session_state.authenticated = True
+st.session_state.login_email = _authed_email
 
 # Auto-populate from login email (runs once per session)
 if not st.session_state.user_profile_loaded:
@@ -2398,10 +2387,12 @@ if not st.session_state.user_profile_loaded:
 
 # Identity display
 if st.session_state.user_name and st.session_state.user_cell:
-    st.caption(
+    _id_cap_col, _id_out_col = st.columns([9, 1])
+    _id_cap_col.caption(
         f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
         + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
     )
+    _id_out_col.button("Sign out", on_click=st.logout, use_container_width=True)
 else:
     _id_col1, _id_col2, _id_col3 = st.columns(3)
     st.session_state.user_name = _id_col1.text_input(
