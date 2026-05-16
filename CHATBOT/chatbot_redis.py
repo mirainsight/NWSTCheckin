@@ -10,6 +10,11 @@ CHATBOT_LOG_KEY_PREFIX = "chatbot:logs:"
 CHATBOT_LAST_SYNCED_KEY = "chatbot:last_synced_date"
 CHATBOT_LOG_TTL = 30 * 86400  # 30 days
 
+LLM_INFERENCE_CTR_PREFIX = "llm_infer:ctr:"
+LLM_INFERENCE_WRITTEN_SET = "llm_infer:written"
+LLM_INFERENCE_THRESHOLD = 3
+LLM_INFERENCE_TTL = 90 * 86400  # 90 days
+
 
 def get_redis_client():
     try:
@@ -62,7 +67,8 @@ def get_chatbot_redis_client():
 
 
 def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: int,
-                    email: str = "", cell: str = "") -> None:
+                    email: str = "", cell: str = "",
+                    inferred_by: str = "", inferred_value: str = "") -> None:
     now = datetime.now(MYT)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M:%S")
@@ -74,6 +80,8 @@ def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: 
         "answer": answer,
         "timestamp": time_str,
         "tokens_used": tokens_used,
+        "inferred_by": inferred_by,
+        "inferred_value": inferred_value,
     })
     key = f"{CHATBOT_LOG_KEY_PREFIX}{date_str}"
     r.rpush(key, payload)
@@ -168,3 +176,22 @@ def get_unsynced_change_requests(r, today_myt_str: str) -> list[dict]:
 
 def mark_change_requests_synced(r, date_str: str) -> None:
     r.set(CHANGE_REQ_LAST_SYNCED_KEY, date_str)
+
+
+# ── LLM inference auto-flag ────────────────────────────────────────────────────
+
+def increment_llm_inference(r, field: str, phrase: str, value: str) -> int:
+    """Increment LLM inference counter for a phrase+field. Returns new count."""
+    key = f"{LLM_INFERENCE_CTR_PREFIX}{field}:{phrase.lower().strip()}"
+    count = r.incr(key)
+    r.expire(key, LLM_INFERENCE_TTL)
+    return int(count)
+
+
+def is_suggestion_written(r, field: str, phrase: str) -> bool:
+    """True if this phrase+field has already been written to Suggested Keywords sheet."""
+    return bool(r.sismember(LLM_INFERENCE_WRITTEN_SET, f"{field}:{phrase.lower().strip()}"))
+
+
+def mark_suggestion_written(r, field: str, phrase: str) -> None:
+    r.sadd(LLM_INFERENCE_WRITTEN_SET, f"{field}:{phrase.lower().strip()}")

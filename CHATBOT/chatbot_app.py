@@ -28,7 +28,10 @@ import re
 
 import streamlit as st
 import streamlit.components.v1 as _st_components
-from chatbot_redis import get_redis_client, get_chatbot_redis_client, log_qa_to_redis
+from chatbot_redis import (
+    get_redis_client, get_chatbot_redis_client, log_qa_to_redis,
+    increment_llm_inference, is_suggestion_written, LLM_INFERENCE_THRESHOLD,
+)
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
 from nwst_shared.nwst_accent_config import get_accent_override_by_date, resolve_latest_cached_theme_row
@@ -543,6 +546,32 @@ def _get_field_data_context() -> dict[str, dict]:
     return {r["name"]: {"desc": r["desc"], "chars": r["chars"]} for r in rows if r["name"]}
 
 
+@st.cache_data(ttl=3600)
+def _load_approved_keywords() -> dict[str, dict[str, str]]:
+    """Load Approved rows from Suggested Keywords sheet. Cached for 1 hour."""
+    from chatbot_sync import _gsheet_client, _get_bot_sheet_id
+    gc = _gsheet_client()
+    sid = _get_bot_sheet_id()
+    if not gc or not sid:
+        return {}
+    try:
+        ws = gc.open_by_key(sid).worksheet("Suggested Keywords")
+        rows = ws.get_all_records()
+        result: dict[str, dict[str, str]] = {}
+        for row in rows:
+            approved = str(row.get("Approved", "")).upper() in ("TRUE", "YES", "1")
+            rejected = str(row.get("Rejected", "")).upper() in ("TRUE", "YES", "1")
+            if approved and not rejected:
+                field  = str(row.get("Field", "")).strip()
+                phrase = str(row.get("Phrase", "")).strip().lower()
+                value  = str(row.get("Value", "")).strip()
+                if field and phrase and value:
+                    result.setdefault(field, {})[phrase] = value
+        return result
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=86400)
 def _load_key_values_dropdowns() -> dict:
     from chatbot_sync import _gsheet_client
@@ -795,7 +824,9 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
 def _cr_keyword_infer_value(field: str, query: str) -> str:
     """Return a full value string if the query contains a known keyword for this field."""
     q = query.strip().lower()
-    kw_map = _CR_VALUE_KEYWORDS.get(field, {})
+    # merge approved keywords (sheet) with hardcoded map; hardcoded takes precedence
+    approved = _load_approved_keywords().get(field, {})
+    kw_map = {**approved, **_CR_VALUE_KEYWORDS.get(field, {})}
     # check multi-word keywords first (longest match wins)
     for kw in sorted(kw_map, key=len, reverse=True):
         if re.search(r'\b' + re.escape(kw) + r'\b', q):
@@ -2522,6 +2553,7 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
 
         # ── Keyword-based value inference (before LLM) ──────────────────
         _kw_val = ""
+        _inferred_by = ""
         # Field keywords (e.g. "worship") narrow the search before value lookup,
         # so "potential core worship" hits Worship Role instead of Role.
         _field_cands_pre = _cr_fuzzy_match_fields(_q, _avail)
@@ -2531,6 +2563,7 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
             if _kv:
                 _kw_val = _kv
                 _cands = [_f]
+                _inferred_by = "keyword"
                 break
         else:
             _cands = _field_cands_pre
@@ -2539,6 +2572,9 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
                 _llm_cands = _cr_infer_field_llm(_q, _avail)
                 if _llm_cands:
                     _cands = _llm_cands
+                    _inferred_by = "llm"
+
+        _llm_raw_value = st.session_state.get("cr_inferred_value", "") if _inferred_by == "llm" else ""
 
         if len(_cands) == 1:
             _mcols = list(_m.keys())
@@ -2558,6 +2594,16 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         _resolved = _cands[0] if len(_cands) == 1 else (", ".join(_cands) if _cands else "no match")
         _rc_log = get_chatbot_redis_client()
         if _rc_log:
+            # auto-flag: count LLM inferences and suggest keyword when threshold hit
+            if _inferred_by == "llm" and len(_cands) == 1 and _llm_raw_value:
+                _llm_field = _cands[0]
+                _llm_count = increment_llm_inference(_rc_log, _llm_field, _q, _llm_raw_value)
+                if _llm_count >= LLM_INFERENCE_THRESHOLD and not is_suggestion_written(_rc_log, _llm_field, _q):
+                    try:
+                        from chatbot_sync import write_suggested_keyword
+                        write_suggested_keyword(_rc_log, _llm_field, _q, _llm_raw_value, _llm_count)
+                    except Exception:
+                        pass
             log_qa_to_redis(
                 _rc_log,
                 st.session_state.user_name or "Anonymous",
@@ -2566,5 +2612,7 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
                 0,
                 email=st.session_state.user_email or "",
                 cell=st.session_state.user_cell or "",
+                inferred_by=_inferred_by,
+                inferred_value=_llm_raw_value if _inferred_by == "llm" else _kw_val,
             )
         st.rerun()

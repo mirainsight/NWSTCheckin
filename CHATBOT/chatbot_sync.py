@@ -22,6 +22,8 @@ from chatbot_redis import (
     mark_synced,
     get_unsynced_change_requests,
     mark_change_requests_synced,
+    is_suggestion_written,
+    mark_suggestion_written,
 )
 
 
@@ -113,21 +115,16 @@ def _gsheet_client():
 def _ensure_chatbot_logs_worksheet(spreadsheet):
     import gspread
 
+    headers = ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used", "Inferred By", "Inferred Value"]
     try:
         ws = spreadsheet.worksheet("Chatbot Logs")
     except gspread.exceptions.WorksheetNotFound:
         ws = spreadsheet.add_worksheet("Chatbot Logs", rows=5000, cols=10)
-        ws.append_row(
-            ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used"],
-            value_input_option="USER_ENTERED",
-        )
+        ws.append_row(headers, value_input_option="USER_ENTERED")
         return ws
 
     if not ws.row_values(1):
-        ws.append_row(
-            ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used"],
-            value_input_option="USER_ENTERED",
-        )
+        ws.append_row(headers, value_input_option="USER_ENTERED")
     return ws
 
 
@@ -167,6 +164,8 @@ def sync_chatbot_logs() -> None:
                 entry.get("question", ""),
                 entry.get("answer", ""),
                 entry.get("tokens_used", ""),
+                entry.get("inferred_by", ""),
+                entry.get("inferred_value", ""),
             ]
             for entry in logs
         ]
@@ -197,6 +196,57 @@ def _ensure_change_requests_worksheet(spreadsheet):
             value_input_option="USER_ENTERED",
         )
     return ws
+
+
+def _ensure_suggested_keywords_worksheet(spreadsheet):
+    import gspread
+
+    headers = ["Date Added", "Phrase", "Field", "Value", "Count", "Approved", "Rejected"]
+    try:
+        ws = spreadsheet.worksheet("Suggested Keywords")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet("Suggested Keywords", rows=1000, cols=7)
+        ws.append_row(headers, value_input_option="USER_ENTERED")
+    if not ws.row_values(1):
+        ws.append_row(headers, value_input_option="USER_ENTERED")
+    return ws
+
+
+def write_suggested_keyword(r, field: str, phrase: str, value: str, count: int) -> None:
+    """Write a suggested keyword row to the sheet and mark it written in Redis."""
+    if is_suggestion_written(r, field, phrase):
+        return
+    gc = _gsheet_client()
+    sid = _get_bot_sheet_id()
+    if not gc or not sid:
+        return
+    try:
+        spreadsheet = gc.open_by_key(sid)
+        ws = _ensure_suggested_keywords_worksheet(spreadsheet)
+        now = datetime.now(MYT).strftime("%Y-%m-%d")
+        row_num = len(ws.get_all_values()) + 1
+        ws.append_row(
+            [now, phrase, field, value, count, False, False],
+            value_input_option="USER_ENTERED",
+        )
+        spreadsheet.batch_update({"requests": [
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "startRowIndex": row_num - 1,
+                        "endRowIndex": row_num,
+                        "startColumnIndex": col_idx,
+                        "endColumnIndex": col_idx + 1,
+                    },
+                    "rule": {"condition": {"type": "BOOLEAN"}, "showCustomUi": True},
+                }
+            }
+            for col_idx in [5, 6]  # F=Approved, G=Rejected
+        ]})
+        mark_suggestion_written(r, field, phrase)
+    except Exception:
+        pass
 
 
 def sync_change_requests() -> None:
