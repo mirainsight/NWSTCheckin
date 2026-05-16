@@ -828,14 +828,15 @@ def _cr_expand_to_option(field: str, partial: str) -> str:
     """Expand a partial value (e.g. 'Red') to the full dropdown option ('Red: Will no longer...')."""
     if not partial:
         return partial
-    # keyword dict check first (works for both dropdown and free-text fields)
+    # keyword dict check first; for non-dropdown fields return immediately,
+    # for dropdown fields let the result feed into option matching below
     kw_result = _cr_keyword_infer_value(field, partial)
-    if kw_result:
+    if kw_result and field not in _CR_DROPDOWN_FIELDS:
         return kw_result
     if field not in _CR_DROPDOWN_FIELDS:
         return partial
     options = _load_key_values_dropdowns().get(field, [])
-    pl = partial.strip().lower()
+    pl = (kw_result or partial).strip().lower()
     # exact match
     for o in options:
         if o.lower() == pl:
@@ -853,7 +854,7 @@ def _cr_expand_to_option(field: str, partial: str) -> str:
         head = o.lower().split(":")[0].strip()
         if head == pl:
             return o
-    return partial
+    return kw_result or partial
 
 
 _CARD_QUIPS = [
