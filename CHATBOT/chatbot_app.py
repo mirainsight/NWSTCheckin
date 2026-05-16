@@ -854,6 +854,11 @@ def _cr_expand_to_option(field: str, partial: str) -> str:
         head = o.lower().split(":")[0].strip()
         if head == pl:
             return o
+    # tail match: part after ":" equals partial (e.g. "Worship: Vocals" matched by "Vocals")
+    for o in options:
+        tail = o.lower().split(":")[-1].strip()
+        if tail == pl:
+            return o
     return kw_result or partial
 
 
