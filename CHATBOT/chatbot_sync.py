@@ -115,7 +115,7 @@ def _gsheet_client():
 def _ensure_chatbot_logs_worksheet(spreadsheet):
     import gspread
 
-    headers = ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Tokens Used", "Inferred By", "Inferred Value"]
+    headers = ["Date", "Time (MYT)", "Email", "User Name", "Cell", "Question", "Answer", "Token Share (All-time %)", "Inferred By", "Inferred Value"]
     try:
         ws = spreadsheet.worksheet("Chatbot Logs")
     except gspread.exceptions.WorksheetNotFound:

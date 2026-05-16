@@ -31,6 +31,7 @@ import streamlit.components.v1 as _st_components
 from chatbot_redis import (
     get_redis_client, get_chatbot_redis_client, log_qa_to_redis,
     increment_llm_inference, is_suggestion_written, LLM_INFERENCE_THRESHOLD,
+    add_tokens_and_get_total,
 )
 from chatbot_data import build_data_context
 from nwst_shared.nwst_daily_palette import generate_colors_for_date, theme_from_primary_hex, normalize_primary_hex
@@ -802,6 +803,7 @@ def _cr_infer_field_llm(query: str, available_fields: list[str]) -> list[str]:
             temperature=0,
         )
         raw = resp.choices[0].message.content.strip()
+        st.session_state["_llm_tokens_used"] = resp.usage.total_tokens if resp.usage else 0
         parts = [p.strip() for p in raw.split("|")]
         reason      = parts[0][7:].strip() if parts[0].upper().startswith("REASON:") else ""
         fields_part = parts[1][7:].strip() if len(parts) > 1 and parts[1].upper().strip().startswith("FIELDS:") else ""
@@ -2604,12 +2606,18 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
                         write_suggested_keyword(_rc_log, _llm_field, _q, _llm_raw_value, _llm_count)
                     except Exception:
                         pass
+            _tokens_this_call = st.session_state.pop("_llm_tokens_used", 0) if _inferred_by == "llm" else 0
+            _token_share = ""
+            if _tokens_this_call > 0:
+                _alltime_total = add_tokens_and_get_total(_rc_log, _tokens_this_call)
+                if _alltime_total:
+                    _token_share = f"{_tokens_this_call / _alltime_total * 100:.2f}%"
             log_qa_to_redis(
                 _rc_log,
                 st.session_state.user_name or "Anonymous",
                 _q,
                 f"[field search] → {_resolved}",
-                0,
+                _token_share,
                 email=st.session_state.user_email or "",
                 cell=st.session_state.user_cell or "",
                 inferred_by=_inferred_by,

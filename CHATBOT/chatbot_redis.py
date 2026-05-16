@@ -15,6 +15,8 @@ LLM_INFERENCE_WRITTEN_SET = "llm_infer:written"
 LLM_INFERENCE_THRESHOLD = 3
 LLM_INFERENCE_TTL = 90 * 86400  # 90 days
 
+CHATBOT_TOKEN_TOTAL_KEY = "chatbot:tokens:alltime"
+
 
 def get_redis_client():
     try:
@@ -66,7 +68,15 @@ def get_chatbot_redis_client():
         return None
 
 
-def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used: int,
+def add_tokens_and_get_total(r, tokens: int) -> int:
+    """Increment the all-time token counter and return the new running total."""
+    try:
+        return int(r.incrby(CHATBOT_TOKEN_TOTAL_KEY, tokens) or 0)
+    except Exception:
+        return 0
+
+
+def log_qa_to_redis(r, user_name: str, question: str, answer: str, tokens_used,
                     email: str = "", cell: str = "",
                     inferred_by: str = "", inferred_value: str = "") -> None:
     now = datetime.now(MYT)
