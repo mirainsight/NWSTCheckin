@@ -6130,7 +6130,7 @@ st.markdown(f"""
 }}
 </style>
 <a class="chatbot-fab" href="https://nwst-chatbot.streamlit.app/" target="_blank" rel="noopener noreferrer">
-    <span class="chatbot-dot"></span>💬 AI Chat
+    <span class="chatbot-dot"></span>💬 MAKE CHANGES
 </a>
 """, unsafe_allow_html=True)
 
@@ -6150,10 +6150,10 @@ st.markdown(f"""
     align-items: center;
     gap: 0.5rem;
 ">
-    💬&nbsp;Have a question? Try the
+    💬&nbsp;Need to change something? Try the
     <a href="https://nwst-chatbot.streamlit.app/" target="_blank" rel="noopener noreferrer"
        style="color:{daily_colors['primary']}; text-decoration:underline; font-weight:700;">
-        NWST AI Chatbot&nbsp;↗
+        NWST CHATBOT&nbsp;↗
     </a>
 </div>
 """, unsafe_allow_html=True)
