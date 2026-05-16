@@ -619,10 +619,10 @@ div[data-testid="stSegmentedControl"] button[aria-checked="true"] {{
     sort_order = st.segmented_control(
         "Sort",
         ["A → Z", "Att ↑", "Att ↓"],
-        default="A → Z",
+        default="Att ↑",
         key="ch_member_sort",
         label_visibility="collapsed",
-    ) or "A → Z"
+    ) or "Att ↑"
 
     categories = [
         {"id": "new",       "label": "🔵 New Members",       "color": "#3498db", "pct": new_pct,       "count": new_count,       "wow": wow_new,       "tiles": _member_tiles(new_data,       "#3498db")},
