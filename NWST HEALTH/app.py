@@ -6062,6 +6062,102 @@ _page_title = "Ministry Health" if current_page == "ministry" else "NWST Health"
 _page_icon = "🎵📷👋🎤" if current_page == "ministry" else "🏥"
 st.title(f"{_page_icon} {_page_title}")
 
+# ── Chatbot floating button (top-right, always visible) ──────────────────────
+st.markdown(f"""
+<style>
+@keyframes chatbot-pulse {{
+    0%, 100% {{
+        box-shadow:
+            0 0 0 0 rgba({primary_rgb[0]},{primary_rgb[1]},{primary_rgb[2]},0.55),
+            0 4px 18px rgba({primary_rgb[0]},{primary_rgb[1]},{primary_rgb[2]},0.35);
+    }}
+    55% {{
+        box-shadow:
+            0 0 0 10px rgba({primary_rgb[0]},{primary_rgb[1]},{primary_rgb[2]},0),
+            0 4px 28px rgba({primary_rgb[0]},{primary_rgb[1]},{primary_rgb[2]},0.55);
+    }}
+}}
+@keyframes chatbot-float {{
+    0%, 100% {{ transform: translateY(0px); }}
+    50%       {{ transform: translateY(-5px); }}
+}}
+@keyframes chatbot-dot-blink {{
+    0%, 100% {{ opacity: 1; transform: scale(1); }}
+    50%       {{ opacity: 0.55; transform: scale(1.35); }}
+}}
+.chatbot-fab {{
+    position: fixed;
+    top: 3.8rem;
+    right: 1.4rem;
+    z-index: 9999;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: {daily_colors['background']};
+    color: {daily_colors['primary']};
+    border: 2px solid {daily_colors['primary']};
+    border-radius: 4px;
+    padding: 0.55rem 1rem;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 0.82rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    text-decoration: none;
+    animation:
+        chatbot-pulse 2.4s ease-in-out infinite,
+        chatbot-float 3.2s ease-in-out infinite;
+    transition: background 0.2s ease, color 0.2s ease;
+}}
+.chatbot-fab:hover {{
+    background: {daily_colors['primary']};
+    color: {daily_colors['background']};
+    animation: none;
+    transform: scale(1.06);
+    text-decoration: none;
+}}
+.chatbot-fab .chatbot-dot {{
+    width: 8px;
+    height: 8px;
+    background: {daily_colors['primary']};
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: chatbot-dot-blink 1.4s ease-in-out infinite;
+}}
+.chatbot-fab:hover .chatbot-dot {{
+    background: {daily_colors['background']};
+    animation: none;
+}}
+</style>
+<a class="chatbot-fab" href="https://nwst-chatbot.streamlit.app/" target="_blank" rel="noopener noreferrer">
+    <span class="chatbot-dot"></span>💬 AI Chat
+</a>
+""", unsafe_allow_html=True)
+
+# ── Chatbot banner strip (below title) ───────────────────────────────────────
+st.markdown(f"""
+<div style="
+    border-left: 4px solid {daily_colors['primary']};
+    background: rgba({primary_rgb[0]},{primary_rgb[1]},{primary_rgb[2]},0.07);
+    padding: 0.55rem 1rem;
+    margin: 0.4rem 0 0.8rem 0;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: {daily_colors['primary']};
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+">
+    💬&nbsp;Have a question? Try the
+    <a href="https://nwst-chatbot.streamlit.app/" target="_blank" rel="noopener noreferrer"
+       style="color:{daily_colors['primary']}; text-decoration:underline; font-weight:700;">
+        NWST AI Chatbot&nbsp;↗
+    </a>
+</div>
+""", unsafe_allow_html=True)
+
 # Page navigation — sidebar buttons (styled to match CHECK IN attendance_app)
 with st.sidebar:
     st.markdown(f"""
