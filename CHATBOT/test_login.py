@@ -1,12 +1,6 @@
 """
-Temporary login test page — DO NOT deploy.
-
-Tests Streamlit's built-in Auth0/Google OAuth against the existing
-[auth] config in .streamlit/secrets.toml. Run with:
-
-    streamlit run NWSTCheckin/CHATBOT/test_login.py
-
-This never modifies chatbot_app.py.
+Temporary login test page — DO NOT deploy to production.
+Run via: streamlit run NWSTCheckin/CHATBOT/test_login.py
 """
 
 from __future__ import annotations
@@ -32,9 +26,42 @@ except ImportError:
 
 import streamlit as st
 
-st.set_page_config(page_title="Login Test", page_icon="🔐", layout="centered")
+st.set_page_config(page_title="NWST Assistant", page_icon="💬", layout="centered")
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    .stApp { background-color: #0d0d0d; color: #f0f0f0; }
+    section[data-testid="stSidebar"] { display: none; }
+    .stTextInput > div > div > input {
+        background-color: #1a1a1a;
+        color: #f0f0f0;
+        border: 1px solid #333;
+    }
+    .stTextInput > div > div > input::placeholder { color: #555; }
+    .stTextInput label { color: #aaaaaa !important; font-size: 0.85rem; }
+    .login-divider {
+        display: flex; align-items: center; gap: 12px;
+        margin: 18px 0; color: #444; font-size: 0.85rem;
+    }
+    .login-divider::before, .login-divider::after {
+        content: ""; flex: 1; height: 1px; background: #2a2a2a;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── session state init ────────────────────────────────────────────────────────
+
+for _k, _v in [
+    ("authenticated", False), ("login_email", ""),
+    ("user_name", ""), ("user_email", ""), ("user_cell", ""),
+]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _allowed_emails() -> list[str]:
     try:
@@ -46,83 +73,7 @@ def _allowed_emails() -> list[str]:
     return [e.strip().lower() for e in str(raw).split(",") if e.strip()]
 
 
-def _section(title: str) -> None:
-    st.markdown(f"---\n### {title}")
-
-
-# ── page header ──────────────────────────────────────────────────────────────
-
-st.title("🔐 Login Test Page")
-st.caption("Temporary sandbox — not linked to chatbot_app.py")
-
-# ── SECTION 1: Streamlit built-in Auth0 / Google OAuth ───────────────────────
-
-_section("1 · Streamlit OAuth (Auth0 → Google)")
-
-_auth_available = False
-try:
-    # st.user is available in Streamlit ≥ 1.41 when [auth] is configured
-    _u = st.user  # noqa: F841
-    _auth_available = True
-except AttributeError:
-    pass
-
-if not _auth_available:
-    st.warning(
-        "st.user is not available — upgrade Streamlit: `pip install -U streamlit`  \n"
-        "Requires ≥ 1.41 for built-in OAuth support."
-    )
-else:
-    col_login, col_logout = st.columns(2)
-    with col_login:
-        if st.button("Sign in with Auth0 / Google", use_container_width=True, type="primary"):
-            st.login("auth0")
-    with col_logout:
-        if st.button("Sign out", use_container_width=True):
-            st.logout()
-
-    if st.user.is_logged_in:
-        st.success("✅ Authenticated via OAuth")
-
-        # Raw user object fields
-        _email = getattr(st.user, "email", None) or ""
-        _name  = getattr(st.user, "name",  None) or ""
-        _sub   = getattr(st.user, "sub",   None) or ""
-
-        with st.expander("Raw st.user fields", expanded=True):
-            st.json({
-                "email": _email,
-                "name":  _name,
-                "sub":   _sub,
-                "is_logged_in": st.user.is_logged_in,
-                # dump any extra attributes
-                **{k: getattr(st.user, k) for k in dir(st.user)
-                   if not k.startswith("_") and k not in ("email", "name", "sub", "is_logged_in")},
-            })
-
-        _allowed = _allowed_emails()
-        _permitted = _email.strip().lower() in _allowed if _email else False
-        if _permitted:
-            st.success(f"✅ {_email} is in the allowed-email list — would pass the login gate.")
-        else:
-            st.error(
-                f"❌ {_email or '(no email)'} is NOT in the allowed-email list.  \n"
-                f"Add it to `CHATBOT_ALLOWED_EMAILS` in secrets.toml to grant access."
-            )
-    else:
-        st.info("Not logged in via OAuth — click the button above to try.")
-
-
-# ── SECTION 2: Existing email + password gate (for comparison) ───────────────
-
-_section("2 · Current email + password gate (reference)")
-
-st.caption(
-    "This mirrors the exact logic in `chatbot_app.py::_check_login()`. "
-    "No Redis / member lookup is performed here."
-)
-
-def _check_pw(email: str, password: str) -> bool:
+def _check_login(email: str, password: str) -> bool:
     try:
         correct_pw = (st.secrets.get("CHATBOT_PASSWORD") or "").strip()
     except Exception:
@@ -134,60 +85,87 @@ def _check_pw(email: str, password: str) -> bool:
         return False
     return email.strip().lower() in allowed and password == correct_pw
 
-with st.form("pw_login_form"):
-    _test_email = st.text_input("Email", placeholder="your@email.com")
-    _test_pw    = st.text_input("Password", type="password")
-    _submit     = st.form_submit_button("Test sign-in")
 
-if _submit:
-    if _check_pw(_test_email, _test_pw):
-        st.success(f"✅ Password gate: PASS — {_test_email} would be authenticated.")
-    else:
-        _ok_email  = _test_email.strip().lower() in _allowed_emails()
-        _has_pw    = bool(os.getenv("CHATBOT_PASSWORD") or
-                         (st.secrets.get("CHATBOT_PASSWORD") if True else ""))
-        st.error("❌ Password gate: FAIL")
-        st.write({
-            "email_in_allowlist": _ok_email,
-            "CHATBOT_PASSWORD set": _has_pw,
-        })
-
-
-# ── SECTION 3: Config diagnostics ────────────────────────────────────────────
-
-_section("3 · Config diagnostics")
-
-with st.expander("Secrets / env snapshot (sensitive values redacted)"):
-    _diag: dict = {}
-
-    # Auth0 config
+def _oauth_available() -> bool:
     try:
-        _auth_sec = st.secrets.get("auth") or {}
-        _diag["auth.redirect_uri"]          = _auth_sec.get("redirect_uri", "(not set)")
-        _diag["auth.cookie_secret"]         = "*** (set)" if _auth_sec.get("cookie_secret") else "(not set)"
-        _auth0 = _auth_sec.get("auth0") or {}
-        _diag["auth.auth0.client_id"]       = _auth0.get("client_id", "(not set)")
-        _diag["auth.auth0.client_secret"]   = "*** (set)" if _auth0.get("client_secret") else "(not set)"
-        _diag["auth.auth0.server_metadata"] = _auth0.get("server_metadata_url", "(not set)")
-    except Exception as exc:
-        _diag["auth_secrets_error"] = str(exc)
+        _ = st.user
+        return True
+    except AttributeError:
+        return False
 
-    # Allowed emails
-    _diag["CHATBOT_ALLOWED_EMAILS"] = _allowed_emails() or "(none)"
 
-    # Password
-    _pw_set = bool(
-        (st.secrets.get("CHATBOT_PASSWORD") if True else "") or
-        os.getenv("CHATBOT_PASSWORD", "")
+# ── check if already authenticated via either path ───────────────────────────
+
+_oauth_ok = _oauth_available() and st.user.is_logged_in
+_pw_ok    = st.session_state.authenticated
+
+# ── title ─────────────────────────────────────────────────────────────────────
+
+st.title("NWST Assistant")
+
+# ── logged-in state ───────────────────────────────────────────────────────────
+
+if _oauth_ok or _pw_ok:
+    if _oauth_ok:
+        _email = getattr(st.user, "email", "") or ""
+        _name  = getattr(st.user, "name",  "") or ""
+        _method = "Google"
+    else:
+        _email  = st.session_state.login_email
+        _name   = st.session_state.user_name or _email
+        _method = "email + password"
+
+    _permitted = _email.strip().lower() in _allowed_emails() if _email else False
+
+    st.caption(f"👤 **{_name or _email}**" + (" · " + _email if _name and _name != _email else ""))
+
+    st.success(f"Signed in via {_method}.")
+
+    if not _permitted:
+        st.warning(
+            f"**{_email}** is not in the allowed-email list.  \n"
+            "Add it to `CHATBOT_ALLOWED_EMAILS` in Secrets to grant full access."
+        )
+
+    if st.button("Sign out", use_container_width=False):
+        st.session_state.authenticated = False
+        st.session_state.login_email   = ""
+        st.session_state.user_name     = ""
+        if _oauth_ok:
+            st.logout()
+        else:
+            st.rerun()
+
+    st.stop()
+
+# ── login page ────────────────────────────────────────────────────────────────
+
+st.caption("Sign in to continue")
+st.write("")
+
+# — Google / Auth0 button —
+if _oauth_available():
+    if st.button("Sign in with Google", use_container_width=True, type="primary"):
+        st.login("auth0")
+else:
+    st.warning(
+        "Google sign-in requires Streamlit ≥ 1.41. "
+        "Run `pip install -U streamlit` to enable it."
     )
-    _diag["CHATBOT_PASSWORD"] = "*** (set)" if _pw_set else "(not set)"
 
-    st.json(_diag)
+# — divider —
+st.markdown('<div class="login-divider">or</div>', unsafe_allow_html=True)
 
+# — email + password form —
+with st.form("login_form"):
+    _email_input = st.text_input("Email address", placeholder="your@email.com")
+    _pw_input    = st.text_input("Password", type="password")
+    _sign_in     = st.form_submit_button("Sign in", use_container_width=True)
 
-# ── SECTION 4: Session state dump ────────────────────────────────────────────
-
-_section("4 · Session state")
-
-with st.expander("Full st.session_state"):
-    st.json({k: str(v) for k, v in st.session_state.items()})
+if _sign_in:
+    if _check_login(_email_input, _pw_input):
+        st.session_state.authenticated = True
+        st.session_state.login_email   = _email_input.strip().lower()
+        st.rerun()
+    else:
+        st.error("Incorrect email or password.")
