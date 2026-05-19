@@ -42,15 +42,15 @@ st.markdown(
     }
     .stTextInput > div > div > input::placeholder { color: #555; }
     .stTextInput label { color: #aaaaaa !important; font-size: 0.85rem; }
-    .stButton > button {
-        background-color: #1a1a1a;
-        color: #f0f0f0;
-        border: 1px solid #333;
+    button[kind="secondary"], .stButton > button {
+        background-color: #1a1a1a !important;
+        color: #f0f0f0 !important;
+        border: 1px solid #444 !important;
     }
-    .stButton > button:hover {
-        background-color: #2a2a2a;
-        border-color: #555;
-        color: #ffffff;
+    button[kind="secondary"]:hover, .stButton > button:hover {
+        background-color: #2a2a2a !important;
+        border-color: #666 !important;
+        color: #ffffff !important;
     }
     </style>
     """,
@@ -229,14 +229,20 @@ if st.session_state.authenticated:
             "Add it to `CHATBOT_ALLOWED_EMAILS` in Secrets to grant access."
         )
 
+    # show persistent feedback from previous button click
+    if st.session_state.get("_pw_reset_ok") is True:
+        st.info(f"Reset email sent to **{_email}** — check your inbox.")
+        del st.session_state["_pw_reset_ok"]
+    elif st.session_state.get("_pw_reset_ok") is False:
+        st.error("Could not send reset email — try again or contact an admin.")
+        del st.session_state["_pw_reset_ok"]
+
     col_pw, col_out = st.columns(2)
 
     if _method == "email + password":
         if col_pw.button("Change password", use_container_width=True):
-            if _send_password_reset(_email):
-                st.info(f"Password reset email sent to **{_email}**. Check your inbox.")
-            else:
-                st.error("Could not send reset email — try again or contact an admin.")
+            st.session_state["_pw_reset_ok"] = _send_password_reset(_email)
+            st.rerun()
 
     if col_out.button("Sign out", use_container_width=True):
         st.session_state.update({
