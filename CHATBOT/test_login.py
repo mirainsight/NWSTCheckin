@@ -42,13 +42,6 @@ st.markdown(
     }
     .stTextInput > div > div > input::placeholder { color: #555; }
     .stTextInput label { color: #aaaaaa !important; font-size: 0.85rem; }
-    .login-divider {
-        display: flex; align-items: center; gap: 12px;
-        margin: 18px 0; color: #444; font-size: 0.85rem;
-    }
-    .login-divider::before, .login-divider::after {
-        content: ""; flex: 1; height: 1px; background: #2a2a2a;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -108,7 +101,6 @@ def _build_auth_url() -> str:
         "redirect_uri":  _REDIRECT_URI,
         "scope":         "openid email profile",
         "state":         state,
-        "connection":    "google-oauth2",
     })
     return f"https://{_DOMAIN}/authorize?{qs}"
 
@@ -142,7 +134,7 @@ def _get_userinfo(access_token: str) -> dict | None:
     except Exception:
         return None
 
-# ── allowed emails + password check ──────────────────────────────────────────
+# ── allowed emails ────────────────────────────────────────────────────────────
 
 def _allowed_emails() -> list[str]:
     try:
@@ -152,18 +144,6 @@ def _allowed_emails() -> list[str]:
     if isinstance(raw, (list, tuple)):
         return [e.strip().lower() for e in raw if str(e).strip()]
     return [e.strip().lower() for e in str(raw).split(",") if e.strip()]
-
-def _check_login(email: str, password: str) -> bool:
-    try:
-        correct_pw = (st.secrets.get("CHATBOT_PASSWORD") or "").strip()
-    except Exception:
-        correct_pw = ""
-    if not correct_pw:
-        correct_pw = os.getenv("CHATBOT_PASSWORD", "").strip()
-    allowed = _allowed_emails()
-    if not correct_pw or not allowed:
-        return False
-    return email.strip().lower() in allowed and password == correct_pw
 
 # ── session init ──────────────────────────────────────────────────────────────
 
@@ -234,26 +214,8 @@ st.caption("Sign in to continue")
 st.write("")
 
 st.link_button(
-    "Sign in with Google",
+    "Sign in",
     _build_auth_url(),
     use_container_width=True,
     type="primary",
 )
-
-st.markdown('<div class="login-divider">or</div>', unsafe_allow_html=True)
-
-with st.form("login_form"):
-    _email_input = st.text_input("Email address", placeholder="your@email.com")
-    _pw_input    = st.text_input("Password", type="password")
-    _sign_in     = st.form_submit_button("Sign in", use_container_width=True)
-
-if _sign_in:
-    if _check_login(_email_input, _pw_input):
-        st.session_state.update({
-            "authenticated": True,
-            "login_email":   _email_input.strip().lower(),
-            "auth_method":   "email + password",
-        })
-        st.rerun()
-    else:
-        st.error("Incorrect email or password.")
