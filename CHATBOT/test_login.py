@@ -134,6 +134,25 @@ def _get_userinfo(access_token: str) -> dict | None:
     except Exception:
         return None
 
+# ── password reset ───────────────────────────────────────────────────────────
+
+def _send_password_reset(email: str) -> bool:
+    try:
+        body = json.dumps({
+            "client_id":  _CLIENT_ID,
+            "email":      email,
+            "connection": "Username-Password-Authentication",
+        }).encode()
+        req = urllib.request.Request(
+            f"https://{_DOMAIN}/dbconnections/change_password",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
 # ── allowed emails ────────────────────────────────────────────────────────────
 
 def _allowed_emails() -> list[str]:
@@ -169,10 +188,11 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
             if _tokens and "access_token" in _tokens:
                 _info = _get_userinfo(_tokens["access_token"])
                 if _info:
+                    _sub = _info.get("sub", "")
                     st.session_state.authenticated = True
                     st.session_state.login_email   = _info.get("email", "")
                     st.session_state.user_name     = _info.get("name", "")
-                    st.session_state.auth_method   = "Google"
+                    st.session_state.auth_method   = "Google" if _sub.startswith("google-oauth2") else "email + password"
                     st.rerun()
             st.error("Token exchange failed — check Auth0 config.")
 
@@ -199,7 +219,16 @@ if st.session_state.authenticated:
             "Add it to `CHATBOT_ALLOWED_EMAILS` in Secrets to grant access."
         )
 
-    if st.button("Sign out"):
+    col_pw, col_out = st.columns(2)
+
+    if _method == "email + password":
+        if col_pw.button("Change password", use_container_width=True):
+            if _send_password_reset(_email):
+                st.info(f"Password reset email sent to **{_email}**. Check your inbox.")
+            else:
+                st.error("Could not send reset email — try again or contact an admin.")
+
+    if col_out.button("Sign out", use_container_width=True):
         st.session_state.update({
             "authenticated": False,
             "login_email": "", "user_name": "", "auth_method": "",
