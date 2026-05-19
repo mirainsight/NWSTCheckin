@@ -42,6 +42,16 @@ st.markdown(
     }
     .stTextInput > div > div > input::placeholder { color: #555; }
     .stTextInput label { color: #aaaaaa !important; font-size: 0.85rem; }
+    .stButton > button {
+        background-color: #1a1a1a;
+        color: #f0f0f0;
+        border: 1px solid #333;
+    }
+    .stButton > button:hover {
+        background-color: #2a2a2a;
+        border-color: #555;
+        color: #ffffff;
+    }
     </style>
     """,
     unsafe_allow_html=True,
