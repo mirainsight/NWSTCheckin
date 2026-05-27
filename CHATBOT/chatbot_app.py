@@ -2423,6 +2423,7 @@ except (ValueError, IndexError):
 st.markdown(
     f"""
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
     section[data-testid="stSidebar"] {{ display: none; }}
     .stChatMessage {{ background: transparent; }}
     .stChatMessage .stMarkdown p,
@@ -2457,18 +2458,34 @@ st.markdown(
         transform: scale(1.02) !important;
     }}
 
-    /* Primary st.button — filled */
+    /* Primary st.button — gradient CTA (flush_pending style) */
     .stButton > button[kind="primary"],
     div[data-testid="stButton"] button[kind="primary"] {{
-        background-color: {_pc} !important;
+        background: linear-gradient(135deg, {_pc} 0%, {_lc} 100%) !important;
         color: #0d0d0d !important;
-        border: 2px solid {_pc} !important;
+        border: none !important;
+        border-radius: 0px !important;
+        font-family: 'Outfit', 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+        text-transform: uppercase !important;
+        font-size: 1rem !important;
+        min-height: 3.5rem !important;
+        padding: 1rem 2rem !important;
+        box-shadow: 0 4px 20px {_pc}40, 0 0 40px {_pc}20 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        position: relative !important;
+        overflow: hidden !important;
     }}
     .stButton > button[kind="primary"]:hover,
     div[data-testid="stButton"] button[kind="primary"]:hover {{
-        background-color: {_lc} !important;
-        border-color: {_lc} !important;
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 8px 30px {_pc}60, 0 0 60px {_pc}30 !important;
         color: #0d0d0d !important;
+    }}
+    .stButton > button[kind="primary"]:active,
+    div[data-testid="stButton"] button[kind="primary"]:active {{
+        transform: translateY(0) scale(0.98) !important;
     }}
 
     /* Form submit buttons — filled */
@@ -2591,11 +2608,16 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
 # Login gate — show sign-in button and halt if not authenticated
 if not st.session_state.authenticated:
     st.write("")
-    st.link_button(
-        "Sign in",
-        _build_auth_url(force_login=st.session_state.get("_force_login", False)),
-        use_container_width=True,
-        type="primary",
+    _auth_href = _build_auth_url(force_login=st.session_state.get("_force_login", False))
+    st.markdown(
+        f'<a href="{_auth_href}" target="_self" style="'
+        f'display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
+        f'background-color:{_pc};color:#0d0d0d;border:2px solid {_pc};'
+        f'border-radius:0px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+        f'font-weight:700;letter-spacing:1px;text-decoration:none;'
+        f'font-size:0.95rem;box-sizing:border-box;cursor:pointer;">'
+        f'Sign in</a>',
+        unsafe_allow_html=True,
     )
     st.stop()
 
@@ -2694,7 +2716,7 @@ else:
     st.markdown(f"## {_greeting}, {_display_name}")
     if _id_parts:
         st.caption(" · ".join(_id_parts))
-    if st.button("Yes", use_container_width=False):
+    if st.button("Make a change", type="primary", use_container_width=True):
         st.session_state.cr_active = True
         st.session_state.cr_step = "requester"
         st.rerun()
