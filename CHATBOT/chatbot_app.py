@@ -2609,15 +2609,17 @@ if not st.session_state.authenticated:
     st.title("NWST Chatbot")
     st.write("")
     _auth_href = _build_auth_url(force_login=st.session_state.get("_force_login", False))
-    st.markdown(
-        f'<a href="{_auth_href}" target="_top" style="'
-        f'display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
+    _st_components.html(
+        f'<style>*{{box-sizing:border-box;margin:0;padding:0}}'
+        f'html,body{{background:transparent;overflow:hidden}}'
+        f'a{{display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
         f'background-color:{_pc};color:#0d0d0d;border:2px solid {_pc};'
         f'border-radius:0px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
         f'font-weight:700;letter-spacing:1px;text-decoration:none;'
-        f'font-size:0.95rem;box-sizing:border-box;cursor:pointer;">'
-        f'Sign in</a>',
-        unsafe_allow_html=True,
+        f'font-size:0.95rem;cursor:pointer}}</style>'
+        f'<a href="{_auth_href}" target="_top">Sign in</a>',
+        height=50,
+        scrolling=False,
     )
     st.stop()
 
