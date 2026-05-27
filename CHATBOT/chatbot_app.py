@@ -294,26 +294,20 @@ def _consume_oauth_state(state: str) -> bool:
     return False
 
 
-def _build_auth_url() -> str:
+def _build_auth_url(force_login: bool = False) -> str:
     domain, client_id, _, redirect_uri = _get_auth0_config()
     state = secrets.token_urlsafe(32)
     _store_oauth_state(state)
-    qs = urllib.parse.urlencode({
+    params: dict = {
         "response_type": "code",
         "client_id":     client_id,
         "redirect_uri":  redirect_uri,
         "scope":         "openid email profile",
         "state":         state,
-    })
-    return f"https://{domain}/authorize?{qs}"
-
-
-def _build_logout_url() -> str:
-    """Auth0 logout URL — invalidates the Auth0 session and returns to app root."""
-    domain, client_id, _, redirect_uri = _get_auth0_config()
-    return_to = redirect_uri.split("?")[0] if redirect_uri else redirect_uri
-    qs = urllib.parse.urlencode({"client_id": client_id, "returnTo": return_to})
-    return f"https://{domain}/v2/logout?{qs}"
+    }
+    if force_login:
+        params["prompt"] = "login"
+    return f"https://{domain}/authorize?{urllib.parse.urlencode(params)}"
 
 
 def _exchange_code(code: str) -> dict | None:
@@ -2601,7 +2595,7 @@ if not st.session_state.authenticated:
     st.write("")
     st.link_button(
         "Sign in",
-        _build_auth_url(),
+        _build_auth_url(force_login=st.session_state.get("_force_login", False)),
         use_container_width=True,
         type="primary",
     )
@@ -2637,14 +2631,10 @@ if st.session_state.user_name and st.session_state.user_cell:
     )
 
 def _do_signout() -> None:
-    logout_url = _build_logout_url()
     for _k in list(st.session_state.keys()):
         del st.session_state[_k]
-    _st_components.html(
-        f'<script>window.parent.location.href = "{logout_url}";</script>',
-        height=0,
-    )
-    st.stop()
+    st.session_state["_force_login"] = True
+    st.rerun()
 
 if st.session_state.get("auth_method") == "email + password":
     _col_pw, _col_out = st.columns(2)
