@@ -26,6 +26,7 @@ import json
 import random
 import re
 import secrets
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -359,6 +360,35 @@ def _send_password_reset(email: str) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+
+def _signup_auth0_user(email: str, password: str) -> tuple[bool, str]:
+    """Create a new user via Auth0 dbconnections/signup. Returns (success, error_message)."""
+    domain, client_id, _, _ = _get_auth0_config()
+    try:
+        body = json.dumps({
+            "client_id":  client_id,
+            "email":      email,
+            "password":   password,
+            "connection": "Username-Password-Authentication",
+        }).encode()
+        req = urllib.request.Request(
+            f"https://{domain}/dbconnections/signup",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+            return True, ""
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read())
+            msg = err.get("description") or err.get("message") or "Sign-up failed."
+            return False, msg
+        except Exception:
+            return False, "Sign-up failed — please try again."
+    except Exception:
+        return False, "Sign-up failed — please try again."
 
 
 def _lookup_member_by_email(email: str) -> dict | None:
@@ -2410,13 +2440,19 @@ def _render_cr_wizard() -> None:
 
 st.set_page_config(page_title="NWST Assistant", page_icon="💬", layout="centered")
 
+_page_palette = _get_daily_palette()
+_pc = _page_palette.get("primary", "#5bc0eb")
+_lc = _page_palette.get("light", "#8dd4f0")
+try:
+    _pr, _pg, _pb = int(_pc[1:3], 16), int(_pc[3:5], 16), int(_pc[5:7], 16)
+except (ValueError, IndexError):
+    _pr, _pg, _pb = 91, 192, 235
+
 st.markdown(
-    """
+    f"""
     <style>
-    .stApp { background-color: #0d0d0d; color: #f0f0f0; }
-    section[data-testid="stSidebar"] { display: none; }
-    .stChatMessage { background: transparent; }
-    /* Chat message text — prose font, readable size */
+    section[data-testid="stSidebar"] {{ display: none; }}
+    .stChatMessage {{ background: transparent; }}
     .stChatMessage .stMarkdown p,
     .stChatMessage .stMarkdown li,
     .stChatMessage .stMarkdown strong,
@@ -2424,16 +2460,98 @@ st.markdown(
     [data-testid="stChatMessage"] .stMarkdown p,
     [data-testid="stChatMessage"] .stMarkdown li,
     [data-testid="stChatMessageContent"] p,
-    [data-testid="stChatMessageContent"] li {
+    [data-testid="stChatMessageContent"] li {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
         font-size: 0.95rem !important;
         line-height: 1.6 !important;
-    }
-    .stTextInput > div > div > input {
-        background-color: #1a1a1a;
-        color: #f0f0f0;
-        border: 1px solid #333;
-    }
+    }}
+
+    /* ── Daily-palette buttons — outline, works on dark AND light bg ── */
+    .stButton > button,
+    div[data-testid="stButton"] button {{
+        background-color: transparent !important;
+        color: {_pc} !important;
+        border: 2px solid {_pc} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        transition: all 0.2s ease !important;
+    }}
+    .stButton > button:hover,
+    div[data-testid="stButton"] button:hover {{
+        background-color: {_pc} !important;
+        color: #0d0d0d !important;
+        transform: scale(1.02) !important;
+    }}
+
+    /* Primary st.button — filled */
+    .stButton > button[kind="primary"],
+    div[data-testid="stButton"] button[kind="primary"] {{
+        background-color: {_pc} !important;
+        color: #0d0d0d !important;
+        border: 2px solid {_pc} !important;
+    }}
+    .stButton > button[kind="primary"]:hover,
+    div[data-testid="stButton"] button[kind="primary"]:hover {{
+        background-color: {_lc} !important;
+        border-color: {_lc} !important;
+        color: #0d0d0d !important;
+    }}
+
+    /* Form submit buttons — filled */
+    .stFormSubmitButton > button,
+    div[data-testid="stFormSubmitButton"] button {{
+        background-color: {_pc} !important;
+        color: #0d0d0d !important;
+        border: 2px solid {_pc} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+        transition: all 0.2s ease !important;
+    }}
+    .stFormSubmitButton > button:hover,
+    div[data-testid="stFormSubmitButton"] button:hover {{
+        background-color: {_lc} !important;
+        border-color: {_lc} !important;
+        color: #0d0d0d !important;
+    }}
+
+    /* Sign in link button — filled */
+    [data-testid="stLinkButton"] a,
+    .stLinkButton a {{
+        background-color: {_pc} !important;
+        color: #0d0d0d !important;
+        border: 2px solid {_pc} !important;
+        border-radius: 0px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 1px !important;
+        transition: all 0.2s ease !important;
+        text-decoration: none !important;
+    }}
+    [data-testid="stLinkButton"] a:hover,
+    .stLinkButton a:hover {{
+        background-color: {_lc} !important;
+        border-color: {_lc} !important;
+        color: #0d0d0d !important;
+    }}
+
+    /* Progress bar */
+    .stProgress > div > div > div > div {{
+        background-color: {_pc} !important;
+    }}
+
+    /* Dark-mode-specific overrides — applied only when system is in dark mode */
+    @media (prefers-color-scheme: dark) {{
+        .stApp {{ background-color: #0d0d0d; }}
+        .stTextInput > div > div > input {{
+            background-color: #1a1a1a !important;
+            color: #f0f0f0 !important;
+            border: 1px solid #333 !important;
+        }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -2502,15 +2620,48 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
                     st.rerun()
             st.error("Sign-in failed — please try again.")
 
-# Login gate — show sign-in button and halt if not authenticated
+# Login gate — show sign-in / create-account tabs and halt if not authenticated
 if not st.session_state.authenticated:
     st.write("")
-    st.link_button(
-        "Sign in",
-        _build_auth_url(),
-        use_container_width=True,
-        type="primary",
-    )
+    _tab_in, _tab_up = st.tabs(["Sign in", "Create account"])
+
+    with _tab_in:
+        st.link_button(
+            "Sign in",
+            _build_auth_url(),
+            use_container_width=True,
+            type="primary",
+        )
+
+    with _tab_up:
+        with st.form("signup_form"):
+            _su_email = st.text_input("Email", placeholder="your@email.com")
+            _su_pw    = st.text_input("Password", type="password")
+            _su_pw2   = st.text_input("Confirm password", type="password")
+            _su_submit = st.form_submit_button("Create account", use_container_width=True, type="primary")
+
+        if _su_submit:
+            _su_email_norm = _su_email.strip().lower()
+            _su_allowed = _allowed_emails()
+            if not _su_email_norm:
+                st.error("Please enter your email address.")
+            elif _su_allowed and _su_email_norm not in _su_allowed:
+                st.error(
+                    f"**{_su_email_norm}** is not pre-approved for access. "
+                    "Contact an admin to request access."
+                )
+            elif not _su_pw:
+                st.error("Please enter a password.")
+            elif _su_pw != _su_pw2:
+                st.error("Passwords do not match.")
+            else:
+                with st.spinner("Creating account..."):
+                    _su_ok, _su_err = _signup_auth0_user(_su_email_norm, _su_pw)
+                if _su_ok:
+                    st.success("Account created! Switch to the **Sign in** tab to log in.")
+                else:
+                    st.error(_su_err or "Sign-up failed — please try again.")
+
     st.stop()
 
 # Auto-populate from login email (runs once per session)
