@@ -2606,6 +2606,7 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
 
 # Login gate — show sign-in button and halt if not authenticated
 if not st.session_state.authenticated:
+    st.title("NWST Chatbot")
     st.write("")
     _auth_href = _build_auth_url(force_login=st.session_state.get("_force_login", False))
     st.markdown(
