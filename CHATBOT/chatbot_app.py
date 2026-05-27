@@ -2529,8 +2529,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("NWST Chatbot")
-
 # ── identity + login gate ──────────────────────────────────────────────────────
 
 for _k, _v in [
@@ -2624,27 +2622,18 @@ elif st.session_state.get("_pw_reset_ok") is False:
     st.error("Could not send reset email — try again or contact an admin.")
     del st.session_state["_pw_reset_ok"]
 
-if st.session_state.user_name and st.session_state.user_cell:
-    st.caption(
-        f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
-        + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
-    )
-
 def _do_signout() -> None:
     for _k in list(st.session_state.keys()):
         del st.session_state[_k]
     st.session_state["_force_login"] = True
     st.rerun()
 
-if st.session_state.get("auth_method") == "email + password":
-    _col_pw, _col_out = st.columns(2)
-    if _col_pw.button("Change password", key="btn_change_pw", use_container_width=True):
-        st.session_state["_pw_reset_ok"] = _send_password_reset(st.session_state.login_email)
-        st.rerun()
-    if _col_out.button("Sign out", key="btn_sign_out", use_container_width=True):
-        _do_signout()
-else:
-    if st.button("Sign out", key="btn_sign_out"):
+with st.sidebar:
+    if st.session_state.get("auth_method") == "email + password":
+        if st.button("Change password", key="btn_change_pw", use_container_width=True):
+            st.session_state["_pw_reset_ok"] = _send_password_reset(st.session_state.login_email)
+            st.rerun()
+    if st.button("Sign out", key="btn_sign_out", use_container_width=True):
         _do_signout()
 
 # No-profile gate — email is allowed but not linked to any member record
@@ -2680,8 +2669,6 @@ if _sync_changed or _should_refresh_data():
     else:
         _load_data()
 
-st.divider()
-
 # ── greeting + info change wizard ─────────────────────────────────────────────
 
 if st.session_state.cr_active:
@@ -2702,10 +2689,11 @@ else:
         _greeting = "Good night"
 
     _display_name = st.session_state.user_name or st.session_state.login_email or "there"
+    _id_parts = [p for p in [st.session_state.user_cell, st.session_state.user_role] if p]
 
-    st.markdown(
-        f"## {_greeting}, {_display_name}  \nReady to change your or someone's info?"
-    )
+    st.markdown(f"## {_greeting}, {_display_name}")
+    if _id_parts:
+        st.caption(" · ".join(_id_parts))
     if st.button("Yes", use_container_width=False):
         st.session_state.cr_active = True
         st.session_state.cr_step = "requester"
