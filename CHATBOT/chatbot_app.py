@@ -26,7 +26,6 @@ import json
 import random
 import re
 import secrets
-import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -360,35 +359,6 @@ def _send_password_reset(email: str) -> bool:
             return r.status == 200
     except Exception:
         return False
-
-
-def _signup_auth0_user(email: str, password: str) -> tuple[bool, str]:
-    """Create a new user via Auth0 dbconnections/signup. Returns (success, error_message)."""
-    domain, client_id, _, _ = _get_auth0_config()
-    try:
-        body = json.dumps({
-            "client_id":  client_id,
-            "email":      email,
-            "password":   password,
-            "connection": "Username-Password-Authentication",
-        }).encode()
-        req = urllib.request.Request(
-            f"https://{domain}/dbconnections/signup",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            r.read()
-            return True, ""
-    except urllib.error.HTTPError as e:
-        try:
-            err = json.loads(e.read())
-            msg = err.get("description") or err.get("message") or "Sign-up failed."
-            return False, msg
-        except Exception:
-            return False, "Sign-up failed — please try again."
-    except Exception:
-        return False, "Sign-up failed — please try again."
 
 
 def _lookup_member_by_email(email: str) -> dict | None:
@@ -2620,48 +2590,15 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
                     st.rerun()
             st.error("Sign-in failed — please try again.")
 
-# Login gate — show sign-in / create-account tabs and halt if not authenticated
+# Login gate — show sign-in button and halt if not authenticated
 if not st.session_state.authenticated:
     st.write("")
-    _tab_in, _tab_up = st.tabs(["Sign in", "Create account"])
-
-    with _tab_in:
-        st.link_button(
-            "Sign in",
-            _build_auth_url(),
-            use_container_width=True,
-            type="primary",
-        )
-
-    with _tab_up:
-        with st.form("signup_form"):
-            _su_email = st.text_input("Email", placeholder="your@email.com")
-            _su_pw    = st.text_input("Password", type="password")
-            _su_pw2   = st.text_input("Confirm password", type="password")
-            _su_submit = st.form_submit_button("Create account", use_container_width=True, type="primary")
-
-        if _su_submit:
-            _su_email_norm = _su_email.strip().lower()
-            _su_allowed = _allowed_emails()
-            if not _su_email_norm:
-                st.error("Please enter your email address.")
-            elif _su_allowed and _su_email_norm not in _su_allowed:
-                st.error(
-                    f"**{_su_email_norm}** is not pre-approved for access. "
-                    "Contact an admin to request access."
-                )
-            elif not _su_pw:
-                st.error("Please enter a password.")
-            elif _su_pw != _su_pw2:
-                st.error("Passwords do not match.")
-            else:
-                with st.spinner("Creating account..."):
-                    _su_ok, _su_err = _signup_auth0_user(_su_email_norm, _su_pw)
-                if _su_ok:
-                    st.success("Account created! Switch to the **Sign in** tab to log in.")
-                else:
-                    st.error(_su_err or "Sign-up failed — please try again.")
-
+    st.link_button(
+        "Sign in",
+        _build_auth_url(),
+        use_container_width=True,
+        type="primary",
+    )
     st.stop()
 
 # Auto-populate from login email (runs once per session)
