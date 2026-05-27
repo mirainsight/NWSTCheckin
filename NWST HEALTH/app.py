@@ -6208,239 +6208,231 @@ with st.sidebar:
             st.rerun()
         st.markdown('<div style="height: 1.6rem;"></div>', unsafe_allow_html=True)
 
-# ========== CG HEALTH PAGE ==========
-if current_page == "cg":
-    # Sync button and status
-    sync_col1, sync_col2, sync_col3 = st.columns([1, 2, 1])
-    with sync_col2:
-        if st.button("🔄 Sync from Google Sheets", width='stretch'):
-            client = get_google_sheet_client()
-            if not client:
-                st.error("❌ Google credentials not configured. Please add 'google' to your Streamlit secrets.")
-            else:
-                try:
-                    spreadsheet = client.open_by_key("1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY")
+    st.markdown("---")
+    if st.button("🔄 Sync from Google Sheets", width='stretch', key="sidebar_sync"):
+        client = get_google_sheet_client()
+        if not client:
+            st.error("❌ Google credentials not configured. Please add 'google' to your Streamlit secrets.")
+        else:
+            try:
+                spreadsheet = client.open_by_key("1uexbQinWl1r6NgmSrmOXPtWs-q4OJV3o1OwLywMWzzY")
 
-                    # Sync CG Combined data
-                    worksheet = spreadsheet.worksheet("CG Combined")
-                    data = worksheet.get_all_values()
+                # Sync CG Combined data
+                worksheet = spreadsheet.worksheet("CG Combined")
+                data = worksheet.get_all_values()
 
-                    if data:
-                        df = pd.DataFrame(data[1:], columns=data[0])
+                if data:
+                    df = pd.DataFrame(data[1:], columns=data[0])
 
-                        # Cache in Redis
-                        redis = get_redis_client()
-                        if redis:
-                            cache_data = {
-                                "columns": df.columns.tolist(),
-                                "rows": df.values.tolist()
-                            }
-                            redis.set("nwst_cg_combined_data", json.dumps(cache_data), ex=300)
+                    # Cache in Redis
+                    redis = get_redis_client()
+                    if redis:
+                        cache_data = {
+                            "columns": df.columns.tolist(),
+                            "rows": df.values.tolist()
+                        }
+                        redis.set("nwst_cg_combined_data", json.dumps(cache_data), ex=300)
 
-                        # Sync Ministries Combined data
-                        try:
-                            ministries_worksheet = spreadsheet.worksheet("Ministries Combined")
-                            ministries_data = ministries_worksheet.get_all_values()
+                    # Sync Ministries Combined data
+                    try:
+                        ministries_worksheet = spreadsheet.worksheet("Ministries Combined")
+                        ministries_data = ministries_worksheet.get_all_values()
 
-                            if ministries_data:
-                                ministries_df = pd.DataFrame(ministries_data[1:], columns=ministries_data[0])
+                        if ministries_data:
+                            ministries_df = pd.DataFrame(ministries_data[1:], columns=ministries_data[0])
 
-                                # Cache in Redis
-                                redis = get_redis_client()
-                                if redis:
-                                    cache_data = {
-                                        "columns": ministries_df.columns.tolist(),
-                                        "rows": ministries_df.values.tolist()
-                                    }
-                                    redis.set("nwst_ministries_combined_data", json.dumps(cache_data), ex=300)
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not sync Ministries data: {e}")
-
-                        # Sync Attendance data
-                        try:
-                            att_worksheet = spreadsheet.worksheet("Attendance")
-                            att_data = att_worksheet.get_all_values()
-
-                            if att_data and len(att_data) >= 2:
-                                att_headers = att_data[0]
-                                att_df = pd.DataFrame(att_data[1:], columns=att_headers)
-
-                                # Load CG Combined to get Name and Cell mapping
-                                cg_worksheet = spreadsheet.worksheet("CG Combined")
-                                cg_data = cg_worksheet.get_all_values()
-                                if cg_data and len(cg_data) >= 2:
-                                    cg_headers = cg_data[0]
-                                    cg_df = pd.DataFrame(cg_data[1:], columns=cg_headers)
-
-                                    # Find name and cell columns in CG Combined
-                                    cg_name_col = None
-                                    cg_cell_col = None
-                                    for col in cg_df.columns:
-                                        if col.lower().strip() in ['name', 'member name', 'member']:
-                                            cg_name_col = col
-                                        if col.lower().strip() in ['cell', 'group']:
-                                            cg_cell_col = col
-
-                                    if not cg_name_col:
-                                        cg_name_col = cg_df.columns[0]
-
-                                    # Calculate attendance stats using Name + Cell key
-                                    attendance_stats = {}
-
-                                    # Find name column in attendance (usually column A)
-                                    att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
-
-                                    # Create a mapping of attendance names from column A only
-                                    if att_name_col:
-                                        for att_name in att_df[att_name_col].unique():
-                                            if pd.isna(att_name) or att_name == '':
-                                                continue
-
-                                            att_name_str = str(att_name).strip()
-                                            member_att_data = att_df[att_df[att_name_col] == att_name]
-
-                                            # Count attendance over the last 12 service columns only
-                                            _date_cols = list(att_df.columns[3:])
-                                            _rolling_cols = _date_cols[-12:] if len(_date_cols) > 12 else _date_cols
-                                            attendance_count = 0
-                                            total_services = len(_rolling_cols)
-
-                                            for col in _rolling_cols:
-                                                values = member_att_data[col].values
-                                                if len(values) > 0 and str(values[0]).strip() == '1':
-                                                    attendance_count += 1
-
-                                            # Find the cell for this person from CG Combined
-                                            cell_info = ""
-                                            if cg_name_col and cg_cell_col:
-                                                cg_match = cg_df[cg_df[cg_name_col].str.strip().str.lower() == att_name_str.lower()]
-                                                if not cg_match.empty:
-                                                    cell_info = " - " + str(cg_match[cg_cell_col].iloc[0]).strip()
-
-                                            # Use Name + Cell as key
-                                            if total_services > 0:
-                                                key = att_name_str + cell_info
-                                                attendance_stats[key] = {
-                                                    'attendance': attendance_count,
-                                                    'total': total_services,
-                                                    'percentage': round(attendance_count / total_services * 100) if total_services > 0 else 0
-                                                }
-
-                                # Cache attendance stats in Redis
-                                if redis:
-                                    redis.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not sync Attendance data: {e}")
-
-                        # Sync Cell Health data (single source of truth for KPI cards and PDF reports)
-                        try:
-                            # Load Historical Cell Status for WoW deltas
-                            hist_df = None
-                            try:
-                                hist_ws = spreadsheet.worksheet(NWST_HISTORICAL_CELL_STATUS_TAB)
-                                hist_data = hist_ws.get_all_values()
-                                if hist_data and len(hist_data) >= 2:
-                                    hist_df = pd.DataFrame(hist_data[1:], columns=hist_data[0])
-                            except WorksheetNotFound:
-                                pass
-
-                            # Load cell-to-zone map from Attendance sheet Key Values tab
-                            cell_to_zone_map = {"all": "PSQ"}
-                            try:
-                                att_sheet_id = os.getenv("NWST_ATTENDANCE_SHEET_ID", "").strip() or "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
-                                att_spreadsheet = client.open_by_key(att_sheet_id)
-                                kv_ws = att_spreadsheet.worksheet("Key Values")
-                                kv_data = kv_ws.get_all_values()
-                                if kv_data and len(kv_data) > 1:
-                                    for row in kv_data[1:]:
-                                        if len(row) >= 3:
-                                            cn = row[0].strip()
-                                            zn = row[2].strip()
-                                            if cn and zn:
-                                                cell_to_zone_map[cn.lower()] = zn
-                            except Exception:
-                                pass
-
-                            # Calculate and cache cell health
+                            # Cache in Redis
+                            redis = get_redis_client()
                             if redis:
-                                calculate_and_cache_cell_health(redis, df, hist_df, cell_to_zone_map)
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not sync Cell Health data: {e}")
+                                cache_data = {
+                                    "columns": ministries_df.columns.tolist(),
+                                    "rows": ministries_df.values.tolist()
+                                }
+                                redis.set("nwst_ministries_combined_data", json.dumps(cache_data), ex=300)
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not sync Ministries data: {e}")
 
-                        # Sync Ministry Health data (Historical Ministry Status → Redis)
+                    # Sync Attendance data
+                    try:
+                        att_worksheet = spreadsheet.worksheet("Attendance")
+                        att_data = att_worksheet.get_all_values()
+
+                        if att_data and len(att_data) >= 2:
+                            att_headers = att_data[0]
+                            att_df = pd.DataFrame(att_data[1:], columns=att_headers)
+
+                            # Load CG Combined to get Name and Cell mapping
+                            cg_worksheet = spreadsheet.worksheet("CG Combined")
+                            cg_data = cg_worksheet.get_all_values()
+                            if cg_data and len(cg_data) >= 2:
+                                cg_headers = cg_data[0]
+                                cg_df = pd.DataFrame(cg_data[1:], columns=cg_headers)
+
+                                # Find name and cell columns in CG Combined
+                                cg_name_col = None
+                                cg_cell_col = None
+                                for col in cg_df.columns:
+                                    if col.lower().strip() in ['name', 'member name', 'member']:
+                                        cg_name_col = col
+                                    if col.lower().strip() in ['cell', 'group']:
+                                        cg_cell_col = col
+
+                                if not cg_name_col:
+                                    cg_name_col = cg_df.columns[0]
+
+                                # Calculate attendance stats using Name + Cell key
+                                attendance_stats = {}
+
+                                # Find name column in attendance (usually column A)
+                                att_name_col = att_df.columns[0] if len(att_df.columns) > 0 else None
+
+                                # Create a mapping of attendance names from column A only
+                                if att_name_col:
+                                    for att_name in att_df[att_name_col].unique():
+                                        if pd.isna(att_name) or att_name == '':
+                                            continue
+
+                                        att_name_str = str(att_name).strip()
+                                        member_att_data = att_df[att_df[att_name_col] == att_name]
+
+                                        # Count attendance over the last 12 service columns only
+                                        _date_cols = list(att_df.columns[3:])
+                                        _rolling_cols = _date_cols[-12:] if len(_date_cols) > 12 else _date_cols
+                                        attendance_count = 0
+                                        total_services = len(_rolling_cols)
+
+                                        for col in _rolling_cols:
+                                            values = member_att_data[col].values
+                                            if len(values) > 0 and str(values[0]).strip() == '1':
+                                                attendance_count += 1
+
+                                        # Find the cell for this person from CG Combined
+                                        cell_info = ""
+                                        if cg_name_col and cg_cell_col:
+                                            cg_match = cg_df[cg_df[cg_name_col].str.strip().str.lower() == att_name_str.lower()]
+                                            if not cg_match.empty:
+                                                cell_info = " - " + str(cg_match[cg_cell_col].iloc[0]).strip()
+
+                                        # Use Name + Cell as key
+                                        if total_services > 0:
+                                            key = att_name_str + cell_info
+                                            attendance_stats[key] = {
+                                                'attendance': attendance_count,
+                                                'total': total_services,
+                                                'percentage': round(attendance_count / total_services * 100) if total_services > 0 else 0
+                                            }
+
+                            # Cache attendance stats in Redis
+                            if redis:
+                                redis.set("nwst_attendance_stats", json.dumps(attendance_stats), ex=300)
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not sync Attendance data: {e}")
+
+                    # Sync Cell Health data (single source of truth for KPI cards and PDF reports)
+                    try:
+                        # Load Historical Cell Status for WoW deltas
+                        hist_df = None
                         try:
-                            ministry_hist_df_sync = None
-                            try:
-                                mh_ws = spreadsheet.worksheet(NWST_HISTORICAL_MINISTRY_STATUS_TAB)
-                                mh_data = mh_ws.get_all_values()
-                                if mh_data and len(mh_data) >= 2:
-                                    ministry_hist_df_sync = pd.DataFrame(mh_data[1:], columns=mh_data[0])
-                            except WorksheetNotFound:
-                                pass
+                            hist_ws = spreadsheet.worksheet(NWST_HISTORICAL_CELL_STATUS_TAB)
+                            hist_data = hist_ws.get_all_values()
+                            if hist_data and len(hist_data) >= 2:
+                                hist_df = pd.DataFrame(hist_data[1:], columns=hist_data[0])
+                        except WorksheetNotFound:
+                            pass
 
-                            _min_df_for_sync = locals().get("ministries_df")
-                            if _min_df_for_sync is None or (hasattr(_min_df_for_sync, "empty") and _min_df_for_sync.empty):
-                                _min_df_for_sync = get_ministries_data()
-                            if redis and _min_df_for_sync is not None and not _min_df_for_sync.empty:
-                                calculate_and_cache_ministry_health(redis, _min_df_for_sync, ministry_hist_df_sync)
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not sync Ministry Health data: {e}")
+                        # Load cell-to-zone map from Attendance sheet Key Values tab
+                        cell_to_zone_map = {"all": "PSQ"}
+                        try:
+                            att_sheet_id = os.getenv("NWST_ATTENDANCE_SHEET_ID", "").strip() or "1o647tyrjusQmfoj3ZQITWL3LkcMIwMEilwaQoxyfrNc"
+                            att_spreadsheet = client.open_by_key(att_sheet_id)
+                            kv_ws = att_spreadsheet.worksheet("Key Values")
+                            kv_data = kv_ws.get_all_values()
+                            if kv_data and len(kv_data) > 1:
+                                for row in kv_data[1:]:
+                                    if len(row) >= 3:
+                                        cn = row[0].strip()
+                                        zn = row[2].strip()
+                                        if cn and zn:
+                                            cell_to_zone_map[cn.lower()] = zn
+                        except Exception:
+                            pass
 
+                        # Calculate and cache cell health
                         if redis:
-                            st.success("✅ Attendance updated successfully!")
+                            calculate_and_cache_cell_health(redis, df, hist_df, cell_to_zone_map)
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not sync Cell Health data: {e}")
 
-                            # Store last sync time in Malaysian time
-                            myt = timezone(timedelta(hours=8))
-                            sync_time_myt = datetime.now(myt)
-                            sync_time_str = sync_time_myt.strftime("%Y-%m-%d %H:%M:%S MYT")
-                            redis.set("nwst_last_sync_time", sync_time_str)
-                            checkin_sid = (CHECKIN_ATTENDANCE_SHEET_ID or "").strip()
-                            if checkin_sid and client:
-                                try:
-                                    if _nwst_accent_cfg_mod is None:
-                                        _accent_overrides_from_project_config()
-                                    if _nwst_accent_cfg_mod:
-                                        _nwst_accent_cfg_mod.refresh_theme_override_shared_cache(
-                                            redis, client, checkin_sid
-                                        )
-                                except Exception:
-                                    pass
-                        else:
-                            st.warning("⚠️ Redis not configured, but data loaded from Google Sheets.")
+                    # Sync Ministry Health data (Historical Ministry Status → Redis)
+                    try:
+                        ministry_hist_df_sync = None
+                        try:
+                            mh_ws = spreadsheet.worksheet(NWST_HISTORICAL_MINISTRY_STATUS_TAB)
+                            mh_data = mh_ws.get_all_values()
+                            if mh_data and len(mh_data) >= 2:
+                                ministry_hist_df_sync = pd.DataFrame(mh_data[1:], columns=mh_data[0])
+                        except WorksheetNotFound:
+                            pass
 
-                        if redis:
+                        _min_df_for_sync = locals().get("ministries_df")
+                        if _min_df_for_sync is None or (hasattr(_min_df_for_sync, "empty") and _min_df_for_sync.empty):
+                            _min_df_for_sync = get_ministries_data()
+                        if redis and _min_df_for_sync is not None and not _min_df_for_sync.empty:
+                            calculate_and_cache_ministry_health(redis, _min_df_for_sync, ministry_hist_df_sync)
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not sync Ministry Health data: {e}")
+
+                    if redis:
+                        st.success("✅ Attendance updated successfully!")
+
+                        # Store last sync time in Malaysian time
+                        myt = timezone(timedelta(hours=8))
+                        sync_time_myt = datetime.now(myt)
+                        sync_time_str = sync_time_myt.strftime("%Y-%m-%d %H:%M:%S MYT")
+                        redis.set("nwst_last_sync_time", sync_time_str)
+                        checkin_sid = (CHECKIN_ATTENDANCE_SHEET_ID or "").strip()
+                        if checkin_sid and client:
                             try:
-                                redis.delete(NWST_REDIS_ATTENDANCE_CHART_GRID_KEY)
+                                if _nwst_accent_cfg_mod is None:
+                                    _accent_overrides_from_project_config()
+                                if _nwst_accent_cfg_mod:
+                                    _nwst_accent_cfg_mod.refresh_theme_override_shared_cache(
+                                        redis, client, checkin_sid
+                                    )
                             except Exception:
                                 pass
-
-                        # Clear cache to force reload
-                        st.cache_data.clear()
                     else:
-                        st.error(
-                            "No data found in the **CG Combined** tab. "
-                            "Check that: (1) the tab exists and is named exactly 'CG Combined', "
-                            "(2) it has at least a header row and data rows, "
-                            "(3) the service account has Editor access to the spreadsheet."
-                        )
-                except Exception as e:
-                    st.error(f"Error syncing data: {e}")
+                        st.warning("⚠️ Redis not configured, but data loaded from Google Sheets.")
 
-    # Display last sync time
+                    if redis:
+                        try:
+                            redis.delete(NWST_REDIS_ATTENDANCE_CHART_GRID_KEY)
+                        except Exception:
+                            pass
+
+                    # Clear cache to force reload
+                    st.cache_data.clear()
+                else:
+                    st.error(
+                        "No data found in the **CG Combined** tab. "
+                        "Check that: (1) the tab exists and is named exactly 'CG Combined', "
+                        "(2) it has at least a header row and data rows, "
+                        "(3) the service account has Editor access to the spreadsheet."
+                    )
+            except Exception as e:
+                st.error(f"Error syncing data: {e}")
+
     redis = get_redis_client()
     if redis:
         try:
             last_sync = redis.get("nwst_last_sync_time")
             if last_sync:
-                st.markdown(f"""
-<style>
-@media (min-width: 768px) {{ .nwst-last-synced {{ margin-top: 0.25rem !important; }} }}
-@media (max-width: 767px) {{ .nwst-last-synced {{ margin-top: -0.5rem !important; }} }}
-</style>
-<p class='nwst-last-synced' style='text-align: center; color: #999; font-size: 0.85rem;'>Last synced: {last_sync}</p>
-""", unsafe_allow_html=True)
+                st.markdown(f"<p style='text-align: center; color: #999; font-size: 0.75rem; margin-top: 0.5rem;'>Last synced: {last_sync}</p>", unsafe_allow_html=True)
         except Exception:
             pass
+
+# ========== CG HEALTH PAGE ==========
+if current_page == "cg":
 
     st.markdown("")
     try:
