@@ -241,17 +241,22 @@ def _get_auth0_config() -> tuple[str, str, str, str]:
     """Return (domain, client_id, client_secret, redirect_uri)."""
     domain = client_id = client_secret = redirect_uri = ""
     try:
-        _a0 = st.secrets.get("auth", {}).get("auth0", {})
+        _auth = st.secrets.get("auth", {})
+        _a0   = _auth.get("auth0", {})
         domain        = _a0.get("server_metadata_url", "").replace("https://", "").split("/")[0]
         client_id     = _a0.get("client_id", "")
         client_secret = _a0.get("client_secret", "")
-        redirect_uri  = _a0.get("redirect_uri", "")
+        # redirect_uri may live in [auth.auth0] or [auth] — prefer [auth.auth0]
+        redirect_uri  = _a0.get("redirect_uri", "") or _auth.get("redirect_uri", "")
     except Exception:
         pass
     domain        = domain        or os.getenv("AUTH0_DOMAIN", "nwst-chatbot.us.auth0.com")
     client_id     = client_id     or os.getenv("AUTH0_CLIENT_ID", "")
     client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET", "")
     redirect_uri  = redirect_uri  or os.getenv("AUTH0_REDIRECT_URI", "")
+    # Strip Streamlit-native OAuth path — our callback is handled via st.query_params
+    if redirect_uri and "/~/+" in redirect_uri:
+        redirect_uri = redirect_uri.split("/~/+")[0]
     return domain, client_id, client_secret, redirect_uri
 
 
