@@ -2610,6 +2610,9 @@ if not st.session_state.user_profile_loaded:
         st.session_state.user_cell = _pick(_member, "cell", "group")
         st.session_state.user_role = _pick(_member, "role")
         st.session_state.user_status = _pick(_member, "status")
+        st.session_state.user_profile_found = True
+    else:
+        st.session_state.user_profile_found = False
     st.session_state.user_profile_loaded = True
 
 # Identity display
@@ -2625,17 +2628,6 @@ if st.session_state.user_name and st.session_state.user_cell:
         f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
         + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
     )
-else:
-    _id_col1, _id_col2, _id_col3 = st.columns(3)
-    st.session_state.user_name = _id_col1.text_input(
-        "Your name", value=st.session_state.user_name, placeholder="Name",
-    )
-    st.session_state.user_email = _id_col2.text_input(
-        "Email", value=st.session_state.user_email, placeholder="Email",
-    )
-    st.session_state.user_cell = _id_col3.text_input(
-        "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
-    )
 
 if st.session_state.get("auth_method") == "email + password":
     _col_pw, _col_out = st.columns(2)
@@ -2649,6 +2641,16 @@ else:
     if st.button("Sign out", key="btn_sign_out"):
         st.session_state.clear()
         st.rerun()
+
+# No-profile gate — email is allowed but not linked to any member record
+if st.session_state.get("user_profile_found") is False:
+    st.divider()
+    st.warning(
+        f"No member profile found for **{st.session_state.login_email}**. "
+        "Please contact an admin to link your email to a member record.",
+        icon="⚠️",
+    )
+    st.stop()
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
