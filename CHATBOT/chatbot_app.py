@@ -308,6 +308,14 @@ def _build_auth_url() -> str:
     return f"https://{domain}/authorize?{qs}"
 
 
+def _build_logout_url() -> str:
+    """Auth0 logout URL — invalidates the Auth0 session and returns to app root."""
+    domain, client_id, _, redirect_uri = _get_auth0_config()
+    return_to = redirect_uri.split("?")[0] if redirect_uri else redirect_uri
+    qs = urllib.parse.urlencode({"client_id": client_id, "returnTo": return_to})
+    return f"https://{domain}/v2/logout?{qs}"
+
+
 def _exchange_code(code: str) -> dict | None:
     domain, client_id, client_secret, redirect_uri = _get_auth0_config()
     try:
@@ -2628,18 +2636,26 @@ if st.session_state.user_name and st.session_state.user_cell:
         + (f" · {st.session_state.user_role}" if st.session_state.user_role else "")
     )
 
+def _do_signout() -> None:
+    logout_url = _build_logout_url()
+    for _k in list(st.session_state.keys()):
+        del st.session_state[_k]
+    _st_components.html(
+        f'<script>window.parent.location.href = "{logout_url}";</script>',
+        height=0,
+    )
+    st.stop()
+
 if st.session_state.get("auth_method") == "email + password":
     _col_pw, _col_out = st.columns(2)
     if _col_pw.button("Change password", key="btn_change_pw", use_container_width=True):
         st.session_state["_pw_reset_ok"] = _send_password_reset(st.session_state.login_email)
         st.rerun()
     if _col_out.button("Sign out", key="btn_sign_out", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
+        _do_signout()
 else:
     if st.button("Sign out", key="btn_sign_out"):
-        st.session_state.clear()
-        st.rerun()
+        _do_signout()
 
 # No-profile gate — email is allowed but not linked to any member record
 if st.session_state.get("user_profile_found") is False:
