@@ -6058,9 +6058,7 @@ query_params = st.query_params
 current_page = _qp_first(query_params.get("page"), "cg")
 
 # Main app content
-_page_title = "Ministry Health" if current_page == "ministry" else "NWST Health"
-_page_icon = "🎵📷👋🎤" if current_page == "ministry" else "🏥"
-st.title(f"{_page_icon} {_page_title}")
+st.title("🏥 NWST Health")
 
 # ── Chatbot floating button (top-right, always visible) ──────────────────────
 st.markdown(f"""
@@ -6195,8 +6193,8 @@ with st.sidebar:
     </h3>
     """, unsafe_allow_html=True)
 
-    _PAGE_LABELS = ["CG Health", "Ministry Health", "Analytics"]
-    _PAGE_KEYS   = ["cg",        "ministry",         "analytics"]
+    _PAGE_LABELS = ["CG Health", "Analytics"]
+    _PAGE_KEYS   = ["cg",        "analytics"]
     for _label, _key in zip(_PAGE_LABELS, _PAGE_KEYS):
         _is_active = current_page == _key
         if st.button(
@@ -6447,281 +6445,245 @@ if current_page == "cg":
     st.markdown("")
     try:
         newcomers_df = get_newcomers_data()
-        attendance_stats = get_attendance_data()
-
-        if not newcomers_df.empty:
-            # Get unique cell names for filtering
-            cell_columns = [col for col in newcomers_df.columns if 'cell' in col.lower() or 'group' in col.lower()]
-
-            # Build cell filter options
-            cell_options = ["All"]
-            if cell_columns:
-                unique_cells = sorted(newcomers_df[cell_columns[0]].unique().tolist())
-                cell_options.extend(unique_cells)
-
-            # Filter section with dynamic options
-            cell_filter = st.selectbox(
-                "Cell",
-                options=cell_options,
-                key="global_cell_filter",
-            )
-
-            st.markdown("---")
-
-            # Apply filters
-            display_df = newcomers_df.copy()
-
-            # Apply cell filter
-            if cell_filter != "All" and cell_columns:
-                display_df = display_df[display_df[cell_columns[0]] == cell_filter]
-
-            render_birthdays_notice_board(daily_colors, df=display_df)
-
-            # CELL HEALTH — quick view (Historical Cell Status WoW + live CG Combined mix)
-            _render_cg_cell_health_section(display_df, daily_colors, cell_filter, attendance_stats)
-
-            st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
-
-            with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
-                if not display_df.empty:
-                    st.markdown("")
-                    att_df_m, cg_df_m = load_attendance_and_cg_dataframes()
-                    if cg_df_m is not None:
-                        if att_df_m is None:
-                            att_df_m = pd.DataFrame()
-                        status_hist_df = load_status_historical_dataframe()
-                        monthly_status_df = build_monthly_member_status_table(
-                            display_df, att_df_m, cg_df_m, status_hist_df
-                        )
-                        if monthly_status_df is not None and not monthly_status_df.empty:
-                            _cg_individual_attendance_fragment(monthly_status_df, daily_colors, cell_filter)
-                        else:
-                            st.info(
-                                "No individual attendance breakdown yet. Check that Attendance row 1 from column D has parseable dates "
-                                "(e.g. DD/MM/YYYY or MM/DD/YYYY)."
-                            )
-                    else:
-                        st.info("Could not load the Attendance sheet for the individual attendance table.")
-                else:
-                    st.info("No member data to show individual attendance.")
-
-            with st.expander("📊 CELL BREAKDOWN & ATTENDANCE", expanded=False):
-                _nwst_cell_breakdown_fragment(display_df, daily_colors, cell_filter)
-                st.markdown("---")
-                st.markdown("")
-                if display_df is None or display_df.empty:
-                    st.info("No member data to show cell attendance charts.")
-                else:
-                    render_nwst_service_attendance_rate_charts(
-                        display_df,
-                        daily_colors,
-                        tab_each_cell_when_all=(cell_filter == "All"),
-                    )
-
-            with st.expander("📋 DETAILED MEMBERS", expanded=False):
-                _render_cg_detailed_members_section(display_df, daily_colors)
-
-            with st.expander("👔 LEADERSHIP", expanded=False):
-                _render_cg_leadership_section(display_df, cell_filter, cell_columns, daily_colors)
-
-            with st.expander("⛪ MINISTRY", expanded=False):
-                _render_cg_ministry_section(display_df, daily_colors)
-
-        else:
-            st.warning("No data found. Click 'Sync from Google Sheets' to load data.")
-
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-
-# ========== MINISTRY HEALTH PAGE ==========
-elif current_page == "ministry":
-    st.markdown("")
-    try:
         ministries_df = get_ministries_data()
         attendance_stats = get_attendance_data()
 
-        if not ministries_df.empty:
-            # Detect ministry column for the filter
-            ministry_col_options = [
-                col for col in ministries_df.columns
-                if "ministry" in col.lower() or "department" in col.lower()
-            ]
-            # Also detect cell columns (same structure as CG Combined — used by leadership section)
-            mc_cell_columns = [
-                col for col in ministries_df.columns
-                if "cell" in col.lower() or "group" in col.lower()
-            ]
+        # Build cell options
+        cell_columns = []
+        cell_options_list = []
+        if not newcomers_df.empty:
+            cell_columns = [col for col in newcomers_df.columns if 'cell' in col.lower() or 'group' in col.lower()]
+            if cell_columns:
+                cell_options_list = sorted(newcomers_df[cell_columns[0]].dropna().unique().tolist())
 
-            # Build ministry filter options from the role columns (Hype Role, Frontlines Role, etc.).
-            # The "Ministry Department" column exists in the sheet but is unused/empty;
-            # actual membership is determined by whether the role column is non-empty.
-            mc_ministry_options = ["All"]
+        # Build ministry options
+        ministry_options_list = []
+        if not ministries_df.empty:
             for _min_name, _min_col in _MINISTRY_ROLE_COLS.items():
                 if _min_col in ministries_df.columns:
-                    has_members = ministries_df[_min_col].notna() & (
-                        ministries_df[_min_col].astype(str).str.strip() != ""
-                    )
-                    if has_members.any():
-                        mc_ministry_options.append(_min_name)
+                    _has_m = ministries_df[_min_col].notna() & (ministries_df[_min_col].astype(str).str.strip() != "")
+                    if _has_m.any():
+                        ministry_options_list.append(_min_name)
 
-            mc_ministry_filter = st.selectbox(
-                "Ministry",
-                options=mc_ministry_options,
-                key="mc_ministry_filter",
+        if newcomers_df.empty and ministries_df.empty:
+            st.warning("No data found. Click 'Sync from Google Sheets' to load data.")
+        else:
+            combined_options = ["All Cells"] + cell_options_list + ["All Ministries"] + ministry_options_list
+
+            combined_filter = st.selectbox(
+                "Cell / Ministry",
+                options=combined_options,
+                key="global_combined_filter",
             )
 
             st.markdown("---")
 
-            # Apply ministry filter — filter rows where the selected ministry's role column is non-empty.
-            display_df = ministries_df.copy()
-            if mc_ministry_filter != "All":
-                role_col_name = _MINISTRY_ROLE_COLS.get(mc_ministry_filter, f"{mc_ministry_filter} Role")
-                if role_col_name in display_df.columns:
-                    display_df = display_df[
-                        display_df[role_col_name].notna()
-                        & (display_df[role_col_name].astype(str).str.strip() != "")
-                    ]
+            is_ministry_mode = combined_filter == "All Ministries" or combined_filter in ministry_options_list
 
-            render_birthdays_notice_board(daily_colors, df=display_df)
+            if is_ministry_mode:
+                # ── Ministry mode ──────────────────────────────────────────────────
+                mc_ministry_filter = "All" if combined_filter == "All Ministries" else combined_filter
+                mc_cell_columns = [col for col in ministries_df.columns if "cell" in col.lower() or "group" in col.lower()]
 
-            # STATUS KPI CARDS — same layout as CG Health (New / Regular / Irregular / Follow Up / Red / Graduated)
-            # Pass mc_ministry_filter as the cell_filter arg so _cell_scoped layout is applied when a
-            # specific ministry is selected (4-column row).
-            # hist_df_override: use Historical Ministry Status instead of Historical Cell Status for WoW.
-            # redis_cache_key_override: read/write ministry health cache independently from cell health.
-            _mc_hist_df = load_historical_ministry_status_dataframe()
-            _render_cg_cell_health_section(
-                display_df,
-                daily_colors,
-                mc_ministry_filter,
-                attendance_stats,
-                hist_df_override=_mc_hist_df,
-                redis_cache_key_override=REDIS_MINISTRY_HEALTH_KEY,
-            )
+                display_df = ministries_df.copy()
+                if mc_ministry_filter != "All":
+                    role_col_name = _MINISTRY_ROLE_COLS.get(mc_ministry_filter, f"{mc_ministry_filter} Role")
+                    if role_col_name in display_df.columns:
+                        display_df = display_df[
+                            display_df[role_col_name].notna()
+                            & (display_df[role_col_name].astype(str).str.strip() != "")
+                        ]
 
-            with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
-                if not display_df.empty:
-                    st.markdown("")
-                    att_df_m, _ = load_attendance_and_cg_dataframes()
-                    # Use ministries_df as the roster (cg_df) so name lookups resolve correctly
-                    if not ministries_df.empty:
-                        if att_df_m is None:
-                            att_df_m = pd.DataFrame()
-                        status_hist_df = load_status_historical_dataframe()
-                        monthly_status_df = build_monthly_member_status_table(
-                            display_df, att_df_m, ministries_df, status_hist_df
-                        )
-                        if monthly_status_df is not None and not monthly_status_df.empty:
-                            _cg_individual_attendance_fragment(monthly_status_df, daily_colors, mc_ministry_filter)
+                render_birthdays_notice_board(daily_colors, df=display_df)
+
+                _mc_hist_df = load_historical_ministry_status_dataframe()
+                _render_cg_cell_health_section(
+                    display_df,
+                    daily_colors,
+                    mc_ministry_filter,
+                    attendance_stats,
+                    hist_df_override=_mc_hist_df,
+                    redis_cache_key_override=REDIS_MINISTRY_HEALTH_KEY,
+                )
+
+                st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
+
+                with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
+                    if not display_df.empty:
+                        st.markdown("")
+                        att_df_m, _ = load_attendance_and_cg_dataframes()
+                        if not ministries_df.empty:
+                            if att_df_m is None:
+                                att_df_m = pd.DataFrame()
+                            status_hist_df = load_status_historical_dataframe()
+                            monthly_status_df = build_monthly_member_status_table(
+                                display_df, att_df_m, ministries_df, status_hist_df
+                            )
+                            if monthly_status_df is not None and not monthly_status_df.empty:
+                                _cg_individual_attendance_fragment(monthly_status_df, daily_colors, mc_ministry_filter)
+                            else:
+                                st.info(
+                                    "No individual attendance breakdown yet. Check that Attendance row 1 "
+                                    "from column D has parseable dates (e.g. DD/MM/YYYY or MM/DD/YYYY)."
+                                )
                         else:
-                            st.info(
-                                "No individual attendance breakdown yet. Check that Attendance row 1 "
-                                "from column D has parseable dates (e.g. DD/MM/YYYY or MM/DD/YYYY)."
-                            )
+                            st.info("Could not load data for the individual attendance table.")
                     else:
-                        st.info("Could not load data for the individual attendance table.")
-                else:
-                    st.info("No member data to show individual attendance.")
+                        st.info("No member data to show individual attendance.")
 
-            with st.expander("📊 MINISTRY BREAKDOWN & ATTENDANCE", expanded=False):
-                _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
-                st.markdown("---")
-                st.markdown("")
-                if display_df is None or display_df.empty:
-                    st.info("No member data to show attendance charts.")
-                elif mc_ministry_filter == "All":
-                    # Per-ministry tabs for the attendance trend chart (same UX as cell health per-cell tabs)
-                    _min_tab_options = []
-                    for _min_name, _min_col in _MINISTRY_ROLE_COLS.items():
-                        if _min_col in display_df.columns:
-                            _has_min = display_df[_min_col].notna() & (
-                                display_df[_min_col].astype(str).str.strip() != ""
-                            )
-                            if _has_min.any():
-                                _min_tab_options.append(_min_name)
+                with st.expander("📊 MINISTRY BREAKDOWN & ATTENDANCE", expanded=False):
+                    _nwst_cell_breakdown_fragment(display_df, daily_colors, mc_ministry_filter)
+                    st.markdown("---")
+                    st.markdown("")
+                    if display_df is None or display_df.empty:
+                        st.info("No member data to show attendance charts.")
+                    elif mc_ministry_filter == "All":
+                        _min_tab_options = []
+                        for _min_name, _min_col in _MINISTRY_ROLE_COLS.items():
+                            if _min_col in display_df.columns:
+                                _has_min = display_df[_min_col].notna() & (
+                                    display_df[_min_col].astype(str).str.strip() != ""
+                                )
+                                if _has_min.any():
+                                    _min_tab_options.append(_min_name)
 
-                    if not _min_tab_options:
-                        st.info("No ministry data available.")
-                    else:
-                        # Pre-compute shared y-axis range across all ministries (same as cell health)
-                        _min_shared_range = None
-                        try:
-                            _rn_col, _rc_col = _nwst_resolve_display_name_cell_cols(display_df)
-                            _rn_ana, _rn_dates, _rn_err = nwst_get_attendance_grid_for_charts(NWST_HEALTH_SHEET_ID)
-                            if not _rn_err and _rn_ana is not None and _rn_dates and _rc_col:
-                                _rn_date_cols = list(_rn_dates)
-                                if NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS and len(_rn_date_cols) > NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:
-                                    _rn_date_cols = _rn_date_cols[-NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:]
-                                _rn_all_rows = []
-                                for _rn_min in _min_tab_options:
-                                    _rn_mcol = _MINISTRY_ROLE_COLS[_rn_min]
-                                    _rn_df = display_df[
-                                        display_df[_rn_mcol].notna()
-                                        & (display_df[_rn_mcol].astype(str).str.strip() != "")
-                                    ]
-                                    if _rn_df.empty:
-                                        continue
-                                    _rn_keys = _rn_df[[_rn_col, _rc_col]].copy()
-                                    _rn_keys["_n"] = _rn_keys[_rn_col].astype(str).str.strip()
-                                    _rn_keys["_c"] = _rn_keys[_rc_col].astype(str).str.strip()
-                                    _rn_keys = _rn_keys[["_n", "_c"]].drop_duplicates()
-                                    _rn_work = _rn_ana.copy()
-                                    _rn_work["_n"] = _rn_work["Name"].astype(str).str.strip()
-                                    _rn_work["_c"] = _rn_work["Cell Group"].astype(str).str.strip()
-                                    _rn_wdf = _rn_work.merge(_rn_keys, on=["_n", "_c"], how="inner").drop(columns=["_n", "_c"])
-                                    if _rn_wdf.empty:
-                                        continue
-                                    _rn_mc = _rn_df[_rn_col].nunique()
-                                    if _rn_mc == 0:
-                                        continue
-                                    for _rn_dc in _rn_date_cols:
-                                        _rn_att = int(_rn_wdf[_rn_dc].sum()) if _rn_dc in _rn_wdf.columns else 0
-                                        _rn_all_rows.append({NWST_ATTENDED_CELL_MEMBERS_COL: _rn_att})
-                                if _rn_all_rows:
-                                    _min_shared_range = _nwst_count_y_axis_range(pd.DataFrame(_rn_all_rows))
-                        except Exception:
+                        if not _min_tab_options:
+                            st.info("No ministry data available.")
+                        else:
                             _min_shared_range = None
+                            try:
+                                _rn_col, _rc_col = _nwst_resolve_display_name_cell_cols(display_df)
+                                _rn_ana, _rn_dates, _rn_err = nwst_get_attendance_grid_for_charts(NWST_HEALTH_SHEET_ID)
+                                if not _rn_err and _rn_ana is not None and _rn_dates and _rc_col:
+                                    _rn_date_cols = list(_rn_dates)
+                                    if NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS and len(_rn_date_cols) > NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:
+                                        _rn_date_cols = _rn_date_cols[-NWST_SERVICE_ATTENDANCE_CHART_MAX_WEEKS:]
+                                    _rn_all_rows = []
+                                    for _rn_min in _min_tab_options:
+                                        _rn_mcol = _MINISTRY_ROLE_COLS[_rn_min]
+                                        _rn_df = display_df[
+                                            display_df[_rn_mcol].notna()
+                                            & (display_df[_rn_mcol].astype(str).str.strip() != "")
+                                        ]
+                                        if _rn_df.empty:
+                                            continue
+                                        _rn_keys = _rn_df[[_rn_col, _rc_col]].copy()
+                                        _rn_keys["_n"] = _rn_keys[_rn_col].astype(str).str.strip()
+                                        _rn_keys["_c"] = _rn_keys[_rc_col].astype(str).str.strip()
+                                        _rn_keys = _rn_keys[["_n", "_c"]].drop_duplicates()
+                                        _rn_work = _rn_ana.copy()
+                                        _rn_work["_n"] = _rn_work["Name"].astype(str).str.strip()
+                                        _rn_work["_c"] = _rn_work["Cell Group"].astype(str).str.strip()
+                                        _rn_wdf = _rn_work.merge(_rn_keys, on=["_n", "_c"], how="inner").drop(columns=["_n", "_c"])
+                                        if _rn_wdf.empty:
+                                            continue
+                                        _rn_mc = _rn_df[_rn_col].nunique()
+                                        if _rn_mc == 0:
+                                            continue
+                                        for _rn_dc in _rn_date_cols:
+                                            _rn_att = int(_rn_wdf[_rn_dc].sum()) if _rn_dc in _rn_wdf.columns else 0
+                                            _rn_all_rows.append({NWST_ATTENDED_CELL_MEMBERS_COL: _rn_att})
+                                    if _rn_all_rows:
+                                        _min_shared_range = _nwst_count_y_axis_range(pd.DataFrame(_rn_all_rows))
+                            except Exception:
+                                _min_shared_range = None
 
-                        _min_att_tabs = st.tabs(_min_tab_options)
-                        for _mti, _min_tab_name in enumerate(_min_tab_options):
-                            with _min_att_tabs[_mti]:
-                                _min_role_col = _MINISTRY_ROLE_COLS[_min_tab_name]
-                                _min_tab_df = display_df[
-                                    display_df[_min_role_col].notna()
-                                    & (display_df[_min_role_col].astype(str).str.strip() != "")
-                                ]
-                                if _min_tab_df.empty:
-                                    st.info("No member data to show attendance charts.")
-                                else:
-                                    render_nwst_service_attendance_rate_charts(
-                                        _min_tab_df,
-                                        daily_colors,
-                                        tab_each_cell_when_all=False,
-                                        aggregate_label=_min_tab_name,
-                                        y_axis_range=_min_shared_range,
-                                    )
-                else:
-                    render_nwst_service_attendance_rate_charts(
-                        display_df,
-                        daily_colors,
-                        tab_each_cell_when_all=False,
-                        aggregate_label=mc_ministry_filter,
-                    )
+                            _min_att_tabs = st.tabs(_min_tab_options)
+                            for _mti, _min_tab_name in enumerate(_min_tab_options):
+                                with _min_att_tabs[_mti]:
+                                    _min_role_col = _MINISTRY_ROLE_COLS[_min_tab_name]
+                                    _min_tab_df = display_df[
+                                        display_df[_min_role_col].notna()
+                                        & (display_df[_min_role_col].astype(str).str.strip() != "")
+                                    ]
+                                    if _min_tab_df.empty:
+                                        st.info("No member data to show attendance charts.")
+                                    else:
+                                        render_nwst_service_attendance_rate_charts(
+                                            _min_tab_df,
+                                            daily_colors,
+                                            tab_each_cell_when_all=False,
+                                            aggregate_label=_min_tab_name,
+                                            y_axis_range=_min_shared_range,
+                                        )
+                    else:
+                        render_nwst_service_attendance_rate_charts(
+                            display_df,
+                            daily_colors,
+                            tab_each_cell_when_all=False,
+                            aggregate_label=mc_ministry_filter,
+                        )
 
-            with st.expander("📋 DETAILED MEMBERS", expanded=False):
-                _render_cg_detailed_members_section(display_df, daily_colors)
+                with st.expander("📋 DETAILED MEMBERS", expanded=False):
+                    _render_cg_detailed_members_section(display_df, daily_colors)
 
-            with st.expander("👔 LEADERSHIP", expanded=False):
-                _render_cg_leadership_section(display_df, mc_ministry_filter, mc_cell_columns, daily_colors)
+                with st.expander("👔 LEADERSHIP", expanded=False):
+                    _render_cg_leadership_section(display_df, mc_ministry_filter, mc_cell_columns, daily_colors)
 
-            with st.expander("⛪ MINISTRY", expanded=False):
-                _render_cg_ministry_section(display_df, daily_colors)
+                with st.expander("⛪ MINISTRY", expanded=False):
+                    _render_cg_ministry_section(display_df, daily_colors)
 
-        else:
-            st.warning("No ministries data found. Click 'Sync from Google Sheets' on the CG Health tab to load data.")
+            else:
+                # ── Cell mode ──────────────────────────────────────────────────────
+                cell_filter = "All" if combined_filter == "All Cells" else combined_filter
+
+                display_df = newcomers_df.copy()
+                if cell_filter != "All" and cell_columns:
+                    display_df = display_df[display_df[cell_columns[0]] == cell_filter]
+
+                render_birthdays_notice_board(daily_colors, df=display_df)
+
+                _render_cg_cell_health_section(display_df, daily_colors, cell_filter, attendance_stats)
+
+                st.markdown("<div style='margin-top: 2rem;'></div>", unsafe_allow_html=True)
+
+                with st.expander("👤 INDIVIDUAL ATTENDANCE", expanded=False):
+                    if not display_df.empty:
+                        st.markdown("")
+                        att_df_m, cg_df_m = load_attendance_and_cg_dataframes()
+                        if cg_df_m is not None:
+                            if att_df_m is None:
+                                att_df_m = pd.DataFrame()
+                            status_hist_df = load_status_historical_dataframe()
+                            monthly_status_df = build_monthly_member_status_table(
+                                display_df, att_df_m, cg_df_m, status_hist_df
+                            )
+                            if monthly_status_df is not None and not monthly_status_df.empty:
+                                _cg_individual_attendance_fragment(monthly_status_df, daily_colors, cell_filter)
+                            else:
+                                st.info(
+                                    "No individual attendance breakdown yet. Check that Attendance row 1 from column D has parseable dates "
+                                    "(e.g. DD/MM/YYYY or MM/DD/YYYY)."
+                                )
+                        else:
+                            st.info("Could not load the Attendance sheet for the individual attendance table.")
+                    else:
+                        st.info("No member data to show individual attendance.")
+
+                with st.expander("📊 CELL BREAKDOWN & ATTENDANCE", expanded=False):
+                    _nwst_cell_breakdown_fragment(display_df, daily_colors, cell_filter)
+                    st.markdown("---")
+                    st.markdown("")
+                    if display_df is None or display_df.empty:
+                        st.info("No member data to show cell attendance charts.")
+                    else:
+                        render_nwst_service_attendance_rate_charts(
+                            display_df,
+                            daily_colors,
+                            tab_each_cell_when_all=(cell_filter == "All"),
+                        )
+
+                with st.expander("📋 DETAILED MEMBERS", expanded=False):
+                    _render_cg_detailed_members_section(display_df, daily_colors)
+
+                with st.expander("👔 LEADERSHIP", expanded=False):
+                    _render_cg_leadership_section(display_df, cell_filter, cell_columns, daily_colors)
+
+                with st.expander("⛪ MINISTRY", expanded=False):
+                    _render_cg_ministry_section(display_df, daily_colors)
 
     except Exception as e:
-        st.error(f"Error loading ministry data: {e}")
+        st.error(f"Error loading data: {e}")
 
 elif current_page == "analytics":
     nwst_analytics_colors = {
