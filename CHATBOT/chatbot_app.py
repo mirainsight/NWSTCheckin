@@ -2599,8 +2599,9 @@ if not st.session_state.authenticated:
     )
     st.stop()
 
-# Auto-populate from login email (runs once per session)
-if not st.session_state.user_profile_loaded:
+# Auto-populate from login email (runs once per session).
+# Also re-runs if user_profile_found was never set (stale pre-fix sessions).
+if not st.session_state.user_profile_loaded or "user_profile_found" not in st.session_state:
     _member = _lookup_member_by_email(st.session_state.login_email)
     if _member:
         st.session_state.user_name = _pick(_member, "name", "member")
