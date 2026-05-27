@@ -2408,7 +2408,7 @@ def _render_cr_wizard() -> None:
 
 # ── page setup ─────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="NWST Assistant", page_icon="💬", layout="centered")
+st.set_page_config(page_title="NWST Chatbot", page_icon="💬", layout="centered")
 
 _page_palette = _get_daily_palette()
 _pc = _page_palette.get("primary", "#5bc0eb")
@@ -2527,9 +2527,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("NWST Assistant")
-if not st.session_state.get("authenticated", False):
-    st.caption("Ask about cell health, check-in, members, or newcomers")
+st.title("NWST Chatbot")
 
 # ── identity + login gate ──────────────────────────────────────────────────────
 
