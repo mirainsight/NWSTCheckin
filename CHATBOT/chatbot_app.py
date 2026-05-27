@@ -2592,18 +2592,12 @@ if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
 
 # Login gate — show sign-in button and halt if not authenticated
 if not st.session_state.authenticated:
-    _auth_url = _build_auth_url(force_login=st.session_state.get("_force_login", False))
     st.write("")
-    st.markdown(
-        f'<a href="{_auth_url}" target="_top" style="'
-        f'display:block;width:100%;text-align:center;text-decoration:none;'
-        f'background-color:{_pc};color:#0d0d0d;'
-        f'border:2px solid {_pc};border-radius:0px;'
-        f'font-family:Inter,sans-serif;font-weight:700;letter-spacing:1px;'
-        f'padding:0.55rem 1rem;box-sizing:border-box;'
-        f'transition:all 0.2s ease;">'
-        f'Sign in</a>',
-        unsafe_allow_html=True,
+    st.link_button(
+        "Sign in",
+        _build_auth_url(force_login=st.session_state.get("_force_login", False)),
+        use_container_width=True,
+        type="primary",
     )
     st.stop()
 
