@@ -2610,7 +2610,7 @@ if not st.session_state.authenticated:
     st.write("")
     _auth_href = _build_auth_url(force_login=st.session_state.get("_force_login", False))
     st.markdown(
-        f'<a href="{_auth_href}" target="_self" style="'
+        f'<a href="{_auth_href}" target="_top" style="'
         f'display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
         f'background-color:{_pc};color:#0d0d0d;border:2px solid {_pc};'
         f'border-radius:0px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
