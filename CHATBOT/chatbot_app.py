@@ -2700,14 +2700,18 @@ else:
         "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
     )
 
-_col_pw, _col_out = st.columns(2)
 if st.session_state.get("auth_method") == "email + password":
+    _col_pw, _col_out = st.columns(2)
     if _col_pw.button("Change password", key="btn_change_pw", use_container_width=True):
         st.session_state["_pw_reset_ok"] = _send_password_reset(st.session_state.login_email)
         st.rerun()
-if _col_out.button("Sign out", key="btn_sign_out", use_container_width=True):
-    st.session_state.clear()
-    st.rerun()
+    if _col_out.button("Sign out", key="btn_sign_out", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+else:
+    if st.button("Sign out", key="btn_sign_out"):
+        st.session_state.clear()
+        st.rerun()
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
