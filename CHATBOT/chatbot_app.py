@@ -2424,7 +2424,6 @@ st.markdown(
     f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-    section[data-testid="stSidebar"] {{ display: none; }}
     .stChatMessage {{ background: transparent; }}
     .stChatMessage .stMarkdown p,
     .stChatMessage .stMarkdown li,
@@ -2631,6 +2630,7 @@ if not st.session_state.user_profile_loaded or "user_profile_found" not in st.se
         st.session_state.user_cell = _pick(_member, "cell", "group")
         st.session_state.user_role = _pick(_member, "role")
         st.session_state.user_status = _pick(_member, "status")
+        st.session_state.user_member_row = _member
         st.session_state.user_profile_found = True
     else:
         st.session_state.user_profile_found = False
@@ -2716,6 +2716,83 @@ else:
     st.markdown(f"## {_greeting}, {_display_name}")
     if _id_parts:
         st.caption(" · ".join(_id_parts))
+
+    # Lazy-load member row for sessions that predate user_member_row being cached
+    if "user_member_row" not in st.session_state and st.session_state.get("user_profile_found") and st.session_state.get("login_email"):
+        _lazy = _lookup_member_by_email(st.session_state.login_email)
+        if _lazy:
+            st.session_state.user_member_row = _lazy
+
+    _home_member = st.session_state.get("user_member_row")
+    if _home_member:
+        _home_mcols = list(_home_member.keys())
+        _home_name  = st.session_state.user_name or ""
+        _home_cell  = st.session_state.user_cell or ""
+        _home_label = _cr_member_label(_home_name, _home_cell)
+        _home_pal   = _get_daily_palette()
+        _home_html  = _member_info_html(_home_member, _home_mcols, _home_label, [], _home_pal)
+        _hpc = _home_pal.get("primary", "#5bc0eb")
+        try:
+            _hpr, _hpg, _hpb = int(_hpc[1:3], 16), int(_hpc[3:5], 16), int(_hpc[5:7], 16)
+        except (ValueError, IndexError):
+            _hpr, _hpg, _hpb = 91, 192, 235
+        _st_idx = _cr_field_col_idx(_home_mcols, "Status")
+        _home_status = str(_home_member.get(_home_mcols[_st_idx], "") or "").strip() if _st_idx != -1 else ""
+        _hsc = (
+            "#2ecc71" if _home_status.startswith("Regular") else
+            "#e67e22" if _home_status.startswith("Irregular") else
+            "#3498db" if _home_status.startswith("New") else
+            "#f39c12" if _home_status.startswith("Follow Up") else
+            "#e74c3c" if _home_status.startswith("Red") else
+            "#9b59b6" if _home_status.startswith("Graduated") else "#555555"
+        )
+        _hsl = _home_status.split(":")[0].strip() if ":" in _home_status else _home_status
+        _home_badge = (
+            f'<span style="background:{_hsc}22;border:1px solid {_hsc}66;color:{_hsc};'
+            f'font-size:0.70rem;font-weight:700;letter-spacing:0.08em;'
+            f'text-transform:uppercase;padding:3px 10px;border-radius:999px;">{_hsl}</span>'
+        ) if _home_status else ""
+        _home_inner = _home_html.replace(
+            '<div style="background:#0a0a0a;',
+            '<div class="home-inner-card" style="background:#0a0a0a;',
+            1,
+        )
+        st.markdown(
+            f'<style>'
+            f'#home-id-card summary{{list-style:none;}}'
+            f'#home-id-card summary::-webkit-details-marker{{display:none;}}'
+            f'#home-id-card>.home-summary:hover{{background:#191919!important;}}'
+            f'#home-id-card[open]>.home-summary{{border-bottom:1px solid rgba({_hpr},{_hpg},{_hpb},0.15)!important;}}'
+            f'#home-id-card[open] .home-chev{{transform:rotate(180deg);}}'
+            f'.home-chev{{display:inline-block;transition:transform 0.2s;}}'
+            f'.home-inner-card{{border:none!important;border-top:none!important;'
+            f'border-radius:0!important;margin:0!important;box-shadow:none!important;}}'
+            f'.home-inner-card>div:first-child{{display:none!important;}}'
+            f'</style>'
+            f'<details id="home-id-card" style="'
+            f'border:1px solid rgba({_hpr},{_hpg},{_hpb},0.25);'
+            f'border-top:3px solid {_hpc};border-radius:10px;overflow:hidden;margin:12px 0 16px;'
+            f'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
+            f'box-shadow:0 8px 32px rgba({_hpr},{_hpg},{_hpb},0.15);">'
+            f'<summary class="home-summary" style="'
+            f'display:flex;align-items:center;gap:12px;'
+            f'padding:12px 16px;cursor:pointer;outline:none;background:#111111;">'
+            f'<span style="flex:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+            f'<span style="color:{_hpc};font-size:1.0rem;font-weight:700;">👤 {_home_name}</span>'
+            f'<span style="color:#555555;font-size:0.9rem;">·</span>'
+            f'<span style="color:#aaaaaa;font-size:0.88rem;">{_home_cell}</span>'
+            f'</span>'
+            f'<span style="display:flex;align-items:center;gap:8px;">'
+            f'{_home_badge}'
+            f'<span style="color:#555555;font-size:0.70rem;white-space:nowrap;">tap to view</span>'
+            f'<span class="home-chev" style="color:{_hpc};font-size:0.65rem;margin-left:2px;">▼</span>'
+            f'</span>'
+            f'</summary>'
+            + _home_inner
+            + f'</details>',
+            unsafe_allow_html=True,
+        )
+
     if st.button("Make a change", type="primary", use_container_width=True):
         st.session_state.cr_active = True
         st.session_state.cr_step = "requester"
