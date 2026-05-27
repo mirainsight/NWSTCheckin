@@ -1428,7 +1428,7 @@ def _render_cr_wizard() -> None:
                         f'<button class="chip chip-cancel" onclick="cbk(\'{_cancel_d[1]}\',\'{_cancel_d[0]}\')">{_cancel_d[0]}</button>'
                         if _cancel_d else ""
                     )
-                    _st_components.html(
+                    st.iframe(
                         f'<style>'
                         f'*{{box-sizing:border-box;margin:0;padding:0;}}'
                         f'body{{background:transparent;overflow:hidden;'
@@ -1643,7 +1643,7 @@ def _render_cr_wizard() -> None:
             f'onclick="cbk_nv(\'{k}\',\'{lbl}\')">{lbl}</button>'
             for lbl, k, is_cancel in _nv_sc if k != "cr_nv_review"
         )
-        _st_components.html(
+        st.iframe(
             f'<style>'
             f'*{{box-sizing:border-box;margin:0;padding:0;}}'
             f'body{{background:transparent;overflow:hidden;'
@@ -1771,7 +1771,7 @@ def _render_cr_wizard() -> None:
                     f'</tr>'
                 )
             _nv_mini_h = 110 + len(_nv_pending) * 34
-            _st_components.html(
+            st.iframe(
                 f'<!doctype html><html><head><meta charset="utf-8">'
                 f'<style>'
                 f'*{{box-sizing:border-box;margin:0;padding:0;}}'
@@ -2001,7 +2001,7 @@ def _render_cr_wizard() -> None:
         _cell_span = f'<span class="hdr-cell"> · {member_cell}</span>' if member_cell else ""
         _iframe_h = 215 + len(pending) * 34
 
-        _st_components.html(
+        st.iframe(
             f'<!doctype html><html><head><meta charset="utf-8">'
             f'<style>'
             f'*{{box-sizing:border-box;margin:0;padding:0;}}'
@@ -2125,7 +2125,7 @@ def _render_cr_wizard() -> None:
                         f'</tr>'
                     )
                 _batch_h = 60 + len(_batch_members) * 50
-                _st_components.html(
+                st.iframe(
                     f'<!doctype html><html><head><meta charset="utf-8">'
                     f'<style>'
                     f'*{{box-sizing:border-box;margin:0;padding:0;}}'
@@ -2609,17 +2609,16 @@ if not st.session_state.authenticated:
     st.title("NWST Chatbot")
     st.write("")
     _auth_href = _build_auth_url(force_login=st.session_state.get("_force_login", False))
-    _st_components.html(
-        f'<style>*{{box-sizing:border-box;margin:0;padding:0}}'
-        f'html,body{{background:transparent;overflow:hidden}}'
-        f'a{{display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
+    st.markdown(
+        f'<a href="{_auth_href}" '
+        f'onclick="event.preventDefault();window.top.location.href=this.href;" '
+        f'style="display:block;width:100%;padding:0.55rem 1rem;text-align:center;'
         f'background-color:{_pc};color:#0d0d0d;border:2px solid {_pc};'
         f'border-radius:0px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
         f'font-weight:700;letter-spacing:1px;text-decoration:none;'
-        f'font-size:0.95rem;cursor:pointer}}</style>'
-        f'<a href="{_auth_href}" target="_top">Sign in</a>',
-        height=50,
-        scrolling=False,
+        f'font-size:0.95rem;box-sizing:border-box;cursor:pointer;">'
+        f'Sign in</a>',
+        unsafe_allow_html=True,
     )
     st.stop()
 
