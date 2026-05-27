@@ -2711,11 +2711,8 @@ else:
         _greeting = "Good night"
 
     _display_name = st.session_state.user_name or st.session_state.login_email or "there"
-    _id_parts = [p for p in [st.session_state.user_cell, st.session_state.user_role] if p]
 
     st.markdown(f"## {_greeting}, {_display_name}")
-    if _id_parts:
-        st.caption(" · ".join(_id_parts))
 
     # Lazy-load member row for sessions that predate user_member_row being cached
     if "user_member_row" not in st.session_state and st.session_state.get("user_profile_found") and st.session_state.get("login_email"):
