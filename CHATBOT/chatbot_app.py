@@ -25,6 +25,9 @@ import base64
 import json
 import random
 import re
+import secrets
+import urllib.parse
+import urllib.request
 
 import streamlit as st
 import streamlit.components.v1 as _st_components
@@ -232,31 +235,125 @@ def _get_openai_key() -> str:
     return key
 
 
-def _get_login_config() -> tuple[str, list[str]]:
-    """Return (password, allowed_emails) from Streamlit secrets or env."""
-    password = ""
-    raw_emails: object = ""
+# ── Auth0 config + helpers ────────────────────────────────────────────────────
+
+def _get_auth0_config() -> tuple[str, str, str, str]:
+    """Return (domain, client_id, client_secret, redirect_uri)."""
+    domain = client_id = client_secret = redirect_uri = ""
     try:
-        password = (st.secrets.get("CHATBOT_PASSWORD") or "").strip()
-        raw_emails = st.secrets.get("CHATBOT_ALLOWED_EMAILS") or ""
+        _a0 = st.secrets.get("auth", {}).get("auth0", {})
+        domain        = _a0.get("server_metadata_url", "").replace("https://", "").split("/")[0]
+        client_id     = _a0.get("client_id", "")
+        client_secret = _a0.get("client_secret", "")
+        redirect_uri  = _a0.get("redirect_uri", "")
     except Exception:
         pass
-    if not password:
-        password = os.getenv("CHATBOT_PASSWORD", "").strip()
-    if not raw_emails:
-        raw_emails = os.getenv("CHATBOT_ALLOWED_EMAILS", "")
-    if isinstance(raw_emails, (list, tuple)):
-        allowed = [e.strip().lower() for e in raw_emails if str(e).strip()]
-    else:
-        allowed = [e.strip().lower() for e in str(raw_emails).split(",") if e.strip()]
-    return password, allowed
+    domain        = domain        or os.getenv("AUTH0_DOMAIN", "nwst-chatbot.us.auth0.com")
+    client_id     = client_id     or os.getenv("AUTH0_CLIENT_ID", "")
+    client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET", "")
+    redirect_uri  = redirect_uri  or os.getenv("AUTH0_REDIRECT_URI", "")
+    return domain, client_id, client_secret, redirect_uri
 
 
-def _check_login(email: str, password: str) -> bool:
-    correct_pw, allowed = _get_login_config()
-    if not correct_pw or not allowed:
+def _allowed_emails() -> list[str]:
+    try:
+        raw = st.secrets.get("CHATBOT_ALLOWED_EMAILS") or []
+    except Exception:
+        raw = os.getenv("CHATBOT_ALLOWED_EMAILS", "")
+    if isinstance(raw, (list, tuple)):
+        return [e.strip().lower() for e in raw if str(e).strip()]
+    return [e.strip().lower() for e in str(raw).split(",") if e.strip()]
+
+
+def _store_oauth_state(state: str) -> None:
+    try:
+        rc = get_redis_client()
+        if rc:
+            rc.setex(f"oauth_state:{state}", 300, "1")
+    except Exception:
+        pass
+
+
+def _consume_oauth_state(state: str) -> bool:
+    try:
+        rc = get_redis_client()
+        if not rc:
+            return True
+        key = f"oauth_state:{state}"
+        val = rc.get(key)
+        if val:
+            rc.delete(key)
+            return True
+    except Exception:
+        return True
+    return False
+
+
+def _build_auth_url() -> str:
+    domain, client_id, _, redirect_uri = _get_auth0_config()
+    state = secrets.token_urlsafe(32)
+    _store_oauth_state(state)
+    qs = urllib.parse.urlencode({
+        "response_type": "code",
+        "client_id":     client_id,
+        "redirect_uri":  redirect_uri,
+        "scope":         "openid email profile",
+        "state":         state,
+    })
+    return f"https://{domain}/authorize?{qs}"
+
+
+def _exchange_code(code: str) -> dict | None:
+    domain, client_id, client_secret, redirect_uri = _get_auth0_config()
+    try:
+        body = urllib.parse.urlencode({
+            "grant_type":    "authorization_code",
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "code":          code,
+            "redirect_uri":  redirect_uri,
+        }).encode()
+        req = urllib.request.Request(
+            f"https://{domain}/oauth/token",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def _get_userinfo(access_token: str) -> dict | None:
+    domain = _get_auth0_config()[0]
+    try:
+        req = urllib.request.Request(
+            f"https://{domain}/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def _send_password_reset(email: str) -> bool:
+    domain, client_id, _, _ = _get_auth0_config()
+    try:
+        body = json.dumps({
+            "client_id":  client_id,
+            "email":      email,
+            "connection": "Username-Password-Authentication",
+        }).encode()
+        req = urllib.request.Request(
+            f"https://{domain}/dbconnections/change_password",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status == 200
+    except Exception:
         return False
-    return email.strip().lower() in allowed and password == correct_pw
 
 
 def _lookup_member_by_email(email: str) -> dict | None:
@@ -2346,7 +2443,7 @@ if not st.session_state.get("authenticated", False):
 for _k, _v in [
     ("user_name", ""), ("user_email", ""), ("user_cell", ""),
     ("user_role", ""), ("user_status", ""), ("user_profile_loaded", False),
-    ("authenticated", False), ("login_email", ""),
+    ("authenticated", False), ("login_email", ""), ("auth_method", ""),
     ("messages", []),
 ]:
     if _k not in st.session_state:
@@ -2370,19 +2467,45 @@ if "cr_field_candidates" not in st.session_state:
 if "cr_field_query" not in st.session_state:
     st.session_state.cr_field_query = ""
 
-# Login gate — show sign-in form and halt if not authenticated
+# ── OAuth callback ─────────────────────────────────────────────────────────────
+
+_qp = st.query_params
+if "code" in _qp and "state" in _qp and not st.session_state.authenticated:
+    _code, _state = _qp["code"], _qp["state"]
+    st.query_params.clear()
+    if not _consume_oauth_state(_state):
+        st.error("Invalid or expired sign-in link — please try again.")
+    else:
+        with st.spinner("Signing you in..."):
+            _tokens = _exchange_code(_code)
+            if _tokens and "access_token" in _tokens:
+                _info = _get_userinfo(_tokens["access_token"])
+                if _info:
+                    _sub = _info.get("sub", "")
+                    _auth_email = _info.get("email", "").strip().lower()
+                    _allowed = _allowed_emails()
+                    if _allowed and _auth_email not in _allowed:
+                        st.error(
+                            f"**{_auth_email}** is not in the allowed-email list. "
+                            "Contact an admin to request access."
+                        )
+                        st.stop()
+                    st.session_state.authenticated = True
+                    st.session_state.login_email   = _auth_email
+                    st.session_state.user_name     = _info.get("name", "")
+                    st.session_state.auth_method   = "Google" if _sub.startswith("google-oauth2") else "email + password"
+                    st.rerun()
+            st.error("Sign-in failed — please try again.")
+
+# Login gate — show sign-in button and halt if not authenticated
 if not st.session_state.authenticated:
-    with st.form("login_form"):
-        _email_input = st.text_input("Email address", placeholder="your@email.com")
-        _pw_input = st.text_input("Password", type="password")
-        _sign_in = st.form_submit_button("Sign in", use_container_width=True)
-    if _sign_in:
-        if _check_login(_email_input, _pw_input):
-            st.session_state.authenticated = True
-            st.session_state.login_email = _email_input.strip().lower()
-            st.rerun()
-        else:
-            st.error("Incorrect email or password.")
+    st.write("")
+    st.link_button(
+        "Sign in",
+        _build_auth_url(),
+        use_container_width=True,
+        type="primary",
+    )
     st.stop()
 
 # Auto-populate from login email (runs once per session)
@@ -2397,6 +2520,13 @@ if not st.session_state.user_profile_loaded:
     st.session_state.user_profile_loaded = True
 
 # Identity display
+if st.session_state.get("_pw_reset_ok") is True:
+    st.info(f"Reset email sent to **{st.session_state.login_email}** — check your inbox.")
+    del st.session_state["_pw_reset_ok"]
+elif st.session_state.get("_pw_reset_ok") is False:
+    st.error("Could not send reset email — try again or contact an admin.")
+    del st.session_state["_pw_reset_ok"]
+
 if st.session_state.user_name and st.session_state.user_cell:
     st.caption(
         f"👤 **{st.session_state.user_name}** · {st.session_state.user_cell}"
@@ -2413,6 +2543,15 @@ else:
     st.session_state.user_cell = _id_col3.text_input(
         "Cell group", value=st.session_state.user_cell, placeholder="Cell group",
     )
+
+_col_pw, _col_out = st.columns(2)
+if st.session_state.get("auth_method") == "email + password":
+    if _col_pw.button("Change password", key="btn_change_pw", use_container_width=True):
+        st.session_state["_pw_reset_ok"] = _send_password_reset(st.session_state.login_email)
+        st.rerun()
+if _col_out.button("Sign out", key="btn_sign_out", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()
 
 # ── data load + refresh ────────────────────────────────────────────────────────
 
