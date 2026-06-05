@@ -20,6 +20,7 @@ jobs:
         run: |
           python - <<'EOF'
           import asyncio
+          import sys
           from playwright.async_api import async_playwright
 
           APPS = [
@@ -29,38 +30,59 @@ jobs:
               ("Chatbot",     "https://nwst-chatbot.streamlit.app/"),
           ]
 
-          async def wake(name: str, url: str, browser):
+          # Possible wake-button texts across Streamlit versions
+          WAKE_TEXTS = [
+              "Yes, get this app back up!",
+              "get this app back up",
+              "Wake up",
+              "Yes, wake it up",
+          ]
+
+          async def wake(name: str, url: str, browser) -> bool:
               page = await browser.new_page()
               try:
                   print(f"[{name}] Visiting {url}")
-                  await page.goto(url, timeout=90_000, wait_until="domcontentloaded")
+                  await page.goto(url, timeout=60_000, wait_until="domcontentloaded")
 
-                  # If the app is sleeping, Streamlit shows a wake-up prompt — click it
-                  try:
-                      btn = page.get_by_text("Yes, get this app back up!")
-                      await btn.wait_for(state="visible", timeout=5_000)
-                      await btn.click()
-                      print(f"[{name}] Clicked wake button")
-                  except Exception:
-                      pass  # App was already awake
+                  # Try each known wake-button text
+                  clicked = False
+                  for text in WAKE_TEXTS:
+                      try:
+                          btn = page.get_by_text(text, exact=False).first
+                          await btn.wait_for(state="visible", timeout=3_000)
+                          await btn.click()
+                          clicked = True
+                          print(f"[{name}] Clicked wake button ({text!r})")
+                          break
+                      except Exception:
+                          continue
 
-                  # Wait for the main Streamlit container to render
-                  await page.wait_for_selector(
-                      "[data-testid='stAppViewContainer']",
-                      timeout=90_000,
-                  )
+                  # If we clicked wake, give the server time to boot; otherwise a short pause suffices
+                  wait_ms = 45_000 if clicked else 8_000
+                  print(f"[{name}] Waiting {wait_ms // 1000}s ...")
+                  await page.wait_for_timeout(wait_ms)
                   print(f"[{name}] OK")
+                  return True
               except Exception as e:
                   print(f"[{name}] FAILED: {e}")
+                  return False
               finally:
                   await page.close()
 
           async def main():
+              failures = []
               async with async_playwright() as p:
                   browser = await p.chromium.launch()
                   for name, url in APPS:
-                      await wake(name, url, browser)
+                      ok = await wake(name, url, browser)
+                      if not ok:
+                          failures.append(name)
                   await browser.close()
+
+              if failures:
+                  print(f"\nFailed apps: {', '.join(failures)}")
+                  sys.exit(1)
+              print("\nAll apps woken successfully.")
 
           asyncio.run(main())
           EOF
