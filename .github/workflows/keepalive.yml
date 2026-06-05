@@ -1,0 +1,66 @@
+name: Keep Streamlit Apps Alive
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Wake apps
+        run: |
+          python - <<'EOF'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          APPS = [
+              ("Attendance",  "https://welcome2nwst.streamlit.app/?page=nwst"),
+              ("Flush",       "https://update-names.streamlit.app/"),
+              ("NWST Health", "https://nwst-health.streamlit.app/?page=cg"),
+              ("Chatbot",     "https://nwst-chatbot.streamlit.app/"),
+          ]
+
+          async def wake(name: str, url: str, browser):
+              page = await browser.new_page()
+              try:
+                  print(f"[{name}] Visiting {url}")
+                  await page.goto(url, timeout=90_000, wait_until="domcontentloaded")
+
+                  # If the app is sleeping, Streamlit shows a wake-up prompt — click it
+                  try:
+                      btn = page.get_by_text("Yes, get this app back up!")
+                      await btn.wait_for(state="visible", timeout=5_000)
+                      await btn.click()
+                      print(f"[{name}] Clicked wake button")
+                  except Exception:
+                      pass  # App was already awake
+
+                  # Wait for the main Streamlit container to render
+                  await page.wait_for_selector(
+                      "[data-testid='stAppViewContainer']",
+                      timeout=90_000,
+                  )
+                  print(f"[{name}] OK")
+              except Exception as e:
+                  print(f"[{name}] FAILED: {e}")
+              finally:
+                  await page.close()
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  for name, url in APPS:
+                      await wake(name, url, browser)
+                  await browser.close()
+
+          asyncio.run(main())
+          EOF
