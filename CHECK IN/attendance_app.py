@@ -1280,27 +1280,11 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow-y:auto; positi
     zoneLabels.transition().duration(250).attr('opacity', 0);
     backBtn.style('pointer-events','all').transition().duration(300).attr('opacity', 1);
 
-    // Show absent panel
     const absentGroups = (d.absent_groups || []).filter(g => g.names.length > 0);
     const totalAbsent = absentGroups.reduce((s, g) => s + g.names.length, 0);
-    const panel = document.getElementById('absent-panel');
-    if (totalAbsent > 0) {{
-      panel.style.setProperty('--cell-color', '#888');
-      const multiGroup = absentGroups.length > 1;
-      let html = `<div style="font-size:9px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:${{d.color}};opacity:0.8;margin-bottom:6px;">${{d.label.toUpperCase()}} — NOT CHECKED IN (${{totalAbsent}})</div>`;
-      for (const grp of absentGroups) {{
-        if (multiGroup) html += `<div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin:5px 0 3px;">${{grp.label}}</div>`;
-        for (const nm of grp.names) {{
-          const tip = nm.tooltip ? ` data-tooltip="Last attended: ${{nm.tooltip}}"` : '';
-          html += `<span class="ab-badge"${{tip}}>${{nm.name}}</span>`;
-        }}
-      }}
-      panel.innerHTML = html;
-      panel.style.display = 'block';
-    }}
 
-    // Build member nodes — use reduced height when absent panel is visible
-    const effectiveH = totalAbsent > 0 ? H - PANEL_H : H;
+    // Build member nodes — full height (absent panel no longer shown here)
+    const effectiveH = H;
     const n = d.members.length;
     const mr = Math.max(Math.min(Math.sqrt((W * effectiveH * 0.45) / (n * Math.PI)), 36), 15);
 
