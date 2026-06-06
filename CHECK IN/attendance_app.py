@@ -886,6 +886,138 @@ def _format_last_attended_label(date_str: str) -> str:
     return f"{parsed.day} {parsed.strftime('%b')} {parsed.year}"
 
 
+def _render_bubble_chart_html(sorted_groups, colors_dict, height=500):
+    """Bubble-pack + ripple-pulse chart. sorted_groups = [(label, names_list), ...]."""
+    data = [{"label": g, "count": len(names)} for g, names in sorted_groups if len(names) > 0]
+    if not data:
+        return ""
+    data_json = json.dumps(data)
+    primary = colors_dict['primary']
+    bg = colors_dict['background']
+    is_dark = bg == '#000000'
+    inner_color = '#1a0030' if is_dark else '#f0e8ff'
+    label_color = 'rgba(255,255,255,0.9)' if is_dark else 'rgba(0,0,0,0.85)'
+    chart_height = height - 20
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
+@keyframes ripple-pulse {{
+  0%   {{ transform:scale(1);   opacity:0.55; }}
+  100% {{ transform:scale(2.7); opacity:0; }}
+}}
+.ripple-ring {{
+  fill:none; stroke-width:1.5px;
+  transform-box:fill-box; transform-origin:center;
+  animation:ripple-pulse 2.8s ease-out infinite;
+  pointer-events:none;
+}}
+</style>
+</head><body>
+<svg id="bsvg" style="width:100%;display:block;"></svg>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function(){{
+  const data = {data_json};
+  const PRIMARY = "{primary}";
+  const INNER   = "{inner_color}";
+  const LABEL   = "{label_color}";
+
+  const W = Math.max(window.innerWidth || 900, 400);
+  const H = {chart_height};
+
+  const maxC = d3.max(data, d => d.count);
+  const minC = d3.min(data, d => d.count);
+  const rMax = Math.min(W / 8, 72);
+  const rScale = d3.scaleSqrt().domain([minC, maxC]).range([20, rMax]);
+
+  const nodes = data.map(d => ({{
+    ...d, r: rScale(d.count),
+    x: W/2 + (Math.random()-0.5)*W*0.25,
+    y: H/2 + (Math.random()-0.5)*H*0.25
+  }}));
+
+  const sim = d3.forceSimulation(nodes)
+    .force('center', d3.forceCenter(W/2, H/2).strength(0.06))
+    .force('charge', d3.forceManyBody().strength(-6))
+    .force('collide', d3.forceCollide(d => d.r + 4).strength(0.95).iterations(5))
+    .stop();
+  for (let i = 0; i < 300; ++i) sim.tick();
+
+  // Clamp to canvas bounds
+  nodes.forEach(d => {{
+    d.x = Math.max(d.r + 4, Math.min(W - d.r - 4, d.x));
+    d.y = Math.max(d.r + 4, Math.min(H - d.r - 4, d.y));
+  }});
+
+  const svg = d3.select('#bsvg').attr('viewBox', `0 0 ${{W}} ${{H}}`).attr('height', H);
+
+  // Filters + gradients
+  const defs = svg.append('defs');
+  ['glow','glow-lg'].forEach((id, i) => {{
+    const f = defs.append('filter').attr('id', id)
+      .attr('x','-60%').attr('y','-60%').attr('width','220%').attr('height','220%');
+    f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation', i===0 ? 4 : 10).attr('result','blur');
+    const m = f.append('feMerge');
+    m.append('feMergeNode').attr('in','blur');
+    m.append('feMergeNode').attr('in','SourceGraphic');
+  }});
+  nodes.forEach((d, i) => {{
+    const gr = defs.append('radialGradient').attr('id',`rg${{i}}`)
+      .attr('cx','36%').attr('cy','33%').attr('r','64%');
+    gr.append('stop').attr('offset','0%').attr('stop-color',PRIMARY).attr('stop-opacity',0.88);
+    gr.append('stop').attr('offset','100%').attr('stop-color',INNER).attr('stop-opacity',1);
+  }});
+
+  const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
+    .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`);
+
+  // 3 ripple rings, staggered
+  [0, 0.9, 1.8].forEach(delay => {{
+    node.append('circle').attr('class','ripple-ring')
+      .attr('r', d => d.r).attr('stroke', PRIMARY).attr('stroke-opacity', 0.4)
+      .style('animation-delay', `${{delay}}s`);
+  }});
+
+  // Main bubble
+  node.append('circle')
+    .attr('r', d => d.r)
+    .attr('fill', (d,i) => `url(#rg${{i}})`)
+    .attr('stroke', PRIMARY).attr('stroke-width', 2)
+    .attr('filter', d => d.r > 46 ? 'url(#glow-lg)' : 'url(#glow)');
+
+  // Abbreviated label helper
+  function abbrev(label, r) {{
+    const words = label.split(' ');
+    if (r < 30) return '';
+    if (r < 42) return words[0].slice(0, 8);
+    if (r < 56) return words.slice(0,2).join(' ').slice(0,14);
+    return label.length > 18 ? label.slice(0,16)+'…' : label;
+  }}
+
+  // Cell name (upper)
+  node.filter(d => d.r >= 30).append('text')
+    .attr('text-anchor','middle').attr('dy','-0.15em')
+    .attr('font-family','Inter,sans-serif').attr('font-weight','700')
+    .attr('font-size', d => `${{Math.min(Math.max(d.r*0.27,9),13)}}px`)
+    .attr('fill', LABEL)
+    .text(d => abbrev(d.label, d.r));
+
+  // Count number (lower, glowing)
+  node.append('text')
+    .attr('text-anchor','middle')
+    .attr('dy', d => d.r >= 30 ? '1.1em' : '0.4em')
+    .attr('font-family','Inter,sans-serif').attr('font-weight','900')
+    .attr('font-size', d => `${{Math.min(Math.max(d.r*0.52,11),30)}}px`)
+    .attr('fill', PRIMARY)
+    .style('filter', `drop-shadow(0 0 5px ${{PRIMARY}})`)
+    .text(d => d.count);
+}})();
+</script>
+</body></html>"""
+
+
 def format_name_badge(name, role, badge_class="name-badge", tooltip=None):
     """Format a name badge with optional role (below name, formatted as 'N. Label:')."""
     if not role:
@@ -4013,60 +4145,8 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Prepare data for bar chart - sort by count descending
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
-        chart_data = {
-            group_label: [group for group, _ in sorted_groups],
-            'Count': [len(names) for _, names in sorted_groups]
-        }
-        df_chart = pd.DataFrame(chart_data)
-
-        # Create bar chart with modern edgy style
-        fig = px.bar(
-            df_chart,
-            x=group_label,
-            y='Count',
-            color='Count',
-            color_continuous_scale=[page_colors['background'], page_colors['primary']],
-            text='Count',
-            labels={'Count': 'Number of People', group_label: group_label},
-            height=400
-        )
-
-        # Update layout for modern edgy style
-        fig.update_layout(
-            plot_bgcolor=page_colors['background'],
-            paper_bgcolor=page_colors['card_bg'],
-            font=dict(family='Inter, sans-serif', size=12, color=page_colors['primary']),
-            xaxis=dict(
-                title=dict(font=dict(size=14, color=page_colors['primary'], family='Inter')),
-                tickfont=dict(color=page_colors['text_muted'], family='Inter'),
-                gridcolor=page_colors['text_muted'],
-                linecolor=page_colors['primary'],
-                linewidth=2,
-                categoryorder='total descending'
-            ),
-            yaxis=dict(
-                title=dict(font=dict(size=14, color=page_colors['primary'], family='Inter')),
-                tickfont=dict(color=page_colors['text_muted'], family='Inter'),
-                gridcolor=page_colors['text_muted'],
-                linecolor=page_colors['primary'],
-                linewidth=2
-            ),
-            coloraxis_showscale=False,
-            showlegend=False,
-            margin=dict(l=50, r=50, t=60, b=50)
-        )
-
-        # Update bar style
-        fig.update_traces(
-            textfont=dict(size=14, color=page_colors['background'], family='Inter', weight='bold'),
-            textposition='inside',
-            insidetextanchor='middle',
-            marker=dict(line=dict(color=page_colors['primary'], width=2)),
-            hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
-            hoverlabel=dict(bgcolor=page_colors['background'], font=dict(color=page_colors['primary'], family='Inter'))
-        )
-
-        st.plotly_chart(fig, width='stretch')
+        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520)
+        st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
         names_title = "Attendees by Zone" if group_by_zone else "Cell Groups"
@@ -5192,57 +5272,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
-        chart_data = {
-            group_label: [group for group, _ in sorted_groups],
-            'Count': [len(names) for _, names in sorted_groups]
-        }
-        df_chart = pd.DataFrame(chart_data)
-
-        fig = px.bar(
-            df_chart,
-            x=group_label,
-            y='Count',
-            color='Count',
-            color_continuous_scale=[colors['background'], colors['primary']],
-            text='Count',
-            labels={'Count': 'Number of People', group_label: group_label},
-            height=400
-        )
-
-        fig.update_layout(
-            plot_bgcolor=colors['background'],
-            paper_bgcolor=colors['card_bg'],
-            font=dict(family='Inter, sans-serif', size=12, color=colors['primary']),
-            xaxis=dict(
-                title=dict(font=dict(size=14, color=colors['primary'], family='Inter')),
-                tickfont=dict(color=colors['text_muted'], family='Inter'),
-                gridcolor=colors['text_muted'],
-                linecolor=colors['primary'],
-                linewidth=2,
-                categoryorder='total descending'
-            ),
-            yaxis=dict(
-                title=dict(font=dict(size=14, color=colors['primary'], family='Inter')),
-                tickfont=dict(color=colors['text_muted'], family='Inter'),
-                gridcolor=colors['text_muted'],
-                linecolor=colors['primary'],
-                linewidth=2
-            ),
-            coloraxis_showscale=False,
-            showlegend=False,
-            margin=dict(l=50, r=50, t=60, b=50)
-        )
-
-        fig.update_traces(
-            textfont=dict(size=14, color=colors['background'], family='Inter', weight='bold'),
-            textposition='inside',
-            insidetextanchor='middle',
-            marker=dict(line=dict(color=colors['primary'], width=2)),
-            hovertemplate='<b>%{x}</b><br>Count: %{y}<extra></extra>',
-            hoverlabel=dict(bgcolor=colors['background'], font=dict(color=colors['primary'], family='Inter'))
-        )
-
-        st.plotly_chart(fig, width='stretch')
+        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520)
+        st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
         names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else "Cell Groups"
