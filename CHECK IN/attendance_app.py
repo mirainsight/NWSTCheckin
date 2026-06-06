@@ -898,12 +898,38 @@ def _format_last_attended_label(date_str: str) -> str:
     return f"{parsed.day} {parsed.strftime('%b')} {parsed.year}"
 
 
-def _compute_absent_groups_for_bubble(absent_names, name_to_role):
-    """Group absent names by role for the bubble chart absent panel."""
+def _compute_absent_groups_for_bubble(absent_names, name_to_role, name_to_last_attended=None):
+    """Group absent names by role for the bubble chart absent panel.
+    Within each group, names are sorted by last-attended bucket (most recent first),
+    then alphabetically within the same bucket.
+    """
     if not absent_names:
         return []
+    la = name_to_last_attended or {}
+
+    def _la_sort_key(name):
+        d = _parse_la_date(la.get(name))
+        if d is None:
+            return (999, 0, name)
+        today = date.today()
+        days_since_saturday = (today.weekday() - 5) % 7
+        most_recent_saturday = today - timedelta(days=days_since_saturday)
+        if days_since_saturday == 0:
+            most_recent_saturday -= timedelta(days=7)
+        delta = (most_recent_saturday - d).days
+        if delta < 7:
+            return (0, 0, name)
+        elif delta < 14:
+            return (1, 0, name)
+        elif delta < 21:
+            return (2, 0, name)
+        elif delta < 28:
+            return (3, 0, name)
+        else:
+            return (4, -d.toordinal(), name)
+
     if not name_to_role:
-        return [{"label": "Not checked in", "names": sorted(absent_names)}]
+        return [{"label": "Not checked in", "names": sorted(absent_names, key=_la_sort_key)}]
     role_to_names = {}
     no_role_names = []
     for name in absent_names:
@@ -915,14 +941,14 @@ def _compute_absent_groups_for_bubble(absent_names, name_to_role):
     groups = []
     for role in sorted(role_to_names.keys(), key=_role_sort_key):
         _, role_label = _role_sort_key(role)
-        groups.append({"label": role_label, "names": sorted(role_to_names[role])})
+        groups.append({"label": role_label, "names": sorted(role_to_names[role], key=_la_sort_key)})
     if no_role_names:
         label = "Remaining" if groups else "Not checked in"
-        groups.append({"label": label, "names": sorted(no_role_names)})
+        groups.append({"label": label, "names": sorted(no_role_names, key=_la_sort_key)})
     return groups
 
 
-def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None, all_members_map=None, name_to_role=None):
+def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None, all_members_map=None, name_to_role=None, name_to_last_attended=None):
     """Bubble-pack + ripple-pulse chart, spread across x-axis by zone with per-zone colors.
     Click a cell bubble to drill down into individual member bubbles.
     sorted_groups = [(label, names_list), ...]
@@ -984,7 +1010,7 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
             for _cl in _zone_to_cells.get(g.lower(), []):
                 all_in_group.extend(_all_mem_lower.get(_cl, []))
         absent_groups = _compute_absent_groups_for_bubble(
-            [n for n in all_in_group if n not in checked_set], name_to_role
+            [n for n in all_in_group if n not in checked_set], name_to_role, name_to_last_attended
         )
         data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names), "absent_groups": absent_groups})
     if not data:
@@ -3935,18 +3961,25 @@ def render_recent_checkins_table(tab_name):
     )
 
 
-def render_checkin_time_chart(tab_name, page_colors):
-    """Cumulative spline chart of check-ins over service time. Saturdays only."""
-    today_str = get_today_myt_date()
+def render_checkin_time_chart(tab_name, page_colors, target_date=None):
+    """Cumulative spline chart of check-ins over service time. Saturdays only.
+    target_date: 'YYYY-MM-DD' string for historical mode; None = live (today)."""
+    if target_date:
+        check_str = target_date
+    else:
+        check_str = get_today_myt_date()
     try:
-        today_dt = datetime.strptime(today_str, "%Y-%m-%d")
+        check_dt = datetime.strptime(check_str, "%Y-%m-%d")
     except Exception:
         return
-    if today_dt.weekday() != 5:  # 5 = Saturday
+    if check_dt.weekday() != 5:  # 5 = Saturday
         return
 
-    refresh_key = st.session_state.get('refresh_counter', 0)
-    _, _, recent_checkins = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
+    if target_date:
+        _, _, recent_checkins = get_attendance_data_for_date(client, SHEET_ID, target_date, tab_name)
+    else:
+        refresh_key = st.session_state.get('refresh_counter', 0)
+        _, _, recent_checkins = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
     if not recent_checkins:
         return
 
@@ -3965,13 +3998,16 @@ def render_checkin_time_chart(tab_name, page_colors):
     if not arrival_minutes:
         return
 
-    SERVICE_START = 13 * 60   # 780  (1:00 PM)
+    SERVICE_START = 13 * 60       # 780  (1:00 PM)
     SERVICE_END   = 16 * 60 + 45  # 1005 (4:45 PM)
     BUCKET        = 5
 
-    now = get_now_myt()
-    now_mins = now.hour * 60 + now.minute
-    chart_end = min(now_mins, SERVICE_END)
+    if target_date:
+        chart_end = SERVICE_END
+    else:
+        now = get_now_myt()
+        now_mins = now.hour * 60 + now.minute
+        chart_end = min(now_mins, SERVICE_END)
 
     # Build bucket list from service start up to current time
     buckets = list(range(SERVICE_START, chart_end + 1, BUCKET))
@@ -4411,7 +4447,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
-        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role)
+        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
@@ -5532,11 +5568,15 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
         st.markdown("---")
 
+        # Check-in time chart (historical, Saturdays only)
+        if tab_name == ATTENDANCE_TAB_NAME:
+            render_checkin_time_chart(tab_name, colors, target_date=target_date)
+
         # Bar Chart Section
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
-        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role)
+        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
