@@ -624,13 +624,19 @@ div[data-testid="stSegmentedControl"] button[aria-checked="true"] {{
         label_visibility="collapsed",
     ) or "Att ↑"
 
+    _tiles_new        = _member_tiles(new_data,       "#3498db")
+    _tiles_regular    = _member_tiles(regular_data,   "#2ecc71")
+    _tiles_irregular  = _member_tiles(irregular_data, "#e67e22")
+    _tiles_follow_up  = _member_tiles(follow_up_data, "#f39c12")
+    _tiles_red        = _member_tiles(red_data,       "#e74c3c")
+    _tiles_graduated  = _member_tiles(graduated_data, "#9b59b6")
     categories = [
-        {"id": "new",       "label": "🔵 New Members",       "color": "#3498db", "pct": new_pct,       "count": new_count,       "wow": wow_new,       "tiles": _member_tiles(new_data,       "#3498db")},
-        {"id": "regular",   "label": "🟢 Regular Members",   "color": "#2ecc71", "pct": regular_pct,   "count": regular_count,   "wow": wow_regular,   "tiles": _member_tiles(regular_data,   "#2ecc71")},
-        {"id": "irregular", "label": "🟠 Irregular Members", "color": "#e67e22", "pct": irregular_pct, "count": irregular_count, "wow": wow_irregular, "tiles": _member_tiles(irregular_data, "#e67e22")},
-        {"id": "follow_up", "label": "🟡 Follow Up",         "color": "#f39c12", "pct": follow_up_pct, "count": follow_up_count, "wow": wow_follow_up, "tiles": _member_tiles(follow_up_data, "#f39c12")},
-        {"id": "red",       "label": "🔴 Red",               "color": "#e74c3c", "pct": red_pct,       "count": red_count,       "wow": wow_red,       "tiles": _member_tiles(red_data,       "#e74c3c")},
-        {"id": "graduated", "label": "⭐ Graduated",         "color": "#9b59b6", "pct": graduated_pct, "count": graduated_count, "wow": wow_graduated, "tiles": _member_tiles(graduated_data, "#9b59b6")},
+        {"id": "new",       "label": "🔵 New Members",       "color": "#3498db", "pct": new_pct,       "count": len(new_data),       "wow": wow_new,       "tiles": _tiles_new},
+        {"id": "regular",   "label": "🟢 Regular Members",   "color": "#2ecc71", "pct": regular_pct,   "count": len(regular_data),   "wow": wow_regular,   "tiles": _tiles_regular},
+        {"id": "irregular", "label": "🟠 Irregular Members", "color": "#e67e22", "pct": irregular_pct, "count": len(irregular_data), "wow": wow_irregular, "tiles": _tiles_irregular},
+        {"id": "follow_up", "label": "🟡 Follow Up",         "color": "#f39c12", "pct": follow_up_pct, "count": len(follow_up_data), "wow": wow_follow_up, "tiles": _tiles_follow_up},
+        {"id": "red",       "label": "🔴 Red",               "color": "#e74c3c", "pct": red_pct,       "count": len(red_data),       "wow": wow_red,       "tiles": _tiles_red},
+        {"id": "graduated", "label": "⭐ Graduated",         "color": "#9b59b6", "pct": graduated_pct, "count": len(graduated_data), "wow": wow_graduated, "tiles": _tiles_graduated},
     ]
 
     st.markdown(_build_cat_rows_html(categories, primary_color), unsafe_allow_html=True)
