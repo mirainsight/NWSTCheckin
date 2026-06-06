@@ -608,6 +608,16 @@ def _nwst_cell_health_render_interactive(ch_ctx: dict):
         red_data       = work_df.iloc[_red_start : _red_start + red_count].copy()
         graduated_data = work_df.iloc[_red_start + red_count :].copy()
 
+    # Recalculate percentages from actual slices so they match the tiles shown
+    _mix_denom_actual = len(new_data) + len(regular_data) + len(irregular_data) + len(follow_up_data)
+    if _mix_denom_actual > 0:
+        new_pct       = len(new_data)       / _mix_denom_actual * 100
+        regular_pct   = len(regular_data)   / _mix_denom_actual * 100
+        irregular_pct = len(irregular_data) / _mix_denom_actual * 100
+        follow_up_pct = len(follow_up_data) / _mix_denom_actual * 100
+    else:
+        new_pct = regular_pct = irregular_pct = follow_up_pct = 0.0
+
     _sc = html.escape(primary_color, quote=True)
     st.markdown(f"""<style>
 div[data-testid="stSegmentedControl"] button[aria-checked="true"] {{
