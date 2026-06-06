@@ -3770,7 +3770,7 @@ def render_checkin_time_chart(tab_name, page_colors):
         y=bar_vals,
         marker_color=bar_color,
         marker_line_width=0,
-        hovertemplate="<b>%{x}</b><br>%{y} arrived<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>%{y} checked in<extra></extra>",
         yaxis="y",
     ))
 
