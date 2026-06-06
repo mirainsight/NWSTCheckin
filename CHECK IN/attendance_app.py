@@ -887,24 +887,34 @@ def _format_last_attended_label(date_str: str) -> str:
 
 
 def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None):
-    """Bubble-pack + ripple-pulse chart, clustered by zone when zone_map is provided.
+    """Bubble-pack + ripple-pulse chart, spread across x-axis by zone with per-zone colors.
     sorted_groups = [(label, names_list), ...]
     zone_map = {cell_name_lowercase: zone_name} from get_cell_to_zone_mapping()
     """
+    # Neon zone color palette — youth vibe on black
+    _ZONE_COLORS = {
+        'syd':      '#00B4FF',  # electric blue
+        'sara':     '#FFE600',  # neon yellow
+        'fabian':   '#00FF88',  # neon mint green
+        'ethanael': '#FF3355',  # neon red/coral
+        'psq':      '#AAAAAA',  # neutral grey
+        'archive':  '#555577',  # muted dark grey
+    }
+    _FALLBACK_COLOR = colors_dict['primary']
+
     data = []
     for g, names in sorted_groups:
         if not names:
             continue
         zone = zone_map.get(g.lower(), g) if zone_map else g
-        data.append({"label": g, "count": len(names), "zone": zone})
+        color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
+        data.append({"label": g, "count": len(names), "zone": zone, "color": color})
     if not data:
         return ""
+
     data_json = json.dumps(data)
     has_zones = bool(zone_map)
-    primary = colors_dict['primary']
     bg = colors_dict['background']
-    is_dark = bg == '#000000'
-    label_color = 'rgba(255,255,255,0.9)' if is_dark else 'rgba(0,0,0,0.85)'
     chart_height = height - 20
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -912,7 +922,7 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 @keyframes ripple-pulse {{
-  0%   {{ transform:scale(1);   opacity:0.55; }}
+  0%   {{ transform:scale(1);   opacity:0.5; }}
   100% {{ transform:scale(2.7); opacity:0; }}
 }}
 .ripple-ring {{
@@ -929,71 +939,81 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 (function(){{
   const data = {data_json};
   const HAS_ZONES = {'true' if has_zones else 'false'};
-  const PRIMARY = "{primary}";
-  const LABEL   = "{label_color}";
 
   const W = Math.max(window.innerWidth || 900, 400);
   const H = {chart_height};
+  const PAD = 24;
 
   const maxC = d3.max(data, d => d.count);
   const minC = d3.min(data, d => d.count);
-  const rMax = Math.min(W / 8, 68);
+  const rMax = Math.min(W / 9, 65);
   const rScale = d3.scaleSqrt().domain([minC, maxC]).range([18, rMax]);
+
+  // Fill opacity: higher count = more opaque (darker intensity)
+  const opacityScale = d3.scaleLinear().domain([minC, maxC]).range([0.18, 0.72]);
+
+  // Zones ordered by total check-ins descending → left to right
+  const zoneTotals = {{}};
+  data.forEach(d => {{ zoneTotals[d.zone] = (zoneTotals[d.zone] || 0) + d.count; }});
+  const zones = Object.keys(zoneTotals).sort((a,b) => zoneTotals[b] - zoneTotals[a]);
+  const nZones = zones.length;
+
+  // Column centre for each zone along x-axis
+  const colW = (W - PAD*2) / nZones;
+  const zoneX = {{}};
+  zones.forEach((z, i) => {{ zoneX[z] = PAD + colW * i + colW / 2; }});
+  const cy = H / 2;
 
   const nodes = data.map(d => ({{
     ...d, r: rScale(d.count),
-    x: W/2 + (Math.random()-0.5)*W*0.3,
-    y: H/2 + (Math.random()-0.5)*H*0.3
+    x: (HAS_ZONES ? zoneX[d.zone] : W/2) + (Math.random()-0.5)*40,
+    y: cy + (Math.random()-0.5)*H*0.3
   }}));
 
-  // Zone cluster centres — evenly spaced around the canvas
-  const zones = [...new Set(data.map(d => d.zone))];
-  const cx = W / 2, cy = H / 2;
-  const clusterR = Math.min(W, H) * (zones.length <= 2 ? 0.18 : 0.28);
-  const zoneCenter = {{}};
-  zones.forEach((z, i) => {{
-    const angle = (2 * Math.PI * i / zones.length) - Math.PI / 2;
-    zoneCenter[z] = {{ x: cx + clusterR * Math.cos(angle), y: cy + clusterR * Math.sin(angle) }};
-  }});
-
   const sim = d3.forceSimulation(nodes)
-    .force('x', d3.forceX(d => HAS_ZONES ? zoneCenter[d.zone].x : cx).strength(HAS_ZONES ? 0.12 : 0.06))
-    .force('y', d3.forceY(d => HAS_ZONES ? zoneCenter[d.zone].y : cy).strength(HAS_ZONES ? 0.12 : 0.06))
-    .force('charge', d3.forceManyBody().strength(-5))
-    .force('collide', d3.forceCollide(d => d.r + 4).strength(0.95).iterations(5))
+    .force('x', d3.forceX(d => HAS_ZONES ? zoneX[d.zone] : W/2).strength(HAS_ZONES ? 0.18 : 0.06))
+    .force('y', d3.forceY(cy).strength(0.04))
+    .force('charge', d3.forceManyBody().strength(-4))
+    .force('collide', d3.forceCollide(d => d.r + 3).strength(0.95).iterations(6))
     .stop();
-  for (let i = 0; i < 350; ++i) sim.tick();
+  for (let i = 0; i < 400; ++i) sim.tick();
 
   nodes.forEach(d => {{
-    d.x = Math.max(d.r + 6, Math.min(W - d.r - 6, d.x));
-    d.y = Math.max(d.r + 6, Math.min(H - d.r - 6, d.y));
+    d.x = Math.max(d.r + PAD, Math.min(W - d.r - PAD, d.x));
+    d.y = Math.max(d.r + 28, Math.min(H - d.r - 6, d.y));
   }});
 
   const svg = d3.select('#bsvg').attr('viewBox', `0 0 ${{W}} ${{H}}`).attr('height', H);
 
-  // Glow filters
+  // Per-zone glow filters keyed by zone color
   const defs = svg.append('defs');
-  ['glow','glow-lg'].forEach((id, i) => {{
-    const f = defs.append('filter').attr('id', id)
-      .attr('x','-60%').attr('y','-60%').attr('width','220%').attr('height','220%');
-    f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation', i===0 ? 4 : 10).attr('result','blur');
-    const m = f.append('feMerge');
-    m.append('feMergeNode').attr('in','blur');
-    m.append('feMergeNode').attr('in','SourceGraphic');
+  const seenColors = new Set();
+  data.forEach(d => {{
+    if (seenColors.has(d.color)) return;
+    seenColors.add(d.color);
+    const safe = d.color.replace('#','');
+    ['','lg'].forEach((suf, i) => {{
+      const f = defs.append('filter').attr('id', `glow-${{safe}}${{suf}}`)
+        .attr('x','-60%').attr('y','-60%').attr('width','220%').attr('height','220%');
+      f.append('feFlood').attr('flood-color', d.color).attr('flood-opacity', i===0?0.4:0.7).attr('result','clr');
+      f.append('feComposite').attr('in','clr').attr('in2','SourceGraphic').attr('operator','in').attr('result','colorBlur');
+      f.append('feGaussianBlur').attr('in','colorBlur').attr('stdDeviation', i===0?4:10).attr('result','blur');
+      const m = f.append('feMerge');
+      m.append('feMergeNode').attr('in','blur');
+      m.append('feMergeNode').attr('in','SourceGraphic');
+    }});
   }});
 
-  // Zone labels — placed above each cluster's topmost bubble
+  // Zone column labels at the top
   if (HAS_ZONES) {{
     zones.forEach(z => {{
-      const zNodes = nodes.filter(d => d.zone === z);
-      const lx = zNodes.reduce((s,d) => s + d.x, 0) / zNodes.length;
-      const topY = Math.min(...zNodes.map(d => d.y - d.r));
+      const zColor = data.find(d => d.zone === z)?.color || '#fff';
       svg.append('text')
-        .attr('x', lx).attr('y', Math.max(topY - 8, 13))
+        .attr('x', zoneX[z]).attr('y', 16)
         .attr('text-anchor', 'middle')
         .attr('font-family', 'Inter,sans-serif').attr('font-weight', '900')
-        .attr('font-size', '11px').attr('letter-spacing', '2px')
-        .attr('fill', PRIMARY).attr('opacity', 0.65)
+        .attr('font-size', '11px').attr('letter-spacing', '2.5px')
+        .attr('fill', zColor).attr('opacity', 0.8)
         .text(z.toUpperCase());
     }});
   }}
@@ -1001,19 +1021,26 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
   const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
     .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`);
 
-  // 3 ripple rings, staggered
+  // 3 ripple rings, staggered, zone-colored
   [0, 0.9, 1.8].forEach(delay => {{
     node.append('circle').attr('class','ripple-ring')
-      .attr('r', d => d.r).attr('stroke', PRIMARY).attr('stroke-opacity', 0.4)
+      .attr('r', d => d.r)
+      .attr('stroke', d => d.color)
+      .attr('stroke-opacity', 0.38)
       .style('animation-delay', `${{delay}}s`);
   }});
 
-  // Main bubble
+  // Filled bubble — zone color, opacity = intensity
   node.append('circle')
     .attr('r', d => d.r)
-    .attr('fill', 'none')
-    .attr('stroke', PRIMARY).attr('stroke-width', 2)
-    .attr('filter', d => d.r > 46 ? 'url(#glow-lg)' : 'url(#glow)');
+    .attr('fill', d => d.color)
+    .attr('fill-opacity', d => opacityScale(d.count))
+    .attr('stroke', d => d.color)
+    .attr('stroke-width', 2)
+    .attr('filter', d => {{
+      const safe = d.color.replace('#','');
+      return d.r > 46 ? `url(#glow-${{safe}}lg)` : `url(#glow-${{safe}})`;
+    }});
 
   // Abbreviated label helper
   function abbrev(label, r) {{
@@ -1029,17 +1056,17 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
     .attr('text-anchor','middle').attr('dy','-0.15em')
     .attr('font-family','Inter,sans-serif').attr('font-weight','700')
     .attr('font-size', d => `${{Math.min(Math.max(d.r*0.27,9),13)}}px`)
-    .attr('fill', LABEL)
+    .attr('fill', 'rgba(255,255,255,0.92)')
     .text(d => abbrev(d.label, d.r));
 
-  // Count number (lower, glowing)
+  // Count number (lower, glowing in zone color)
   node.append('text')
     .attr('text-anchor','middle')
     .attr('dy', d => d.r >= 30 ? '1.1em' : '0.4em')
     .attr('font-family','Inter,sans-serif').attr('font-weight','900')
     .attr('font-size', d => `${{Math.min(Math.max(d.r*0.52,11),30)}}px`)
-    .attr('fill', PRIMARY)
-    .style('filter', `drop-shadow(0 0 5px ${{PRIMARY}})`)
+    .attr('fill', d => d.color)
+    .style('filter', d => `drop-shadow(0 0 5px ${{d.color}})`)
     .text(d => d.count);
 }})();
 </script>
