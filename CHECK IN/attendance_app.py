@@ -886,12 +886,21 @@ def _format_last_attended_label(date_str: str) -> str:
     return f"{parsed.day} {parsed.strftime('%b')} {parsed.year}"
 
 
-def _render_bubble_chart_html(sorted_groups, colors_dict, height=500):
-    """Bubble-pack + ripple-pulse chart. sorted_groups = [(label, names_list), ...]."""
-    data = [{"label": g, "count": len(names)} for g, names in sorted_groups if len(names) > 0]
+def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None):
+    """Bubble-pack + ripple-pulse chart, clustered by zone when zone_map is provided.
+    sorted_groups = [(label, names_list), ...]
+    zone_map = {cell_name_lowercase: zone_name} from get_cell_to_zone_mapping()
+    """
+    data = []
+    for g, names in sorted_groups:
+        if not names:
+            continue
+        zone = zone_map.get(g.lower(), g) if zone_map else g
+        data.append({"label": g, "count": len(names), "zone": zone})
     if not data:
         return ""
     data_json = json.dumps(data)
+    has_zones = bool(zone_map)
     primary = colors_dict['primary']
     bg = colors_dict['background']
     is_dark = bg == '#000000'
@@ -919,6 +928,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 <script>
 (function(){{
   const data = {data_json};
+  const HAS_ZONES = {'true' if has_zones else 'false'};
   const PRIMARY = "{primary}";
   const LABEL   = "{label_color}";
 
@@ -927,31 +937,41 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 
   const maxC = d3.max(data, d => d.count);
   const minC = d3.min(data, d => d.count);
-  const rMax = Math.min(W / 8, 72);
-  const rScale = d3.scaleSqrt().domain([minC, maxC]).range([20, rMax]);
+  const rMax = Math.min(W / 8, 68);
+  const rScale = d3.scaleSqrt().domain([minC, maxC]).range([18, rMax]);
 
   const nodes = data.map(d => ({{
     ...d, r: rScale(d.count),
-    x: W/2 + (Math.random()-0.5)*W*0.25,
-    y: H/2 + (Math.random()-0.5)*H*0.25
+    x: W/2 + (Math.random()-0.5)*W*0.3,
+    y: H/2 + (Math.random()-0.5)*H*0.3
   }}));
 
+  // Zone cluster centres — evenly spaced around the canvas
+  const zones = [...new Set(data.map(d => d.zone))];
+  const cx = W / 2, cy = H / 2;
+  const clusterR = Math.min(W, H) * (zones.length <= 2 ? 0.18 : 0.28);
+  const zoneCenter = {{}};
+  zones.forEach((z, i) => {{
+    const angle = (2 * Math.PI * i / zones.length) - Math.PI / 2;
+    zoneCenter[z] = {{ x: cx + clusterR * Math.cos(angle), y: cy + clusterR * Math.sin(angle) }};
+  }});
+
   const sim = d3.forceSimulation(nodes)
-    .force('center', d3.forceCenter(W/2, H/2).strength(0.06))
-    .force('charge', d3.forceManyBody().strength(-6))
+    .force('x', d3.forceX(d => HAS_ZONES ? zoneCenter[d.zone].x : cx).strength(HAS_ZONES ? 0.12 : 0.06))
+    .force('y', d3.forceY(d => HAS_ZONES ? zoneCenter[d.zone].y : cy).strength(HAS_ZONES ? 0.12 : 0.06))
+    .force('charge', d3.forceManyBody().strength(-5))
     .force('collide', d3.forceCollide(d => d.r + 4).strength(0.95).iterations(5))
     .stop();
-  for (let i = 0; i < 300; ++i) sim.tick();
+  for (let i = 0; i < 350; ++i) sim.tick();
 
-  // Clamp to canvas bounds
   nodes.forEach(d => {{
-    d.x = Math.max(d.r + 4, Math.min(W - d.r - 4, d.x));
-    d.y = Math.max(d.r + 4, Math.min(H - d.r - 4, d.y));
+    d.x = Math.max(d.r + 6, Math.min(W - d.r - 6, d.x));
+    d.y = Math.max(d.r + 6, Math.min(H - d.r - 6, d.y));
   }});
 
   const svg = d3.select('#bsvg').attr('viewBox', `0 0 ${{W}} ${{H}}`).attr('height', H);
 
-  // Filters + gradients
+  // Glow filters
   const defs = svg.append('defs');
   ['glow','glow-lg'].forEach((id, i) => {{
     const f = defs.append('filter').attr('id', id)
@@ -961,6 +981,23 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
     m.append('feMergeNode').attr('in','blur');
     m.append('feMergeNode').attr('in','SourceGraphic');
   }});
+
+  // Zone labels — placed above each cluster's topmost bubble
+  if (HAS_ZONES) {{
+    zones.forEach(z => {{
+      const zNodes = nodes.filter(d => d.zone === z);
+      const lx = zNodes.reduce((s,d) => s + d.x, 0) / zNodes.length;
+      const topY = Math.min(...zNodes.map(d => d.y - d.r));
+      svg.append('text')
+        .attr('x', lx).attr('y', Math.max(topY - 8, 13))
+        .attr('text-anchor', 'middle')
+        .attr('font-family', 'Inter,sans-serif').attr('font-weight', '900')
+        .attr('font-size', '11px').attr('letter-spacing', '2px')
+        .attr('fill', PRIMARY).attr('opacity', 0.65)
+        .text(z.toUpperCase());
+    }});
+  }}
+
   const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
     .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`);
 
@@ -4163,7 +4200,8 @@ def render_dashboard(tab_name, group_by_zone=False):
         # Prepare data for bar chart - sort by count descending
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
-        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520)
+        _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
@@ -5290,7 +5328,8 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
-        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520)
+        _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520, zone_map=_bubble_zone_map)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
