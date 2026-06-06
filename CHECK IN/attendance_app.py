@@ -5447,7 +5447,7 @@ def render_kpi_compact(tab_name):
                   box-shadow:0 4px 16px rgba({r},{g},{b},0.12);">
         <div style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:700;
                     text-transform:uppercase;letter-spacing:2px;color:{muted};">Checked In Today</div>
-        <div style="font-family:'Inter',sans-serif;font-size:1.9rem;font-weight:900;
+        <div style="font-family:'Inter',sans-serif;font-size:4.75rem;font-weight:900;
                     color:{primary};line-height:1.15;">{total_checked_in}</div>
       </div>
       <div style="background:{bg};border-left:4px solid {primary};padding:0.5rem 1rem;
