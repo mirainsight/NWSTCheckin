@@ -1092,10 +1092,20 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
   pointer-events:none; z-index:1000;
 }}
 .ab-badge:hover::after, .ab-badge:hover::before {{ opacity:1; visibility:visible; }}
+#mb-tooltip {{
+  position:fixed; display:none;
+  background:rgba(20,20,20,0.92); color:#fff;
+  padding:4px 10px; border-radius:4px;
+  font-family:'Inter',sans-serif; font-size:12px; font-weight:700;
+  pointer-events:none; z-index:9999;
+  white-space:nowrap; border:1px solid rgba(255,255,255,0.18);
+  box-shadow:0 2px 10px rgba(0,0,0,0.5);
+}}
 </style>
 </head><body>
 <svg id="bsvg" style="width:100%;display:block;position:absolute;top:0;left:0;"></svg>
 <div id="absent-panel"></div>
+<div id="mb-tooltip"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 (function(){{
@@ -1191,6 +1201,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
   function collapse() {{
     if (memberGroup) {{ memberGroup.remove(); memberGroup = null; }}
     document.getElementById('absent-panel').style.display = 'none';
+    document.getElementById('mb-tooltip').style.display = 'none';
     svg.selectAll('g.nd').transition().duration(350).attr('opacity', 1).style('pointer-events','all');
     zoneLabels.transition().duration(350).attr('opacity', 1);
     backBtn.transition().duration(200).attr('opacity', 0).on('end', function() {{
@@ -1285,6 +1296,20 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
     mNode.transition().duration(450).delay((m, i) => i * 18)
       .attr('opacity', 1)
       .attr('transform', m => `translate(${{m.x.toFixed(1)}},${{m.y.toFixed(1)}})`);
+
+    // Full-name tooltip on hover
+    const tip = document.getElementById('mb-tooltip');
+    mNode.style('cursor','default')
+      .on('mouseover', function(event, m) {{
+        tip.textContent = m.name;
+        tip.style.display = 'block';
+        tip.style.color = d.color;
+      }})
+      .on('mousemove', function(event) {{
+        tip.style.left = (event.clientX + 14) + 'px';
+        tip.style.top  = (event.clientY - 30) + 'px';
+      }})
+      .on('mouseout', function() {{ tip.style.display = 'none'; }});
   }}
 
   // ── Cell group bubbles ───────────────────────────────────────────────────
@@ -4497,10 +4522,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
         st.iframe(bubble_html, height=520)
 
-        # Names Breakdown Section
-        names_title = "Attendees by Zone" if group_by_zone else "Cell Groups"
-        st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
-
+        # Names Breakdown Section (hidden — bubble chart drill-down handles per-cell detail)
         # Build search options for the HTML select
         all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
 
@@ -4926,10 +4948,6 @@ def render_dashboard(tab_name, group_by_zone=False):
         </script>
         """
 
-        # Calculate height based on content
-        num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
-        estimated_height = 150 + (num_items * 60)  # Base height + per-item height
-        st.iframe(breakdown_html, height=estimated_height)
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -4942,10 +4960,8 @@ def render_dashboard(tab_name, group_by_zone=False):
         </div>
         """, unsafe_allow_html=True)
 
-        # Show all members greyed out even when no check-ins
+        # Empty state breakdown (hidden — removed with main breakdown section)
         if all_members_by_cell_group:
-            st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Cell Groups"}</div>', unsafe_allow_html=True)
-
             # Build search options for the HTML select (empty state)
             all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
 
@@ -5297,10 +5313,7 @@ def render_dashboard(tab_name, group_by_zone=False):
             </script>
             """
 
-            # Calculate height and render
-            num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
-            estimated_height_empty = 150 + (num_items_empty * 60)
-            st.iframe(empty_breakdown_html, height=estimated_height_empty)
+            pass  # breakdown iframe removed
 
 
 if hasattr(st, "fragment"):
