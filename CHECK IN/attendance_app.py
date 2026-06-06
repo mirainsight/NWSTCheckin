@@ -4225,10 +4225,7 @@ def render_dashboard(tab_name, group_by_zone=False):
 
     if total_checked_in > 0:
         # Bar Chart Section
-        chart_title = "Attendance by Zone" if group_by_zone else "Check-Ins by Cell Group"
-        st.markdown(f'<div class="section-title">{chart_title}</div>', unsafe_allow_html=True)
-
-        # Prepare data for bar chart - sort by count descending
+        # Prepare data for bubble chart - sort by count descending
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
@@ -6553,11 +6550,3 @@ st.markdown(f"""
 <a href="#top-anchor" id="scroll-to-top">↑</a>
 """, unsafe_allow_html=True)
 
-# Footer
-st.markdown("---")
-st.markdown(
-    f"<div style='text-align: center; color: {page_colors['text_muted']}; font-size: 0.9em;'>"
-    "Church Check-In System | Powered by Streamlit"
-    "</div>",
-    unsafe_allow_html=True
-)
