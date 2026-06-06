@@ -3824,7 +3824,7 @@ def render_checkin_time_chart(tab_name, page_colors):
     st.markdown(
         f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.1rem; font-weight: 700; '
         f'color: {primary}; text-transform: uppercase; letter-spacing: 2px; '
-        f'margin: 1rem 0 0.25rem 0;">Check-In Times</div>',
+        f'margin: 1rem 0 1rem 0;">Check-In Times</div>',
         unsafe_allow_html=True
     )
     st.plotly_chart(fig, width='stretch')
