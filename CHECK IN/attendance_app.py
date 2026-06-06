@@ -974,7 +974,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
   // Main bubble
   node.append('circle')
     .attr('r', d => d.r)
-    .attr('fill', PRIMARY)
+    .attr('fill', 'none')
     .attr('stroke', PRIMARY).attr('stroke-width', 2)
     .attr('filter', d => d.r > 46 ? 'url(#glow-lg)' : 'url(#glow)');
 
