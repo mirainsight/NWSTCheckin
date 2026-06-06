@@ -4516,31 +4516,6 @@ def render_dashboard(tab_name, group_by_zone=False):
         _bubble_html_top = _render_bubble_chart_html(_bubble_sorted, page_colors, height=520, zone_map=_bubble_zone_map_top, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
         st.iframe(_bubble_html_top, height=880)
 
-    # KPI Cards - Total Checked In and Total Newcomers (side by side)
-    kpi_col1, kpi_col2 = st.columns(2)
-    with kpi_col1:
-        st.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-label">Total Checked In Today</div>
-            <div class="kpi-number">{total_checked_in}</div>
-            <div class="kpi-subtitle">People checked in as of now</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with kpi_col2:
-        st.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-label">Total Newcomers</div>
-            <div class="kpi-number">{total_newcomers}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Display newcomers list if any
-        if newcomers_list:
-            st.markdown("### Newcomer Details")
-            for newcomer in newcomers_list:
-                name = newcomer['name'] if newcomer['name'] else "(No name)"
-                cell = newcomer['cell'] if newcomer['cell'] else "(Not assigned)"
-                st.markdown(f"- **{name}** → {cell}")
 
     # Check-in time chart (main tab, Saturdays only)
     if tab_name == ATTENDANCE_TAB_NAME:
@@ -5444,6 +5419,46 @@ if hasattr(st, "fragment"):
 else:
     def render_ministry_check_in_form_fragment(selected_ministry, form_key, page_label="Ministry Check In"):
         render_ministry_check_in_form(selected_ministry, form_key, page_label)
+
+
+def render_kpi_compact(tab_name):
+    """Compact KPI bar shown above the check-in form."""
+    colors = get_daily_colors()
+    refresh_key = st.session_state.get('refresh_counter', 0)
+    _, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
+    total_checked_in = len(checked_in_list)
+    total_newcomers, newcomers_list = get_newcomers_count(client, SHEET_ID, refresh_key)
+    primary = colors['primary']
+    bg = colors['card_bg']
+    muted = colors['text_muted']
+    hex_c = primary.lstrip('#')
+    r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
+    newcomer_detail = ''
+    if newcomers_list:
+        items = ' &nbsp;·&nbsp; '.join([
+            f'<b>{n["name"] or "(No name)"}</b> → {n["cell"] or "?"}'
+            for n in newcomers_list
+        ])
+        newcomer_detail = f'<div style="margin-top:0.4rem;font-size:0.78rem;color:{muted};line-height:1.5;">{items}</div>'
+    st.markdown(f"""
+    <div style="display:flex;gap:0.75rem;margin-bottom:0.75rem;">
+      <div style="flex:1;background:{bg};border-left:4px solid {primary};padding:0.6rem 1rem;
+                  box-shadow:0 4px 16px rgba({r},{g},{b},0.12);">
+        <div style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:700;
+                    text-transform:uppercase;letter-spacing:2px;color:{muted};">Checked In Today</div>
+        <div style="font-family:'Inter',sans-serif;font-size:1.9rem;font-weight:900;
+                    color:{primary};line-height:1.15;">{total_checked_in}</div>
+      </div>
+      <div style="flex:1;background:{bg};border-left:4px solid {primary};padding:0.6rem 1rem;
+                  box-shadow:0 4px 16px rgba({r},{g},{b},0.12);">
+        <div style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:700;
+                    text-transform:uppercase;letter-spacing:2px;color:{muted};">Newcomers</div>
+        <div style="font-family:'Inter',sans-serif;font-size:1.9rem;font-weight:900;
+                    color:{primary};line-height:1.15;">{total_newcomers}</div>
+        {newcomer_detail}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=False):
@@ -6786,6 +6801,7 @@ if page == "NWST Check In":
     if viewing_historical:
         render_historical_dashboard(ATTENDANCE_TAB_NAME, historical_date, display_colors)
     else:
+        render_kpi_compact(ATTENDANCE_TAB_NAME)
         render_check_in_form_fragment(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
@@ -6829,6 +6845,7 @@ elif page == "Leaders Discipleship":
     if viewing_historical:
         render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
     else:
+        render_kpi_compact(LEADERS_ATTENDANCE_TAB_NAME)
         render_check_in_form_fragment(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
