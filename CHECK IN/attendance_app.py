@@ -3294,17 +3294,9 @@ def render_ministry_dashboard(selected_ministry):
             }}
         </style>
         <div class="controls-row">
-            <select id="ministrySearchSelect" class="search-select" onchange="jumpToDept(this.value)">
-                <option value="">Jump to...</option>
         """
 
-        # Add search options to dropdown
-        for _, dept_name in searchable_depts:
-            target_id = f"dept-{dept_name.replace(' ', '-').replace(':', '-').replace(chr(39), '').lower()}"
-            ministry_breakdown_html += f'<option value="{target_id}">{dept_name}</option>'
-
         ministry_breakdown_html += f"""
-            </select>
             <button id="ministryToggleAllBtn" class="expand-collapse-btn" onclick="toggleAllMinistry()">Expand All</button>
         </div>
         """
@@ -3433,16 +3425,9 @@ def render_ministry_dashboard(selected_ministry):
                 .highlight {{ box-shadow: 0 0 20px {page_colors['primary']}; background-color: {page_colors['light']}20; }}
             </style>
             <div class="controls-row">
-                <select id="emptyMinistrySearchSelect" class="search-select" onchange="jumpToDeptEmpty(this.value)">
-                    <option value="">Jump to...</option>
             """
 
-            for dept_name in all_depts_empty:
-                target_id = f"empty-dept-{dept_name.replace(' ', '-').replace(':', '-').replace(chr(39), '').lower()}"
-                empty_ministry_html += f'<option value="{target_id}">{dept_name}</option>'
-
             empty_ministry_html += f"""
-                </select>
                 <button id="emptyMinistryToggleAllBtn" class="expand-collapse-btn" onclick="toggleAllMinistryEmpty()">Expand All</button>
             </div>
             """
@@ -3969,7 +3954,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         st.plotly_chart(fig, width='stretch')
 
         # Names Breakdown Section
-        names_title = "Attendees by Zone" if group_by_zone else "Attendees by Cell Group"
+        names_title = "Attendees by Zone" if group_by_zone else "Cell Groups"
         st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
 
         # Build search options for the HTML select
@@ -4231,25 +4216,9 @@ def render_dashboard(tab_name, group_by_zone=False):
             }}
         </style>
         <div class="controls-row">
-            <select id="searchSelect" class="search-select" onchange="jumpToGroup(this.value)">
-                <option value="">Jump to...</option>
         """
 
-        # Add search options to dropdown
-        for group_type, group_name in searchable_groups:
-            if group_type == "zone":
-                target_id = f"group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = f"Zone: {group_name}"
-            elif group_type == "cell":
-                target_id = f"cell-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = f"Cell: {group_name}"
-            else:
-                target_id = f"group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = group_name
-            breakdown_html += f'<option value="{target_id}">{display_name}</option>'
-
         breakdown_html += f"""
-            </select>
             <button id="toggleAllBtn" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
         </div>
         """
@@ -4431,7 +4400,7 @@ def render_dashboard(tab_name, group_by_zone=False):
 
         # Show all members greyed out even when no check-ins
         if all_members_by_cell_group:
-            st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Attendees by Cell Group"}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-title">{"Attendees by Zone" if group_by_zone else "Cell Groups"}</div>', unsafe_allow_html=True)
 
             # Build search options for the HTML select (empty state)
             all_cell_groups_search = sorted(all_members_by_cell_group.keys(), key=str.lower)
@@ -4661,25 +4630,9 @@ def render_dashboard(tab_name, group_by_zone=False):
                 }}
             </style>
             <div class="controls-row">
-                <select id="searchSelectEmpty" class="search-select" onchange="jumpToGroup(this.value)">
-                    <option value="">Jump to...</option>
             """
 
-            # Add search options to dropdown
-            for group_type, group_name in searchable_groups_empty:
-                if group_type == "zone":
-                    target_id = f"group-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = f"Zone: {group_name}"
-                elif group_type == "cell":
-                    target_id = f"cell-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = f"Cell: {group_name}"
-                else:
-                    target_id = f"group-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = group_name
-                empty_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
-
             empty_breakdown_html += f"""
-                </select>
                 <button id="toggleAllBtnEmpty" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
             </div>
             """
@@ -5177,7 +5130,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         st.plotly_chart(fig, width='stretch')
 
         # Names Breakdown Section
-        names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
+        names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else "Cell Groups"
         st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
         # Build search options for the HTML select (historical)
@@ -5439,25 +5392,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
             }}
         </style>
         <div class="controls-row">
-            <select id="searchSelectHist" class="search-select" onchange="jumpToGroup(this.value)">
-                <option value="">Jump to...</option>
         """
 
-        # Add search options to dropdown
-        for group_type, group_name in searchable_groups_hist:
-            if group_type == "zone":
-                target_id = f"hist-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = f"Zone: {group_name}"
-            elif group_type == "cell":
-                target_id = f"hist-cell-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = f"Cell: {group_name}"
-            else:
-                target_id = f"hist-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                display_name = group_name
-            hist_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
-
         hist_breakdown_html += f"""
-            </select>
             <button id="toggleAllBtnHist" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
         </div>
         """
@@ -5609,7 +5546,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
 
         # Show all members greyed out even when no check-ins
         if all_members_by_cell_group:
-            names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else f"Attendees by Cell Group on {display_date_formatted}"
+            names_title = f"Attendees by Zone on {display_date_formatted}" if group_by_zone else "Cell Groups"
             st.markdown(f'<div class="historical-section-title">{names_title}</div>', unsafe_allow_html=True)
 
             # Build search options for the HTML select (historical empty state)
@@ -5840,25 +5777,9 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
                 }}
             </style>
             <div class="controls-row">
-                <select id="searchSelectHistEmpty" class="search-select" onchange="jumpToGroup(this.value)">
-                    <option value="">Jump to...</option>
             """
 
-            # Add search options to dropdown
-            for group_type, group_name in searchable_groups_hist_empty:
-                if group_type == "zone":
-                    target_id = f"hist-empty-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = f"Zone: {group_name}"
-                elif group_type == "cell":
-                    target_id = f"hist-cell-empty-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = f"Cell: {group_name}"
-                else:
-                    target_id = f"hist-empty-group-{group_name.replace(' ', '-').replace(chr(39), '').lower()}"
-                    display_name = group_name
-                hist_empty_breakdown_html += f'<option value="{target_id}">{display_name}</option>'
-
             hist_empty_breakdown_html += f"""
-                </select>
                 <button id="toggleAllBtnHistEmpty" class="expand-collapse-btn" onclick="toggleAll()">Expand All</button>
             </div>
             """
