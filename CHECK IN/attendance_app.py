@@ -1052,6 +1052,46 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
   padding:10px 14px; box-sizing:border-box;
   font-family:'Inter',sans-serif;
 }}
+.ab-badge {{
+  background:transparent;
+  border:1px solid var(--cell-color, rgba(255,255,255,0.4));
+  color:var(--cell-color, rgba(255,255,255,0.75));
+  padding:0.35rem 0.85rem;
+  margin:3px 3px;
+  border-radius:0px;
+  display:inline-block;
+  font-family:'Inter',sans-serif;
+  font-weight:600;
+  font-size:0.82rem;
+  letter-spacing:0.5px;
+  transition:all 0.2s ease;
+  cursor:default;
+  position:relative;
+  opacity:0.62;
+}}
+.ab-badge:hover {{ opacity:1; transform:scale(1.05); }}
+.ab-badge::after {{
+  content:attr(data-tooltip);
+  position:absolute; bottom:125%; left:50%;
+  transform:translateX(-50%);
+  background:#2a2a2a; color:#fff;
+  padding:0.4rem 0.65rem; border-radius:4px;
+  font-size:0.72rem; font-weight:400;
+  white-space:nowrap; border:1px solid #444;
+  opacity:0; visibility:hidden;
+  transition:opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events:none; z-index:1000;
+  box-shadow:0 2px 8px rgba(0,0,0,0.5);
+}}
+.ab-badge::before {{
+  content:''; position:absolute; bottom:115%; left:50%;
+  transform:translateX(-50%);
+  border:5px solid transparent; border-top-color:#2a2a2a;
+  opacity:0; visibility:hidden;
+  transition:opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events:none; z-index:1000;
+}}
+.ab-badge:hover::after, .ab-badge:hover::before {{ opacity:1; visibility:visible; }}
 </style>
 </head><body>
 <svg id="bsvg" style="width:100%;display:block;position:absolute;top:0;left:0;"></svg>
@@ -1169,12 +1209,14 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
     const totalAbsent = absentGroups.reduce((s, g) => s + g.names.length, 0);
     const panel = document.getElementById('absent-panel');
     if (totalAbsent > 0) {{
+      panel.style.setProperty('--cell-color', d.color);
       const multiGroup = absentGroups.length > 1;
       let html = `<div style="font-size:9px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:${{d.color}};opacity:0.8;margin-bottom:6px;">${{d.label.toUpperCase()}} — NOT CHECKED IN (${{totalAbsent}})</div>`;
       for (const grp of absentGroups) {{
         if (multiGroup) html += `<div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin:5px 0 3px;">${{grp.label}}</div>`;
-        for (const name of grp.names) {{
-          html += `<span style="display:inline-block;font-size:11px;font-weight:700;color:rgba(255,255,255,0.82);background:rgba(255,255,255,0.07);border-radius:3px;padding:2px 8px;margin:2px 3px;">${{name}}</span>`;
+        for (const nm of grp.names) {{
+          const tip = nm.tooltip ? ` data-tooltip="Last attended: ${{nm.tooltip}}"` : '';
+          html += `<span class="ab-badge"${{tip}}>${{nm.name}}</span>`;
         }}
       }}
       panel.innerHTML = html;
