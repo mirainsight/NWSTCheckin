@@ -4947,6 +4947,13 @@ def render_dashboard(tab_name, group_by_zone=False):
         </script>
         """
 
+        # Render breakdown at the bottom of the page
+        names_title = "Attendees by Zone" if group_by_zone else "Cell Groups"
+        st.markdown(f'<div class="section-title">{names_title}</div>', unsafe_allow_html=True)
+        num_items = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+        estimated_height = 150 + (num_items * 60)
+        st.iframe(breakdown_html, height=estimated_height)
+
     else:
         # Show empty state message and all pending members greyed out
         st.markdown(f"""
@@ -5312,7 +5319,11 @@ def render_dashboard(tab_name, group_by_zone=False):
             </script>
             """
 
-            pass  # breakdown iframe removed
+            names_title_empty = "Attendees by Zone" if group_by_zone else "Cell Groups"
+            st.markdown(f'<div class="section-title">{names_title_empty}</div>', unsafe_allow_html=True)
+            num_items_empty = len(all_members_by_cell_group) if not group_by_zone else sum(len(cells) for cells in zone_cell_all_members.values()) if 'zone_cell_all_members' in dir() else 10
+            estimated_height_empty = 150 + (num_items_empty * 60)
+            st.iframe(empty_breakdown_html, height=estimated_height_empty)
 
 
 if hasattr(st, "fragment"):
