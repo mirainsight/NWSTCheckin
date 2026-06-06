@@ -2997,6 +2997,7 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
         """, unsafe_allow_html=True)
 
     render_birthdays_notice_board(page_colors)
+    render_kpi_compact(tab_name)
 
     # Display form in centered column
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -5441,15 +5442,15 @@ def render_kpi_compact(tab_name):
         ])
         newcomer_detail = f'<div style="margin-top:0.4rem;font-size:0.78rem;color:{muted};line-height:1.5;">{items}</div>'
     st.markdown(f"""
-    <div style="display:flex;gap:0.75rem;margin-bottom:0.75rem;">
-      <div style="flex:1;background:{bg};border-left:4px solid {primary};padding:0.6rem 1rem;
+    <div style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:0.75rem;">
+      <div style="background:{bg};border-left:4px solid {primary};padding:0.5rem 1rem;
                   box-shadow:0 4px 16px rgba({r},{g},{b},0.12);">
         <div style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:700;
                     text-transform:uppercase;letter-spacing:2px;color:{muted};">Checked In Today</div>
         <div style="font-family:'Inter',sans-serif;font-size:1.9rem;font-weight:900;
                     color:{primary};line-height:1.15;">{total_checked_in}</div>
       </div>
-      <div style="flex:1;background:{bg};border-left:4px solid {primary};padding:0.6rem 1rem;
+      <div style="background:{bg};border-left:4px solid {primary};padding:0.5rem 1rem;
                   box-shadow:0 4px 16px rgba({r},{g},{b},0.12);">
         <div style="font-family:'Inter',sans-serif;font-size:0.65rem;font-weight:700;
                     text-transform:uppercase;letter-spacing:2px;color:{muted};">Newcomers</div>
@@ -6801,7 +6802,6 @@ if page == "NWST Check In":
     if viewing_historical:
         render_historical_dashboard(ATTENDANCE_TAB_NAME, historical_date, display_colors)
     else:
-        render_kpi_compact(ATTENDANCE_TAB_NAME)
         render_check_in_form_fragment(ATTENDANCE_TAB_NAME, "attendance_form", "NWST Check In")
         # Refresh + Update Names toolbar
         st.markdown("<br><br>", unsafe_allow_html=True)
@@ -6845,7 +6845,6 @@ elif page == "Leaders Discipleship":
     if viewing_historical:
         render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
     else:
-        render_kpi_compact(LEADERS_ATTENDANCE_TAB_NAME)
         render_check_in_form_fragment(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
