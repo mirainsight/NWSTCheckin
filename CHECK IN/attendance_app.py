@@ -4423,6 +4423,13 @@ def render_dashboard(tab_name, group_by_zone=False):
     </style>
     """, unsafe_allow_html=True)
 
+    # Bubble chart — shown right after the recent check-ins table, before KPI cards
+    if total_checked_in > 0:
+        _bubble_sorted = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
+        _bubble_zone_map_top, _ = get_cell_to_zone_mapping(client, SHEET_ID)
+        _bubble_html_top = _render_bubble_chart_html(_bubble_sorted, page_colors, height=520, zone_map=_bubble_zone_map_top, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
+        st.iframe(_bubble_html_top, height=520)
+
     # KPI Cards - Total Checked In and Total Newcomers (side by side)
     kpi_col1, kpi_col2 = st.columns(2)
     with kpi_col1:
@@ -4514,14 +4521,6 @@ def render_dashboard(tab_name, group_by_zone=False):
         """, unsafe_allow_html=True)
 
     if total_checked_in > 0:
-        # Bar Chart Section
-        # Prepare data for bubble chart - sort by count descending
-        sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
-
-        _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
-        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
-        st.iframe(bubble_html, height=520)
-
         # Names Breakdown Section (hidden — bubble chart drill-down handles per-cell detail)
         # Build search options for the HTML select
         all_cell_groups_search = sorted(set(all_members_by_cell_group.keys()) | set(display_data.keys()), key=str.lower)
