@@ -868,6 +868,9 @@ def _format_last_attended_label(date_str: str) -> str:
     today = date.today()
     days_since_saturday = (today.weekday() - 5) % 7
     most_recent_saturday = today - timedelta(days=days_since_saturday)
+    # If today is Saturday, today's service hasn't passed yet — use last Saturday
+    if days_since_saturday == 0:
+        most_recent_saturday -= timedelta(days=7)
     delta = (most_recent_saturday - parsed).days
     if delta < 0:
         return date_str
