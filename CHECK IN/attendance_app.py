@@ -3763,7 +3763,8 @@ def render_checkin_time_chart(tab_name, page_colors):
         y_vals.append(cumulative)
 
     primary = page_colors['primary']
-    fill_color = f"{primary}20"  # ~12% opacity fill
+    _h = primary.lstrip('#')
+    fill_color = f"rgba({int(_h[0:2],16)},{int(_h[2:4],16)},{int(_h[4:6],16)},0.12)"
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
