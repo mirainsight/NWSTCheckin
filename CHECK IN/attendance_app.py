@@ -1370,7 +1370,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow-y:auto; positi
 
     if (checkedGroups.length > 0) {{
       const multiChecked = checkedGroups.length > 1;
-      lpHtml += `<div class="lp-section"><div class="lp-section-title" style="color:${{d.color}};opacity:0.7;">Checked In (${{totalChecked}})</div>`;
+      lpHtml += `<div class="lp-section">`;
       for (const grp of checkedGroups) {{
         if (multiChecked) lpHtml += `<span class="lp-role-label">${{grp.label}}</span>`;
         for (const nm of grp.names) {{
@@ -1383,7 +1383,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow-y:auto; positi
 
     if (absentGroups.length > 0) {{
       const multiAbsent = absentGroups.length > 1;
-      lpHtml += `<div class="lp-section"><div class="lp-section-title">Not Checked In (${{totalAbsentLP}})</div>`;
+      lpHtml += `<div class="lp-section">`;
       for (const grp of absentGroups) {{
         if (multiAbsent) lpHtml += `<span class="lp-role-label">${{grp.label}}</span>`;
         for (const nm of grp.names) {{
