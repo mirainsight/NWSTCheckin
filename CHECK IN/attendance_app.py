@@ -3741,36 +3741,52 @@ def render_checkin_time_chart(tab_name, page_colors):
         if b in bucket_counts:
             bucket_counts[b] += 1
 
-    # Build cumulative series
+    # Build per-bucket and cumulative series together
     cumulative = 0
     x_labels = []
+    bar_vals = []
     y_vals = []
     for b in buckets:
-        cumulative += bucket_counts[b]
+        count = bucket_counts[b]
+        cumulative += count
         h, m = divmod(b, 60)
         h12 = h % 12 or 12
         suffix = "AM" if h < 12 else "PM"
         x_labels.append(f"{h12}:{m:02d} {suffix}")
+        bar_vals.append(count)
         y_vals.append(cumulative)
 
     primary = page_colors['primary']
     _h = primary.lstrip('#')
-    fill_color = f"rgba({int(_h[0:2],16)},{int(_h[2:4],16)},{int(_h[4:6],16)},0.12)"
+    r, g, b_c = int(_h[0:2], 16), int(_h[2:4], 16), int(_h[4:6], 16)
+    bar_color  = f"rgba({r},{g},{b_c},0.35)"
+    grid_color = f"rgba({r},{g},{b_c},0.10)"
 
     fig = go.Figure()
+
+    # Bars: arrivals per 20-min bucket (left axis)
+    fig.add_trace(go.Bar(
+        x=x_labels,
+        y=bar_vals,
+        marker_color=bar_color,
+        marker_line_width=0,
+        hovertemplate="<b>%{x}</b><br>%{y} arrived<extra></extra>",
+        yaxis="y",
+    ))
+
+    # Spline: cumulative total (right axis)
     fig.add_trace(go.Scatter(
         x=x_labels,
         y=y_vals,
         mode="lines",
         line=dict(shape="spline", smoothing=1.2, width=2.5, color=primary),
-        fill="tozeroy",
-        fillcolor=fill_color,
-        hovertemplate="<b>%{x}</b><br>%{y} checked in<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>%{y} total<extra></extra>",
+        yaxis="y2",
     ))
 
     fig.update_layout(
         height=220,
-        margin=dict(l=40, r=20, t=20, b=40),
+        margin=dict(l=40, r=40, t=20, b=40),
         plot_bgcolor=page_colors['background'],
         paper_bgcolor=page_colors['card_bg'],
         font=dict(family="Inter, sans-serif", size=11, color=page_colors['text']),
@@ -3779,7 +3795,7 @@ def render_checkin_time_chart(tab_name, page_colors):
         hoverlabel=dict(bgcolor="#1a1a1a", font_color=page_colors['text'], font_family="Inter"),
         xaxis=dict(
             tickfont=dict(color=page_colors['text_muted'], size=10),
-            linecolor=page_colors['primary'],
+            linecolor=primary,
             linewidth=1,
             showgrid=False,
             zeroline=False,
@@ -3787,13 +3803,21 @@ def render_checkin_time_chart(tab_name, page_colors):
             ticktext=[x_labels[0], x_labels[-1]],
         ),
         yaxis=dict(
-            tickfont=dict(color=page_colors['text_muted'], size=10),
-            linecolor=page_colors['primary'],
-            linewidth=1,
-            showgrid=True,
-            gridcolor=f"rgba({int(_h[0:2],16)},{int(_h[2:4],16)},{int(_h[4:6],16)},0.094)",
+            tickfont=dict(color=f"rgba({r},{g},{b_c},0.5)", size=10),
+            showgrid=False,
             zeroline=False,
             rangemode="tozero",
+            showline=False,
+        ),
+        yaxis2=dict(
+            tickfont=dict(color=page_colors['text_muted'], size=10),
+            showgrid=True,
+            gridcolor=grid_color,
+            zeroline=False,
+            rangemode="tozero",
+            overlaying="y",
+            side="right",
+            showline=False,
         ),
     )
 
