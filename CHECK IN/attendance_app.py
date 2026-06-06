@@ -900,6 +900,27 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
         'psq':      '#AAAAAA',
         'archive':  '#555577',
     }
+    _CELL_SHORT = {
+        'anchor street':        'Anchor',
+        'aster street':         'Aster',
+        'crown street':         'Crown',
+        'fishers street':       'Fishers',
+        'his street':           'HIS',
+        'home street':          'Home',
+        'king street':          'King',
+        'life street':          'Life',
+        'meta street':          'Meta',
+        'royal street':         'Royal',
+        'shepherds street':     'Shepherds',
+        'street fire':          'Fire',
+        'street forth':         'Forth',
+        'street lights':        'Lights',
+        'street runners':       'Runners',
+        'via dolorosa street':  'Via Dolorosa',
+        'narrowstreet core team': 'Core Team',
+        'archive':              'Archive',
+        '*not sure yet':        '?',
+    }
     _FALLBACK_COLOR = colors_dict['primary']
 
     data = []
@@ -908,7 +929,8 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
             continue
         zone = zone_map.get(g.lower(), g) if zone_map else g
         color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
-        data.append({"label": g, "count": len(names), "zone": zone, "color": color, "members": list(names)})
+        short = _CELL_SHORT.get(g.lower(), g)
+        data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names)})
     if not data:
         return ""
 
@@ -1121,20 +1143,12 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
     .attr('stroke', d => d.color).attr('stroke-width', 2)
     .attr('filter', d => {{ const s = d.color.replace('#',''); return d.r > 46 ? `url(#glow-${{s}}lg)` : `url(#glow-${{s}})`; }});
 
-  function abbrev(label, r) {{
-    const w = label.split(' ');
-    if (r < 30) return '';
-    if (r < 42) return w[0].slice(0, 8);
-    if (r < 56) return w.slice(0,2).join(' ').slice(0,14);
-    return label.length > 18 ? label.slice(0,16)+'…' : label;
-  }}
-
-  node.filter(d => d.r >= 30).append('text')
+  node.filter(d => d.r >= 26).append('text')
     .attr('text-anchor','middle').attr('dy','-0.15em')
     .attr('font-family','Inter,sans-serif').attr('font-weight','700')
-    .attr('font-size', d => `${{Math.min(Math.max(d.r*0.27,9),13)}}px`)
+    .attr('font-size', d => `${{Math.min(Math.max(d.r*0.3,9),13)}}px`)
     .attr('fill','rgba(255,255,255,0.92)')
-    .text(d => abbrev(d.label, d.r));
+    .text(d => d.short);
 
   node.append('text')
     .attr('text-anchor','middle').attr('dy', d => d.r >= 30 ? '1.1em' : '0.4em')
