@@ -898,7 +898,31 @@ def _format_last_attended_label(date_str: str) -> str:
     return f"{parsed.day} {parsed.strftime('%b')} {parsed.year}"
 
 
-def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None):
+def _compute_absent_groups_for_bubble(absent_names, name_to_role):
+    """Group absent names by role for the bubble chart absent panel."""
+    if not absent_names:
+        return []
+    if not name_to_role:
+        return [{"label": "Not checked in", "names": sorted(absent_names)}]
+    role_to_names = {}
+    no_role_names = []
+    for name in absent_names:
+        role = name_to_role.get(name, '')
+        if role and role.strip():
+            role_to_names.setdefault(role, []).append(name)
+        else:
+            no_role_names.append(name)
+    groups = []
+    for role in sorted(role_to_names.keys(), key=_role_sort_key):
+        _, role_label = _role_sort_key(role)
+        groups.append({"label": role_label, "names": sorted(role_to_names[role])})
+    if no_role_names:
+        label = "Remaining" if groups else "Not checked in"
+        groups.append({"label": label, "names": sorted(no_role_names)})
+    return groups
+
+
+def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None, all_members_map=None, name_to_role=None):
     """Bubble-pack + ripple-pulse chart, spread across x-axis by zone with per-zone colors.
     Click a cell bubble to drill down into individual member bubbles.
     sorted_groups = [(label, names_list), ...]
@@ -935,6 +959,16 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
     }
     _FALLBACK_COLOR = colors_dict['primary']
 
+    # Build lookup structures for absent-member computation
+    _all_mem_lower = {}
+    _zone_to_cells = {}
+    if all_members_map:
+        for k, v in all_members_map.items():
+            _all_mem_lower[k.lower()] = v
+    if zone_map:
+        for _cell_lower, _z in zone_map.items():
+            _zone_to_cells.setdefault(_z.lower(), []).append(_cell_lower)
+
     data = []
     for g, names in sorted_groups:
         if not names:
@@ -944,7 +978,15 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
             zone = 'PSQ'
         color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
         short = _CELL_SHORT.get(g.lower(), g)
-        data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names)})
+        checked_set = set(names)
+        all_in_group = list(_all_mem_lower.get(g.lower(), []))
+        if not all_in_group:
+            for _cl in _zone_to_cells.get(g.lower(), []):
+                all_in_group.extend(_all_mem_lower.get(_cl, []))
+        absent_groups = _compute_absent_groups_for_bubble(
+            [n for n in all_in_group if n not in checked_set], name_to_role
+        )
+        data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names), "absent_groups": absent_groups})
     if not data:
         return ""
 
@@ -952,11 +994,15 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
     has_zones = bool(zone_map)
     bg = colors_dict['background']
     chart_height = height - 20
+    panel_h = 185
+    _hex = bg.lstrip('#')
+    _rv, _gv, _bv = int(_hex[0:2], 16), int(_hex[2:4], 16), int(_hex[4:6], 16)
+    panel_bg = f"rgba({_rv},{_gv},{_bv},0.96)"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
+body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; position:relative; height:{chart_height}px; }}
 @keyframes ripple-pulse {{
   0%   {{ transform:scale(1);   opacity:0.5; }}
   100% {{ transform:scale(2.7); opacity:0; }}
@@ -967,9 +1013,18 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
   animation:ripple-pulse 2.8s ease-out infinite;
   pointer-events:none;
 }}
+#absent-panel {{
+  position:absolute; bottom:0; left:0; right:0; height:{panel_h}px;
+  display:none; overflow-y:auto;
+  background:{panel_bg};
+  border-top:1px solid rgba(255,255,255,0.12);
+  padding:10px 14px; box-sizing:border-box;
+  font-family:'Inter',sans-serif;
+}}
 </style>
 </head><body>
-<svg id="bsvg" style="width:100%;display:block;"></svg>
+<svg id="bsvg" style="width:100%;display:block;position:absolute;top:0;left:0;"></svg>
+<div id="absent-panel"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 (function(){{
@@ -978,6 +1033,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 
   const W = Math.max(window.innerWidth || 900, 400);
   const H = {chart_height};
+  const PANEL_H = {panel_h};
   const PAD = 24;
 
   const maxC = d3.max(data, d => d.count);
@@ -1063,6 +1119,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 
   function collapse() {{
     if (memberGroup) {{ memberGroup.remove(); memberGroup = null; }}
+    document.getElementById('absent-panel').style.display = 'none';
     svg.selectAll('g.nd').transition().duration(350).attr('opacity', 1).style('pointer-events','all');
     zoneLabels.transition().duration(350).attr('opacity', 1);
     backBtn.transition().duration(200).attr('opacity', 0).on('end', function() {{
@@ -1076,27 +1133,45 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
     zoneLabels.transition().duration(250).attr('opacity', 0);
     backBtn.style('pointer-events','all').transition().duration(300).attr('opacity', 1);
 
-    // Build member nodes
+    // Show absent panel
+    const absentGroups = (d.absent_groups || []).filter(g => g.names.length > 0);
+    const totalAbsent = absentGroups.reduce((s, g) => s + g.names.length, 0);
+    const panel = document.getElementById('absent-panel');
+    if (totalAbsent > 0) {{
+      const multiGroup = absentGroups.length > 1;
+      let html = `<div style="font-size:9px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:${{d.color}};opacity:0.8;margin-bottom:6px;">${{d.label.toUpperCase()}} — NOT CHECKED IN (${{totalAbsent}})</div>`;
+      for (const grp of absentGroups) {{
+        if (multiGroup) html += `<div style="font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin:5px 0 3px;">${{grp.label}}</div>`;
+        for (const name of grp.names) {{
+          html += `<span style="display:inline-block;font-size:11px;font-weight:700;color:rgba(255,255,255,0.82);background:rgba(255,255,255,0.07);border-radius:3px;padding:2px 8px;margin:2px 3px;">${{name}}</span>`;
+        }}
+      }}
+      panel.innerHTML = html;
+      panel.style.display = 'block';
+    }}
+
+    // Build member nodes — use reduced height when absent panel is visible
+    const effectiveH = totalAbsent > 0 ? H - PANEL_H : H;
     const n = d.members.length;
-    const mr = Math.max(Math.min(Math.sqrt((W * H * 0.45) / (n * Math.PI)), 36), 15);
+    const mr = Math.max(Math.min(Math.sqrt((W * effectiveH * 0.45) / (n * Math.PI)), 36), 15);
 
     const mNodes = d.members.map(name => ({{
       name,
       r: mr,
       color: d.color,
       x: W/2 + (Math.random()-0.5)*80,
-      y: H/2 + (Math.random()-0.5)*80
+      y: effectiveH/2 + (Math.random()-0.5)*80
     }}));
 
     const mSim = d3.forceSimulation(mNodes)
-      .force('center', d3.forceCenter(W/2, H/2).strength(0.06))
+      .force('center', d3.forceCenter(W/2, effectiveH/2).strength(0.06))
       .force('charge', d3.forceManyBody().strength(-3))
       .force('collide', d3.forceCollide(m => m.r + 3).strength(0.95).iterations(5))
       .stop();
     for (let i = 0; i < 350; ++i) mSim.tick();
     mNodes.forEach(m => {{
       m.x = Math.max(m.r + 8, Math.min(W - m.r - 8, m.x));
-      m.y = Math.max(m.r + 30, Math.min(H - m.r - 8, m.y));
+      m.y = Math.max(m.r + 30, Math.min(effectiveH - m.r - 8, m.y));
     }});
 
     memberGroup = svg.append('g').attr('class','member-group');
@@ -4336,7 +4411,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
-        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map)
+        bubble_html = _render_bubble_chart_html(sorted_groups, page_colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
@@ -5461,7 +5536,7 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
-        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520, zone_map=_bubble_zone_map)
+        bubble_html = _render_bubble_chart_html(sorted_groups, colors, height=520, zone_map=_bubble_zone_map, all_members_map=all_members_by_cell_group, name_to_role=name_to_role)
         st.iframe(bubble_html, height=520)
 
         # Names Breakdown Section
