@@ -3721,7 +3721,7 @@ def render_checkin_time_chart(tab_name, page_colors):
 
     SERVICE_START = 13 * 60   # 780  (1:00 PM)
     SERVICE_END   = 16 * 60 + 45  # 1005 (4:45 PM)
-    BUCKET        = 10
+    BUCKET        = 5
 
     now = get_now_myt()
     now_mins = now.hour * 60 + now.minute
