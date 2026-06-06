@@ -1220,7 +1220,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
     const totalAbsent = absentGroups.reduce((s, g) => s + g.names.length, 0);
     const panel = document.getElementById('absent-panel');
     if (totalAbsent > 0) {{
-      panel.style.setProperty('--cell-color', d.color);
+      panel.style.setProperty('--cell-color', '#888');
       const multiGroup = absentGroups.length > 1;
       let html = `<div style="font-size:9px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:${{d.color}};opacity:0.8;margin-bottom:6px;">${{d.label.toUpperCase()}} — NOT CHECKED IN (${{totalAbsent}})</div>`;
       for (const grp of absentGroups) {{
