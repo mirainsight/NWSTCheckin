@@ -3798,7 +3798,7 @@ def render_checkin_time_chart(tab_name, page_colors):
             linecolor=page_colors['primary'],
             linewidth=1,
             showgrid=True,
-            gridcolor=f"{primary}18",
+            gridcolor=f"rgba({int(_h[0:2],16)},{int(_h[2:4],16)},{int(_h[4:6],16)},0.094)",
             zeroline=False,
             rangemode="tozero",
         ),
