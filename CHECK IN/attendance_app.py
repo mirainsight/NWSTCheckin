@@ -928,6 +928,8 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
         if not names:
             continue
         zone = zone_map.get(g.lower(), g) if zone_map else g
+        if zone.lower() == 'archive':
+            zone = 'PSQ'
         color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
         short = _CELL_SHORT.get(g.lower(), g)
         data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names)})
