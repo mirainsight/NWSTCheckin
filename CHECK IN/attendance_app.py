@@ -1017,7 +1017,10 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
         absent_groups = _compute_absent_groups_for_bubble(
             [n for n in all_in_group if n not in checked_set], name_to_role, name_to_last_attended
         )
-        data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names), "absent_groups": absent_groups})
+        checked_groups = _compute_absent_groups_for_bubble(
+            [n for n in all_in_group if n in checked_set], name_to_role, name_to_last_attended
+        )
+        data.append({"label": g, "short": short, "count": len(names), "zone": zone, "color": color, "members": list(names), "absent_groups": absent_groups, "checked_groups": checked_groups})
     if not data:
         return ""
 
@@ -1033,7 +1036,7 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
 <html><head><meta charset="utf-8">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; position:relative; height:{chart_height}px; }}
+body {{ background:{bg}; font-family:'Inter',sans-serif; overflow-y:auto; position:relative; }}
 @keyframes ripple-pulse {{
   0%   {{ transform:scale(1);   opacity:0.5; }}
   100% {{ transform:scale(2.7); opacity:0; }}
@@ -1101,11 +1104,72 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
   white-space:nowrap; border:1px solid rgba(255,255,255,0.18);
   box-shadow:0 2px 10px rgba(0,0,0,0.5);
 }}
+#chart-container {{
+  position:relative; height:{chart_height}px; overflow:hidden;
+}}
+#list-panel {{
+  display:none;
+  padding:16px 18px 20px;
+  background:{bg};
+  border-top:2px solid rgba(255,255,255,0.10);
+}}
+.lp-header {{
+  font-family:'Inter',sans-serif; font-size:10px; font-weight:900;
+  letter-spacing:2.5px; text-transform:uppercase;
+  margin-bottom:14px;
+}}
+.lp-section {{
+  margin-bottom:14px;
+}}
+.lp-section-title {{
+  font-family:'Inter',sans-serif; font-size:9px; font-weight:700;
+  letter-spacing:2px; text-transform:uppercase;
+  color:rgba(255,255,255,0.35); margin-bottom:7px;
+}}
+.lp-role-label {{
+  font-family:'Inter',sans-serif; font-size:9px; font-weight:700;
+  letter-spacing:1.5px; text-transform:uppercase;
+  color:rgba(255,255,255,0.3); margin:6px 0 4px; display:block;
+}}
+.lp-badge {{
+  display:inline-block;
+  padding:0.32rem 0.8rem; margin:3px 3px;
+  border-radius:0px; border:1.5px solid;
+  font-family:'Inter',sans-serif; font-size:0.8rem; font-weight:700;
+  letter-spacing:0.4px; cursor:default;
+  transition:all 0.15s ease; position:relative;
+}}
+.lp-badge-absent {{
+  display:inline-block;
+  padding:0.32rem 0.8rem; margin:3px 3px;
+  border-radius:0px;
+  border:1px solid rgba(255,255,255,0.22);
+  color:rgba(255,255,255,0.45);
+  font-family:'Inter',sans-serif; font-size:0.8rem; font-weight:600;
+  letter-spacing:0.4px; cursor:default; opacity:0.65;
+  transition:all 0.15s ease; position:relative;
+}}
+.lp-badge:hover {{ opacity:0.85; transform:scale(1.04); }}
+.lp-badge-absent:hover {{ opacity:1; }}
+.lp-badge::after, .lp-badge-absent::after {{
+  content:attr(data-tooltip);
+  position:absolute; bottom:125%; left:50%; transform:translateX(-50%);
+  background:#1a1a1a; color:#fff; padding:0.35rem 0.6rem; border-radius:4px;
+  font-size:0.7rem; font-weight:400; white-space:nowrap;
+  border:1px solid #444; opacity:0; visibility:hidden;
+  transition:opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events:none; z-index:1000;
+  box-shadow:0 2px 8px rgba(0,0,0,0.5);
+}}
+.lp-badge:hover::after, .lp-badge-absent:hover::after {{ opacity:1; visibility:visible; }}
 </style>
 </head><body>
+<div id="chart-container">
 <svg id="bsvg" style="width:100%;display:block;position:absolute;top:0;left:0;"></svg>
 <div id="absent-panel"></div>
 <div id="mb-tooltip"></div>
+</div>
+<div id="list-panel"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 (function(){{
@@ -1202,6 +1266,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
     if (memberGroup) {{ memberGroup.remove(); memberGroup = null; }}
     document.getElementById('absent-panel').style.display = 'none';
     document.getElementById('mb-tooltip').style.display = 'none';
+    document.getElementById('list-panel').style.display = 'none';
     svg.selectAll('g.nd').transition().duration(350).attr('opacity', 1).style('pointer-events','all');
     zoneLabels.transition().duration(350).attr('opacity', 1);
     backBtn.transition().duration(200).attr('opacity', 0).on('end', function() {{
@@ -1310,6 +1375,43 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; positi
         tip.style.top  = (event.clientY - 30) + 'px';
       }})
       .on('mouseout', function() {{ tip.style.display = 'none'; }});
+
+    // ── List panel (member tiles below SVG) ──────────────────────────────────
+    const checkedGroups = (d.checked_groups || []).filter(g => g.names.length > 0);
+    const totalChecked = checkedGroups.reduce((s, g) => s + g.names.length, 0);
+    const totalAbsentLP = absentGroups.reduce((s, g) => s + g.names.length, 0);
+    const totalLP = totalChecked + totalAbsentLP;
+    const lp = document.getElementById('list-panel');
+    let lpHtml = `<div class="lp-header" style="color:${{d.color}};">${{d.label.toUpperCase()}} — ${{totalChecked}}/${{totalLP}} CHECKED IN</div>`;
+
+    if (checkedGroups.length > 0) {{
+      const multiChecked = checkedGroups.length > 1;
+      lpHtml += `<div class="lp-section"><div class="lp-section-title" style="color:${{d.color}};opacity:0.7;">Checked In (${{totalChecked}})</div>`;
+      for (const grp of checkedGroups) {{
+        if (multiChecked) lpHtml += `<span class="lp-role-label">${{grp.label}}</span>`;
+        for (const nm of grp.names) {{
+          const tip = nm.tooltip ? ` data-tooltip="Last attended: ${{nm.tooltip}}"` : '';
+          lpHtml += `<span class="lp-badge" style="border-color:${{d.color}};color:${{d.color}};background:${{d.color}}18;"${{tip}}>${{nm.name}}</span>`;
+        }}
+      }}
+      lpHtml += `</div>`;
+    }}
+
+    if (absentGroups.length > 0) {{
+      const multiAbsent = absentGroups.length > 1;
+      lpHtml += `<div class="lp-section"><div class="lp-section-title">Not Checked In (${{totalAbsentLP}})</div>`;
+      for (const grp of absentGroups) {{
+        if (multiAbsent) lpHtml += `<span class="lp-role-label">${{grp.label}}</span>`;
+        for (const nm of grp.names) {{
+          const tipAttr = nm.tooltip ? ` data-tooltip="Last attended: ${{nm.tooltip}}"` : '';
+          lpHtml += `<span class="lp-badge-absent"${{tipAttr}}>${{nm.name}}</span>`;
+        }}
+      }}
+      lpHtml += `</div>`;
+    }}
+
+    lp.innerHTML = lpHtml;
+    lp.style.display = 'block';
   }}
 
   // ── Cell group bubbles ───────────────────────────────────────────────────
@@ -4428,7 +4530,7 @@ def render_dashboard(tab_name, group_by_zone=False):
         _bubble_sorted = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
         _bubble_zone_map_top, _ = get_cell_to_zone_mapping(client, SHEET_ID)
         _bubble_html_top = _render_bubble_chart_html(_bubble_sorted, page_colors, height=520, zone_map=_bubble_zone_map_top, all_members_map=all_members_by_cell_group, name_to_role=name_to_role, name_to_last_attended=name_to_last_attended)
-        st.iframe(_bubble_html_top, height=520)
+        st.iframe(_bubble_html_top, height=880)
 
     # KPI Cards - Total Checked In and Total Newcomers (side by side)
     kpi_col1, kpi_col2 = st.columns(2)
