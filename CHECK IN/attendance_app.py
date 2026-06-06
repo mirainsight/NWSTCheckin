@@ -33,6 +33,7 @@ from google.oauth2.service_account import Credentials
 from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import hashlib
 import colorsys
 
@@ -3565,6 +3566,120 @@ def render_recent_checkins_table(tab_name):
     )
 
 
+def render_checkin_time_chart(tab_name, page_colors):
+    """Cumulative spline chart of check-ins over service time. Saturdays only."""
+    today_str = get_today_myt_date()
+    try:
+        today_dt = datetime.strptime(today_str, "%Y-%m-%d")
+    except Exception:
+        return
+    if today_dt.weekday() != 5:  # 5 = Saturday
+        return
+
+    refresh_key = st.session_state.get('refresh_counter', 0)
+    _, _, recent_checkins = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
+    if not recent_checkins:
+        return
+
+    # Deduplicate: keep the earliest check-in per person
+    # recent_checkins is sorted newest-first, so reverse to get oldest-first
+    seen = set()
+    arrival_minutes = []
+    for ts, name in reversed(recent_checkins):
+        if name not in seen:
+            seen.add(name)
+            try:
+                arrival_minutes.append(int(ts[11:13]) * 60 + int(ts[14:16]))
+            except Exception:
+                pass
+
+    if not arrival_minutes:
+        return
+
+    SERVICE_START = 13 * 60   # 780  (1:00 PM)
+    SERVICE_END   = 19 * 60   # 1140 (7:00 PM)
+    BUCKET        = 20
+
+    now = get_now_myt()
+    now_mins = now.hour * 60 + now.minute
+    chart_end = min(now_mins, SERVICE_END)
+
+    # Build bucket list from service start up to current time
+    buckets = list(range(SERVICE_START, chart_end + 1, BUCKET))
+    if not buckets:
+        return
+
+    # Count arrivals per bucket
+    bucket_counts = {b: 0 for b in buckets}
+    for mins in arrival_minutes:
+        if mins < SERVICE_START or mins > SERVICE_END:
+            continue
+        b = SERVICE_START + ((mins - SERVICE_START) // BUCKET) * BUCKET
+        if b in bucket_counts:
+            bucket_counts[b] += 1
+
+    # Build cumulative series
+    cumulative = 0
+    x_labels = []
+    y_vals = []
+    for b in buckets:
+        cumulative += bucket_counts[b]
+        h, m = divmod(b, 60)
+        h12 = h % 12 or 12
+        suffix = "AM" if h < 12 else "PM"
+        x_labels.append(f"{h12}:{m:02d} {suffix}")
+        y_vals.append(cumulative)
+
+    primary = page_colors['primary']
+    fill_color = f"{primary}20"  # ~12% opacity fill
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x_labels,
+        y=y_vals,
+        mode="lines",
+        line=dict(shape="spline", smoothing=1.2, width=2.5, color=primary),
+        fill="tozeroy",
+        fillcolor=fill_color,
+        hovertemplate="<b>%{x}</b><br>%{y} checked in<extra></extra>",
+    ))
+
+    fig.update_layout(
+        height=220,
+        margin=dict(l=40, r=20, t=20, b=40),
+        plot_bgcolor=page_colors['background'],
+        paper_bgcolor=page_colors['card_bg'],
+        font=dict(family="Inter, sans-serif", size=11, color=page_colors['text']),
+        showlegend=False,
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#1a1a1a", font_color=page_colors['text'], font_family="Inter"),
+        xaxis=dict(
+            tickfont=dict(color=page_colors['text_muted'], size=10),
+            linecolor=page_colors['primary'],
+            linewidth=1,
+            showgrid=False,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            tickfont=dict(color=page_colors['text_muted'], size=10),
+            linecolor=page_colors['primary'],
+            linewidth=1,
+            showgrid=True,
+            gridcolor=f"{primary}18",
+            zeroline=False,
+            rangemode="tozero",
+        ),
+    )
+
+    st.markdown(
+        f'<div style="font-family: \'Inter\', sans-serif; font-size: 1.1rem; font-weight: 700; '
+        f'color: {primary}; text-transform: uppercase; letter-spacing: 2px; '
+        f'margin: 1rem 0 0.25rem 0;">Check-In Times</div>',
+        unsafe_allow_html=True
+    )
+    st.plotly_chart(fig, width='stretch')
+
+
 def render_dashboard(tab_name, group_by_zone=False):
     """Render the dashboard section for a specific tab.
     If group_by_zone=True, groups by Zone instead of Cell Group."""
@@ -6204,6 +6319,7 @@ if page == "NWST Check In":
                 '''<a href="https://update-names.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
+        render_checkin_time_chart(ATTENDANCE_TAB_NAME, display_colors)
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(ATTENDANCE_TAB_NAME)
 
