@@ -3803,14 +3803,14 @@ def render_checkin_time_chart(tab_name, page_colors):
             ticktext=[x_labels[0], x_labels[-1]],
         ),
         yaxis=dict(
-            tickfont=dict(color=f"rgba({r},{g},{b_c},0.5)", size=10),
+            showticklabels=False,
             showgrid=False,
             zeroline=False,
             rangemode="tozero",
             showline=False,
         ),
         yaxis2=dict(
-            tickfont=dict(color=page_colors['text_muted'], size=10),
+            showticklabels=False,
             showgrid=True,
             gridcolor=grid_color,
             zeroline=False,
