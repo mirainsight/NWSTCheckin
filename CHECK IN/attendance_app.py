@@ -846,6 +846,18 @@ def _build_last_attended_lookup() -> dict:
         return {}
 
 
+def _parse_la_date(date_str: str):
+    """Parse a last-attended date string into a date object, or None."""
+    if not date_str:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(date_str.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _format_last_attended_label(date_str: str) -> str:
     """Convert a raw last-attended date string to a relative label (services are Saturdays).
 
@@ -1218,7 +1230,10 @@ def build_role_grouped_badges(all_names, checked_in_set, name_to_role, badge_cla
     # Remaining cell members (no role)
     if no_role_names:
         checked = sorted([n for n in no_role_names if n in checked_in_set])
-        pending = sorted([n for n in no_role_names if n not in checked_in_set])
+        def _pending_sort_key(name):
+            d = _parse_la_date(la.get(name))
+            return (0 if d else 1, -d.toordinal() if d else 0, name)
+        pending = sorted([n for n in no_role_names if n not in checked_in_set], key=_pending_sort_key)
         badges = ''.join([format_name_badge(n, '', badge_class_checked, tooltip=la.get(n)) for n in checked])
         badges += ''.join([format_name_badge(n, '', badge_class_pending, tooltip=la.get(n)) for n in pending])
         if badges:
