@@ -3792,6 +3792,8 @@ def render_checkin_time_chart(tab_name, page_colors):
             linewidth=1,
             showgrid=False,
             zeroline=False,
+            tickvals=[x_labels[0], x_labels[-1]],
+            ticktext=[x_labels[0], x_labels[-1]],
         ),
         yaxis=dict(
             tickfont=dict(color=page_colors['text_muted'], size=10),
