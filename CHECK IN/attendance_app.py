@@ -888,17 +888,17 @@ def _format_last_attended_label(date_str: str) -> str:
 
 def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=None):
     """Bubble-pack + ripple-pulse chart, spread across x-axis by zone with per-zone colors.
+    Click a cell bubble to drill down into individual member bubbles.
     sorted_groups = [(label, names_list), ...]
     zone_map = {cell_name_lowercase: zone_name} from get_cell_to_zone_mapping()
     """
-    # Neon zone color palette — youth vibe on black
     _ZONE_COLORS = {
-        'syd':      '#00B4FF',  # electric blue
-        'sara':     '#FFE600',  # neon yellow
-        'fabian':   '#00FF88',  # neon mint green
-        'ethanael': '#FF3355',  # neon red/coral
-        'psq':      '#AAAAAA',  # neutral grey
-        'archive':  '#555577',  # muted dark grey
+        'syd':      '#00B4FF',
+        'sara':     '#FFE600',
+        'fabian':   '#00FF88',
+        'ethanael': '#FF3355',
+        'psq':      '#AAAAAA',
+        'archive':  '#555577',
     }
     _FALLBACK_COLOR = colors_dict['primary']
 
@@ -908,7 +908,7 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
             continue
         zone = zone_map.get(g.lower(), g) if zone_map else g
         color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
-        data.append({"label": g, "count": len(names), "zone": zone, "color": color})
+        data.append({"label": g, "count": len(names), "zone": zone, "color": color, "members": list(names)})
     if not data:
         return ""
 
@@ -948,18 +948,12 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
   const minC = d3.min(data, d => d.count);
   const rMax = Math.min(W / 9, 65);
   const rScale = d3.scaleSqrt().domain([minC, maxC]).range([18, rMax]);
-
-  // Fill opacity: higher count = more opaque (darker intensity)
   const opacityScale = d3.scaleLinear().domain([minC, maxC]).range([0.18, 0.72]);
 
-  // Zones ordered by total check-ins descending → left to right
   const zoneTotals = {{}};
   data.forEach(d => {{ zoneTotals[d.zone] = (zoneTotals[d.zone] || 0) + d.count; }});
   const zones = Object.keys(zoneTotals).sort((a,b) => zoneTotals[b] - zoneTotals[a]);
-  const nZones = zones.length;
-
-  // Column centre for each zone along x-axis
-  const colW = (W - PAD*2) / nZones;
+  const colW = (W - PAD*2) / zones.length;
   const zoneX = {{}};
   zones.forEach((z, i) => {{ zoneX[z] = PAD + colW * i + colW / 2; }});
   const cy = H / 2;
@@ -985,89 +979,171 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 
   const svg = d3.select('#bsvg').attr('viewBox', `0 0 ${{W}} ${{H}}`).attr('height', H);
 
-  // Per-zone glow filters keyed by zone color
+  // Glow filters (per zone color)
   const defs = svg.append('defs');
   const seenColors = new Set();
   data.forEach(d => {{
     if (seenColors.has(d.color)) return;
     seenColors.add(d.color);
     const safe = d.color.replace('#','');
-    ['','lg'].forEach((suf, i) => {{
+    ['','lg'].forEach((suf, idx) => {{
       const f = defs.append('filter').attr('id', `glow-${{safe}}${{suf}}`)
         .attr('x','-60%').attr('y','-60%').attr('width','220%').attr('height','220%');
-      f.append('feFlood').attr('flood-color', d.color).attr('flood-opacity', i===0?0.4:0.7).attr('result','clr');
-      f.append('feComposite').attr('in','clr').attr('in2','SourceGraphic').attr('operator','in').attr('result','colorBlur');
-      f.append('feGaussianBlur').attr('in','colorBlur').attr('stdDeviation', i===0?4:10).attr('result','blur');
+      f.append('feFlood').attr('flood-color', d.color).attr('flood-opacity', idx===0?0.4:0.7).attr('result','clr');
+      f.append('feComposite').attr('in','clr').attr('in2','SourceGraphic').attr('operator','in').attr('result','cb');
+      f.append('feGaussianBlur').attr('in','cb').attr('stdDeviation', idx===0?4:10).attr('result','blur');
       const m = f.append('feMerge');
       m.append('feMergeNode').attr('in','blur');
       m.append('feMergeNode').attr('in','SourceGraphic');
     }});
   }});
 
-  // Zone column labels at the top
+  // Zone column labels
+  const zoneLabels = svg.append('g').attr('class','zone-labels');
   if (HAS_ZONES) {{
     zones.forEach(z => {{
       const zColor = data.find(d => d.zone === z)?.color || '#fff';
-      svg.append('text')
+      zoneLabels.append('text')
         .attr('x', zoneX[z]).attr('y', 16)
-        .attr('text-anchor', 'middle')
-        .attr('font-family', 'Inter,sans-serif').attr('font-weight', '900')
-        .attr('font-size', '11px').attr('letter-spacing', '2.5px')
+        .attr('text-anchor','middle').attr('font-family','Inter,sans-serif')
+        .attr('font-weight','900').attr('font-size','11px').attr('letter-spacing','2.5px')
         .attr('fill', zColor).attr('opacity', 0.8)
         .text(z.toUpperCase());
     }});
   }}
 
-  const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
-    .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`);
+  // ── Back button (hidden initially) ──────────────────────────────────────
+  const backBtn = svg.append('g').attr('class','back-btn')
+    .attr('opacity', 0).style('pointer-events','none').style('cursor','pointer');
+  backBtn.append('text')
+    .attr('x', 12).attr('y', 16)
+    .attr('font-family','Inter,sans-serif').attr('font-weight','900')
+    .attr('font-size','12px').attr('letter-spacing','1px')
+    .attr('fill','rgba(255,255,255,0.8)')
+    .text('← back');
 
-  // 3 ripple rings, staggered, zone-colored
+  // ── State ────────────────────────────────────────────────────────────────
+  let memberGroup = null;
+
+  function collapse() {{
+    if (memberGroup) {{ memberGroup.remove(); memberGroup = null; }}
+    svg.selectAll('g.nd').transition().duration(350).attr('opacity', 1).style('pointer-events','all');
+    zoneLabels.transition().duration(350).attr('opacity', 1);
+    backBtn.transition().duration(200).attr('opacity', 0).on('end', function() {{
+      d3.select(this).style('pointer-events','none');
+    }});
+  }}
+
+  function expand(d) {{
+    // Fade everything out
+    svg.selectAll('g.nd').transition().duration(300).attr('opacity', 0.06).style('pointer-events','none');
+    zoneLabels.transition().duration(250).attr('opacity', 0);
+    backBtn.style('pointer-events','all').transition().duration(300).attr('opacity', 1);
+
+    // Build member nodes
+    const n = d.members.length;
+    const mr = Math.max(Math.min(Math.sqrt((W * H * 0.45) / (n * Math.PI)), 36), 15);
+
+    const mNodes = d.members.map(name => ({{
+      name,
+      r: mr,
+      color: d.color,
+      x: W/2 + (Math.random()-0.5)*80,
+      y: H/2 + (Math.random()-0.5)*80
+    }}));
+
+    const mSim = d3.forceSimulation(mNodes)
+      .force('center', d3.forceCenter(W/2, H/2).strength(0.06))
+      .force('charge', d3.forceManyBody().strength(-3))
+      .force('collide', d3.forceCollide(m => m.r + 3).strength(0.95).iterations(5))
+      .stop();
+    for (let i = 0; i < 350; ++i) mSim.tick();
+    mNodes.forEach(m => {{
+      m.x = Math.max(m.r + 8, Math.min(W - m.r - 8, m.x));
+      m.y = Math.max(m.r + 30, Math.min(H - m.r - 8, m.y));
+    }});
+
+    memberGroup = svg.append('g').attr('class','member-group');
+
+    // Group title
+    memberGroup.append('text')
+      .attr('x', W/2).attr('y', 16)
+      .attr('text-anchor','middle').attr('font-family','Inter,sans-serif')
+      .attr('font-weight','900').attr('font-size','11px').attr('letter-spacing','2.5px')
+      .attr('fill', d.color).attr('opacity', 0)
+      .text(d.label.toUpperCase())
+      .transition().duration(400).attr('opacity', 0.85);
+
+    const mNode = memberGroup.selectAll('g.mn').data(mNodes).enter().append('g')
+      .attr('class','mn')
+      .attr('transform', `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`)
+      .attr('opacity', 0);
+
+    // Ripple ring
+    mNode.append('circle').attr('class','ripple-ring')
+      .attr('r', m => m.r).attr('stroke', d.color).attr('stroke-opacity', 0.35);
+
+    // Filled circle
+    mNode.append('circle')
+      .attr('r', m => m.r)
+      .attr('fill', d.color).attr('fill-opacity', 0.35)
+      .attr('stroke', d.color).attr('stroke-width', 1.5);
+
+    // Member name
+    mNode.append('text')
+      .attr('text-anchor','middle').attr('dy','0.35em')
+      .attr('font-family','Inter,sans-serif').attr('font-weight','700')
+      .attr('font-size', m => `${{Math.min(Math.max(m.r * 0.42, 8), 13)}}px`)
+      .attr('fill','rgba(255,255,255,0.92)')
+      .text(m => {{ const p = m.name.split(' '); return p[0].length > 9 ? p[0].slice(0,8)+'…' : p[0]; }});
+
+    // Animate in
+    mNode.transition().duration(450).delay((m, i) => i * 18)
+      .attr('opacity', 1)
+      .attr('transform', m => `translate(${{m.x.toFixed(1)}},${{m.y.toFixed(1)}})`);
+  }}
+
+  // ── Cell group bubbles ───────────────────────────────────────────────────
+  const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
+    .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`)
+    .style('cursor','pointer')
+    .on('click', function(event, d) {{ event.stopPropagation(); expand(d); }});
+
   [0, 0.9, 1.8].forEach(delay => {{
     node.append('circle').attr('class','ripple-ring')
-      .attr('r', d => d.r)
-      .attr('stroke', d => d.color)
-      .attr('stroke-opacity', 0.38)
+      .attr('r', d => d.r).attr('stroke', d => d.color).attr('stroke-opacity', 0.38)
       .style('animation-delay', `${{delay}}s`);
   }});
 
-  // Filled bubble — zone color, opacity = intensity
   node.append('circle')
     .attr('r', d => d.r)
-    .attr('fill', d => d.color)
-    .attr('fill-opacity', d => opacityScale(d.count))
-    .attr('stroke', d => d.color)
-    .attr('stroke-width', 2)
-    .attr('filter', d => {{
-      const safe = d.color.replace('#','');
-      return d.r > 46 ? `url(#glow-${{safe}}lg)` : `url(#glow-${{safe}})`;
-    }});
+    .attr('fill', d => d.color).attr('fill-opacity', d => opacityScale(d.count))
+    .attr('stroke', d => d.color).attr('stroke-width', 2)
+    .attr('filter', d => {{ const s = d.color.replace('#',''); return d.r > 46 ? `url(#glow-${{s}}lg)` : `url(#glow-${{s}})`; }});
 
-  // Abbreviated label helper
   function abbrev(label, r) {{
-    const words = label.split(' ');
+    const w = label.split(' ');
     if (r < 30) return '';
-    if (r < 42) return words[0].slice(0, 8);
-    if (r < 56) return words.slice(0,2).join(' ').slice(0,14);
+    if (r < 42) return w[0].slice(0, 8);
+    if (r < 56) return w.slice(0,2).join(' ').slice(0,14);
     return label.length > 18 ? label.slice(0,16)+'…' : label;
   }}
 
-  // Cell name (upper)
   node.filter(d => d.r >= 30).append('text')
     .attr('text-anchor','middle').attr('dy','-0.15em')
     .attr('font-family','Inter,sans-serif').attr('font-weight','700')
     .attr('font-size', d => `${{Math.min(Math.max(d.r*0.27,9),13)}}px`)
-    .attr('fill', 'rgba(255,255,255,0.92)')
+    .attr('fill','rgba(255,255,255,0.92)')
     .text(d => abbrev(d.label, d.r));
 
-  // Count number (lower, glowing in zone color)
   node.append('text')
-    .attr('text-anchor','middle')
-    .attr('dy', d => d.r >= 30 ? '1.1em' : '0.4em')
+    .attr('text-anchor','middle').attr('dy', d => d.r >= 30 ? '1.1em' : '0.4em')
     .attr('font-family','Inter,sans-serif').attr('font-weight','900')
     .attr('font-size', d => `${{Math.min(Math.max(d.r*0.52,11),30)}}px`)
-    .attr('fill', d => d.color)
-    .style('filter', d => `drop-shadow(0 0 5px ${{d.color}})`)
+    .attr('fill', d => d.color).style('filter', d => `drop-shadow(0 0 5px ${{d.color}})`)
     .text(d => d.count);
+
+  backBtn.on('click', function(event) {{ event.stopPropagation(); collapse(); }});
 }})();
 </script>
 </body></html>"""
@@ -5351,9 +5427,6 @@ def render_historical_dashboard(tab_name, target_date, colors, group_by_zone=Fal
         st.markdown("---")
 
         # Bar Chart Section
-        chart_title = f"Attendance by Zone on {display_date_formatted}" if group_by_zone else f"Check-Ins by Cell Group on {display_date_formatted}"
-        st.markdown(f'<div class="historical-section-title">{chart_title}</div>', unsafe_allow_html=True)
-
         sorted_groups = sorted(display_data.items(), key=lambda x: len(x[1]), reverse=True)
 
         _bubble_zone_map, _ = get_cell_to_zone_mapping(client, SHEET_ID)
