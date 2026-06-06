@@ -895,7 +895,6 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500):
     primary = colors_dict['primary']
     bg = colors_dict['background']
     is_dark = bg == '#000000'
-    inner_color = '#1a0030' if is_dark else '#f0e8ff'
     label_color = 'rgba(255,255,255,0.9)' if is_dark else 'rgba(0,0,0,0.85)'
     chart_height = height - 20
     return f"""<!DOCTYPE html>
@@ -921,7 +920,6 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
 (function(){{
   const data = {data_json};
   const PRIMARY = "{primary}";
-  const INNER   = "{inner_color}";
   const LABEL   = "{label_color}";
 
   const W = Math.max(window.innerWidth || 900, 400);
@@ -963,13 +961,6 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
     m.append('feMergeNode').attr('in','blur');
     m.append('feMergeNode').attr('in','SourceGraphic');
   }});
-  nodes.forEach((d, i) => {{
-    const gr = defs.append('radialGradient').attr('id',`rg${{i}}`)
-      .attr('cx','36%').attr('cy','33%').attr('r','64%');
-    gr.append('stop').attr('offset','0%').attr('stop-color',PRIMARY).attr('stop-opacity',0.88);
-    gr.append('stop').attr('offset','100%').attr('stop-color',INNER).attr('stop-opacity',1);
-  }});
-
   const node = svg.selectAll('g.nd').data(nodes).enter().append('g').attr('class','nd')
     .attr('transform', d => `translate(${{d.x.toFixed(1)}},${{d.y.toFixed(1)}})`);
 
@@ -983,7 +974,7 @@ body {{ background:{bg}; font-family:'Inter',sans-serif; overflow:hidden; }}
   // Main bubble
   node.append('circle')
     .attr('r', d => d.r)
-    .attr('fill', (d,i) => `url(#rg${{i}})`)
+    .attr('fill', PRIMARY)
     .attr('stroke', PRIMARY).attr('stroke-width', 2)
     .attr('filter', d => d.r > 46 ? 'url(#glow-lg)' : 'url(#glow)');
 
