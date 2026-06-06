@@ -928,8 +928,13 @@ def _compute_absent_groups_for_bubble(absent_names, name_to_role, name_to_last_a
         else:
             return (4, -d.toordinal(), name)
 
+    def _to_entry(name):
+        raw = la.get(name)
+        tip = _format_last_attended_label(raw) if raw else None
+        return {"name": name, "tooltip": tip}
+
     if not name_to_role:
-        return [{"label": "Not checked in", "names": sorted(absent_names, key=_la_sort_key)}]
+        return [{"label": "Not checked in", "names": [_to_entry(n) for n in sorted(absent_names, key=_la_sort_key)]}]
     role_to_names = {}
     no_role_names = []
     for name in absent_names:
@@ -941,10 +946,10 @@ def _compute_absent_groups_for_bubble(absent_names, name_to_role, name_to_last_a
     groups = []
     for role in sorted(role_to_names.keys(), key=_role_sort_key):
         _, role_label = _role_sort_key(role)
-        groups.append({"label": role_label, "names": sorted(role_to_names[role], key=_la_sort_key)})
+        groups.append({"label": role_label, "names": [_to_entry(n) for n in sorted(role_to_names[role], key=_la_sort_key)]})
     if no_role_names:
         label = "Remaining" if groups else "Not checked in"
-        groups.append({"label": label, "names": sorted(no_role_names, key=_la_sort_key)})
+        groups.append({"label": label, "names": [_to_entry(n) for n in sorted(no_role_names, key=_la_sort_key)]})
     return groups
 
 
