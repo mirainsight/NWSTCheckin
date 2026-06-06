@@ -5423,7 +5423,7 @@ else:
 
 def render_kpi_compact(tab_name):
     """Compact KPI bar shown above the check-in form."""
-    colors = get_daily_colors()
+    colors = page_colors
     refresh_key = st.session_state.get('refresh_counter', 0)
     _, checked_in_list, _ = get_today_attendance_data(client, SHEET_ID, refresh_key, tab_name)
     total_checked_in = len(checked_in_list)
