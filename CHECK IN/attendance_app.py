@@ -4159,6 +4159,10 @@ def render_dashboard(tab_name, group_by_zone=False):
                 cell = newcomer['cell'] if newcomer['cell'] else "(Not assigned)"
                 st.markdown(f"- **{name}** → {cell}")
 
+    # Check-in time chart (main tab, Saturdays only)
+    if tab_name == ATTENDANCE_TAB_NAME:
+        render_checkin_time_chart(tab_name, page_colors)
+
     # Zone tiles (only for zone grouping)
     if group_by_zone and total_checked_in > 0 and cell_group_data:
         # Get zone mapping from Key Values tab
@@ -6434,7 +6438,6 @@ if page == "NWST Check In":
                 '''<a href="https://update-names.streamlit.app/" target="_blank" class="update-names-btn">Update names</a>''',
                 unsafe_allow_html=True
             )
-        render_checkin_time_chart(ATTENDANCE_TAB_NAME, display_colors)
         render_recent_checkins_table(ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(ATTENDANCE_TAB_NAME)
 
