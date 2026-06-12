@@ -4161,24 +4161,22 @@ def render_checkin_time_chart(tab_name, page_colors, target_date=None):
     SERVICE_END   = 16 * 60 + 45  # 1005 (4:45 PM)
     BUCKET        = 5
 
-    if target_date:
-        chart_end = SERVICE_END
-    else:
-        now = get_now_myt()
-        now_mins = now.hour * 60 + now.minute
-        chart_end = min(now_mins, SERVICE_END)
+    # Keep only check-ins within the plausible service window
+    arrival_minutes = [m for m in arrival_minutes if SERVICE_START <= m <= SERVICE_END]
+    if not arrival_minutes:
+        return
 
-    # Build bucket list from service start up to current time
-    buckets = list(range(SERVICE_START, chart_end + 1, BUCKET))
+    # Build bucket list spanning from the first to the last check-in
+    chart_start = (min(arrival_minutes) // BUCKET) * BUCKET
+    chart_end = (max(arrival_minutes) // BUCKET) * BUCKET
+    buckets = list(range(chart_start, chart_end + 1, BUCKET))
     if not buckets:
         return
 
     # Count arrivals per bucket
     bucket_counts = {b: 0 for b in buckets}
     for mins in arrival_minutes:
-        if mins < SERVICE_START or mins > SERVICE_END:
-            continue
-        b = SERVICE_START + ((mins - SERVICE_START) // BUCKET) * BUCKET
+        b = chart_start + ((mins - chart_start) // BUCKET) * BUCKET
         if b in bucket_counts:
             bucket_counts[b] += 1
 
