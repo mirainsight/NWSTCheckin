@@ -2953,7 +2953,7 @@ option_type = list(options.keys())[0]
 all_option_values = list(options.values())[0]
 
 
-def render_check_in_form(tab_name, form_key, page_label="Check In"):
+def render_check_in_form(tab_name, form_key, page_label="Check In", show_birthdays=True):
     """Render the check-in form for a specific tab"""
     # Wrap form section with GIF background
     if background_gif and gif_src:
@@ -2996,7 +2996,8 @@ def render_check_in_form(tab_name, form_key, page_label="Check In"):
             <div style="position: relative; z-index: 1;">
         """, unsafe_allow_html=True)
 
-    render_birthdays_notice_board(page_colors)
+    if show_birthdays:
+        render_birthdays_notice_board(page_colors)
     render_kpi_compact(tab_name)
 
     # Display form in centered column
@@ -5396,11 +5397,11 @@ else:
 
 if hasattr(st, "fragment"):
     @st.fragment
-    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In"):
-        render_check_in_form(tab_name, form_key, page_label)
+    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In", show_birthdays=True):
+        render_check_in_form(tab_name, form_key, page_label, show_birthdays)
 else:
-    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In"):
-        render_check_in_form(tab_name, form_key, page_label)
+    def render_check_in_form_fragment(tab_name, form_key, page_label="Check In", show_birthdays=True):
+        render_check_in_form(tab_name, form_key, page_label, show_birthdays)
 
 if hasattr(st, "fragment"):
     @st.fragment
@@ -6834,7 +6835,7 @@ elif page == "Leaders Discipleship":
     if viewing_historical:
         render_historical_dashboard(LEADERS_ATTENDANCE_TAB_NAME, historical_date, display_colors, group_by_zone=True)
     else:
-        render_check_in_form_fragment(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship")
+        render_check_in_form_fragment(LEADERS_ATTENDANCE_TAB_NAME, "leaders_attendance_form", "Leaders Discipleship", show_birthdays=False)
         render_recent_checkins_table(LEADERS_ATTENDANCE_TAB_NAME)
         render_dashboard_fragment(LEADERS_ATTENDANCE_TAB_NAME, group_by_zone=True)
 
