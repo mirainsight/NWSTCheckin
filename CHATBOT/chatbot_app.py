@@ -270,6 +270,17 @@ def _allowed_emails() -> list[str]:
     return [e.strip().lower() for e in str(raw).split(",") if e.strip()]
 
 
+def _admin_emails() -> list[str]:
+    """Emails with unrestricted access to every cell (pastors / admins)."""
+    try:
+        raw = st.secrets.get("CHATBOT_ADMIN_EMAILS") or []
+    except Exception:
+        raw = os.getenv("CHATBOT_ADMIN_EMAILS", "")
+    if isinstance(raw, (list, tuple)):
+        return [e.strip().lower() for e in raw if str(e).strip()]
+    return [e.strip().lower() for e in str(raw).split(",") if e.strip()]
+
+
 def _store_oauth_state(state: str) -> None:
     try:
         rc = get_redis_client()
@@ -401,6 +412,55 @@ def _pick(member: dict, *keywords: str) -> str:
     return ""
 
 
+# ── per-cell access control ─────────────────────────────────────────────────────
+
+# Members of this cell (NWST staff / core team) get unrestricted access to every cell.
+_FULL_ACCESS_CELL = "narrowstreet core team"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cell_zone_map() -> dict[str, str]:
+    """Lowercased cell name -> zone, reusing the same Cell Health cache NWST HEALTH uses."""
+    from nwst_shared.nwst_cell_health_cache import get_cell_health_from_redis
+    try:
+        rc = get_redis_client()
+        data = get_cell_health_from_redis(rc) if rc else None
+    except Exception:
+        data = None
+    if not data:
+        return {}
+    return {
+        str(row.get("cell", "")).strip().lower(): str(row.get("zone", "")).strip()
+        for row in data.get("cell_rows", [])
+        if row.get("cell")
+    }
+
+
+def _user_allowed_cells() -> "set[str] | None":
+    """Lowercased cell names this user may search/edit. None means unrestricted (admin)."""
+    email = (st.session_state.get("user_email") or st.session_state.get("login_email") or "").strip().lower()
+    if email in _admin_emails():
+        return None
+    role = (st.session_state.get("user_role") or "").strip().lower()
+    cell = (st.session_state.get("user_cell") or "").strip().lower()
+    if cell == _FULL_ACCESS_CELL:
+        return None
+    if "zone leader" in role and cell:
+        zmap = _cell_zone_map()
+        my_zone = zmap.get(cell, "")
+        if my_zone:
+            return {c for c, z in zmap.items() if z == my_zone}
+    return {cell} if cell else set()
+
+
+def _row_cell_allowed(row: list, cell_idx: int, allowed: "set[str] | None") -> bool:
+    if allowed is None:
+        return True
+    if cell_idx == -1 or cell_idx >= len(row):
+        return False
+    return str(row[cell_idx] or "").strip().lower() in allowed
+
+
 
 # ── change-request wizard ──────────────────────────────────────────────────────
 
@@ -458,7 +518,7 @@ _CR_FIELD_ALIASES: dict[str, str] = {
 _CR_CELL_ALIASES: dict[str, str] = {
     "anchor": "Anchor Street",
     "aster": "Aster Street",
-    "core team": "Narrowstreet Co",
+    "core team": "Narrowstreet Core Team",
     "crown": "Crown Street",
     "fire": "Street Fire",
     "fishers": "Fishers Street",
@@ -475,7 +535,7 @@ _CR_CELL_ALIASES: dict[str, str] = {
     # full names also mapped for completeness
     "anchor street": "Anchor Street",
     "aster street": "Aster Street",
-    "narrowstreet co": "Narrowstreet Co",
+    "narrowstreet core team": "Narrowstreet Core Team",
     "crown street": "Crown Street",
     "street fire": "Street Fire",
     "fishers street": "Fishers Street",
@@ -1156,11 +1216,14 @@ def _render_cr_wizard() -> None:
                 st.session_state.cr_search_error = "⚠️ Could not load member data. Please sync data first."
                 st.rerun()
             else:
+                _allowed_cells = _user_allowed_cells()
                 query = _cr_normalize(val.strip())
                 matches = []
                 for row in rows:
                     raw_name = row[name_idx] if name_idx < len(row) else ""
                     if not raw_name:
+                        continue
+                    if not _row_cell_allowed(row, cell_idx, _allowed_cells):
                         continue
                     raw_cell = (row[cell_idx] if cell_idx != -1 and cell_idx < len(row) else "") or ""
                     if query in _cr_normalize(raw_name):
@@ -1172,10 +1235,12 @@ def _render_cr_wizard() -> None:
                     dict(zip(cols, row))
                     for row in rows
                     if name_idx < len(row) and row[name_idx]
+                    and _row_cell_allowed(row, cell_idx, _allowed_cells)
                 ]
                 st.session_state.pop("cr_search_error", None)
                 if not matches:
-                    st.session_state.cr_search_error = f"No member found matching \"{val.strip()}\". Please try again."
+                    _scope_hint = "" if _allowed_cells is None else " in your cell"
+                    st.session_state.cr_search_error = f"No member found matching \"{val.strip()}\"{_scope_hint}. Please try again."
                     st.rerun()
                 elif len(matches) == 1:
                     st.session_state.cr_member_row = matches[0]["row"]
