@@ -960,12 +960,20 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
     zone_map = {cell_name_lowercase: zone_name} from get_cell_to_zone_mapping()
     """
     _ZONE_COLORS = {
-        'syd':      '#00B4FF',
-        'sara':     '#FFE600',
-        'fabian':   '#00FF88',
-        'ethanael': '#FF3355',
-        'psq':      '#AAAAAA',
-        'archive':  '#555577',
+        'sydney pang':  '#00B4FF',
+        'sara pang':    '#FFE600',
+        'fabian sim':   '#00FF88',
+        'ethanael soo': '#FF3355',
+        'shaun quek':   '#AAAAAA',
+        'archive':      '#555577',
+    }
+    _ZONE_SHORT = {
+        'sydney pang':  'Syd',
+        'sara pang':    'Sara',
+        'fabian sim':   'Fabian',
+        'ethanael soo': 'Ethanael',
+        'shaun quek':   'PSQ',
+        'archive':      'PSQ',
     }
     _CELL_SHORT = {
         'anchor street':        'Anchor',
@@ -1004,10 +1012,10 @@ def _render_bubble_chart_html(sorted_groups, colors_dict, height=500, zone_map=N
     for g, names in sorted_groups:
         if not names:
             continue
-        zone = zone_map.get(g.lower(), g) if zone_map else g
-        if zone.lower() == 'archive':
-            zone = 'PSQ'
-        color = _ZONE_COLORS.get(zone.lower(), _FALLBACK_COLOR)
+        zone_full = zone_map.get(g.lower(), g) if zone_map else g
+        zone_key = zone_full.strip().lower()
+        color = _ZONE_COLORS.get(zone_key, _FALLBACK_COLOR)
+        zone = _ZONE_SHORT.get(zone_key, zone_full)
         short = _CELL_SHORT.get(g.lower(), g)
         checked_set = set(names)
         all_in_group = list(_all_mem_lower.get(g.lower(), []))
