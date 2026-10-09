@@ -179,7 +179,7 @@ def _member_info_html(member: dict, mcols: list, label: str, pending: list, pale
         rows = ""
         for ch in pending:
             old = ch.get("current_value", "") or "—"
-            new = ch["new_value"]
+            new = ch["new_value"] or _CR_BLANK_DISPLAY
             rows += (
                 f'<tr style="border-top:1px solid rgba({pr},{pg},{pb},0.1);">'
                 f'<td style="padding:5px 8px 5px 16px;color:{light};font-size:0.82rem;width:38%;">{ch["field"]}</td>'
@@ -484,6 +484,12 @@ _CR_DROPDOWN_FIELDS = {
     "VS Role", "Worship Role", "Ministry Department",
     "Status", "Gender", "Prev Cell",
 }
+
+# Ministry role fields can be cleared (member taken off the team): the change request is
+# filed with an empty New Value. Other fields still require a value.
+_CR_CLEARABLE_FIELDS = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role"}
+_CR_CLEAR_LABEL = "(blank: remove from team)"
+_CR_BLANK_DISPLAY = "(blank)"
 
 _CR_INFO_ONLY_FIELDS = ["Age", "Attendance", "New Since"]
 
@@ -1676,6 +1682,10 @@ def _render_cr_wizard() -> None:
                 else:
                     prefill_idx = None
                 default_idx = prefill_idx if prefill_idx is not None else (options.index(current) if current in options else 0)
+                if field in _CR_CLEARABLE_FIELDS and current:
+                    # Offer "blank" first, but keep the default on the real option worked out above.
+                    options = [_CR_CLEAR_LABEL] + list(options)
+                    default_idx += 1
                 val = st.selectbox("New value", options, index=default_idx)
             else:
                 val = st.text_input("New value", value=prefill_value or current)
@@ -1825,7 +1835,7 @@ def _render_cr_wizard() -> None:
             for _pch in _nv_pending:
                 _pfk = f"cr_nv_edit_{_pch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
                 _pold = _pch.get("current_value", "") or "—"
-                _pnew = _pch["new_value"]
+                _pnew = _pch["new_value"] or _CR_BLANK_DISPLAY
                 _pfname = _pch["field"].replace("'", "\\'")
                 _nv_mini_rows += (
                     f'<tr class="chrow">'
@@ -1913,7 +1923,10 @@ def _render_cr_wizard() -> None:
             st.rerun()
         if _add_more or _review:
             str_val = val if not isinstance(val, str) else val.strip()
-            if str_val:
+            _is_clear = field in _CR_CLEARABLE_FIELDS and str_val == _CR_CLEAR_LABEL
+            if _is_clear:
+                str_val = ""
+            if str_val or _is_clear:
                 err = _cr_validate_field(field, str_val)
                 if err:
                     st.session_state.cr_val_error = err
@@ -2049,7 +2062,7 @@ def _render_cr_wizard() -> None:
         for ch in pending:
             _fk = f"cr_cf_edit_{ch['field'].replace(' ', '_').replace('/', '_').replace('.', '_')}"
             _old = ch.get("current_value", "") or "—"
-            _new_v = ch["new_value"]
+            _new_v = ch["new_value"] or _CR_BLANK_DISPLAY
             _fname = ch["field"].replace("'", "\\'")
             _iframe_rows += (
                 f'<tr class="chrow">'
@@ -2154,7 +2167,7 @@ def _render_cr_wizard() -> None:
         if _is_batch_eligible(pending):
             _batch_field   = _batch_primary_field(pending)
             _batch_pch     = next((ch for ch in pending if ch["field"] == _batch_field), pending[0])
-            _batch_new_val = _batch_pch["new_value"]
+            _batch_new_val = _batch_pch["new_value"] or _CR_BLANK_DISPLAY
             _batch_members = data.get("batch_extra_members", [])
             _batch_matches = data.get("batch_search_matches", [])
 
