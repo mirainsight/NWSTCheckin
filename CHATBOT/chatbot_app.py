@@ -616,6 +616,8 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
         "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
         "potential": "Potential Ministry Core",
         "member": "Member", "advisor": "Advisor",
+        "remove": _CR_CLEAR_LABEL, "take off": _CR_CLEAR_LABEL, "take out": _CR_CLEAR_LABEL,
+        "no longer serving": _CR_CLEAR_LABEL, "stepped down": _CR_CLEAR_LABEL, "step down": _CR_CLEAR_LABEL,
     },
     "Frontlines Role": {
         "leader": "Ministry Leader", "ml": "Ministry Leader",
@@ -623,6 +625,8 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
         "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
         "potential": "Potential Ministry Core",
         "member": "Member", "advisor": "Advisor",
+        "remove": _CR_CLEAR_LABEL, "take off": _CR_CLEAR_LABEL, "take out": _CR_CLEAR_LABEL,
+        "no longer serving": _CR_CLEAR_LABEL, "stepped down": _CR_CLEAR_LABEL, "step down": _CR_CLEAR_LABEL,
     },
     "VS Role": {
         "leader": "Ministry Leader", "ml": "Ministry Leader",
@@ -630,6 +634,8 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
         "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
         "potential": "Potential Ministry Core",
         "member": "Member", "advisor": "Advisor",
+        "remove": _CR_CLEAR_LABEL, "take off": _CR_CLEAR_LABEL, "take out": _CR_CLEAR_LABEL,
+        "no longer serving": _CR_CLEAR_LABEL, "stepped down": _CR_CLEAR_LABEL, "step down": _CR_CLEAR_LABEL,
     },
     "Worship Role": {
         "leader": "Ministry Leader", "ml": "Ministry Leader",
@@ -637,6 +643,8 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
         "core": "Ministry Core", "mc": "Ministry Core", "ministry core": "Ministry Core",
         "potential": "Potential Ministry Core",
         "member": "Member", "advisor": "Advisor",
+        "remove": _CR_CLEAR_LABEL, "take off": _CR_CLEAR_LABEL, "take out": _CR_CLEAR_LABEL,
+        "no longer serving": _CR_CLEAR_LABEL, "stepped down": _CR_CLEAR_LABEL, "step down": _CR_CLEAR_LABEL,
     },
     "Ministry Department": {
         "band": "Band", "dance": "Dance", "sound": "Sound",
@@ -1029,7 +1037,7 @@ def _cr_detect_emergency_pair(query: str) -> "tuple[str, str] | None":
 
 def _cr_expand_to_option(field: str, partial: str) -> str:
     """Expand a partial value (e.g. 'Red') to the full dropdown option ('Red: Will no longer...')."""
-    if not partial:
+    if not partial or partial == _CR_CLEAR_LABEL:
         return partial
     # keyword dict check first; for non-dropdown fields return immediately,
     # for dropdown fields let the result feed into option matching below
@@ -1685,7 +1693,9 @@ def _render_cr_wizard() -> None:
                 if field in _CR_CLEARABLE_FIELDS and current:
                     # Offer "blank" first, but keep the default on the real option worked out above.
                     options = [_CR_CLEAR_LABEL] + list(options)
-                    default_idx += 1
+                    default_idx = 0 if prefill_value == _CR_CLEAR_LABEL else default_idx + 1
+                elif prefill_value == _CR_CLEAR_LABEL:
+                    st.info(f"💡 No {field} on record, so there is nothing to remove.")
                 val = st.selectbox("New value", options, index=default_idx)
             else:
                 val = st.text_input("New value", value=prefill_value or current)
@@ -2969,6 +2979,8 @@ if st.session_state.cr_active and st.session_state.cr_step == "show_info":
         _kw_search = _field_cands_pre if _field_cands_pre else _avail
         for _f in _kw_search:
             _kv = _cr_keyword_infer_value(_f, _q)
+            if _kv == _CR_CLEAR_LABEL and not _field_cands_pre:
+                continue  # e.g. "remove" with no ministry named
             if _kv:
                 _kw_val = _kv
                 _cands = [_f]
