@@ -417,6 +417,18 @@ def _pick(member: dict, *keywords: str) -> str:
 # Members of this cell (NWST staff / core team) get unrestricted access to every cell.
 _FULL_ACCESS_CELL = "narrowstreet core team"
 
+# Ministry cores and leaders (in Role or any ministry role column) also get unrestricted access.
+_FULL_ACCESS_ROLES = {"ministry core", "ministry leader", "assistant ministry leader"}
+
+
+def _has_full_access_role() -> bool:
+    member = st.session_state.get("user_member_row") or {}
+    return any(
+        str(v or "").strip().lower() in _FULL_ACCESS_ROLES
+        for k, v in member.items()
+        if str(k).strip().endswith("role")
+    )
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cell_zone_map() -> dict[str, str]:
@@ -443,7 +455,7 @@ def _user_allowed_cells() -> "set[str] | None":
         return None
     role = (st.session_state.get("user_role") or "").strip().lower()
     cell = (st.session_state.get("user_cell") or "").strip().lower()
-    if cell == _FULL_ACCESS_CELL:
+    if cell == _FULL_ACCESS_CELL or _has_full_access_role():
         return None
     if "zone leader" in role and cell:
         zmap = _cell_zone_map()
