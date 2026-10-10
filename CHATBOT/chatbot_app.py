@@ -485,10 +485,11 @@ _CR_DROPDOWN_FIELDS = {
     "Status", "Gender", "Prev Cell",
 }
 
-# Ministry role fields can be cleared (member taken off the team): the change request is
-# filed with an empty New Value. Other fields still require a value.
-_CR_CLEARABLE_FIELDS = {"Hype Role", "Frontlines Role", "VS Role", "Worship Role"}
-_CR_CLEAR_LABEL = "(blank: remove from team)"
+# Role fields can be cleared (member taken off the team, or stepping down from cell
+# leadership): the change request is filed with an empty New Value. Other fields still
+# require a value.
+_CR_CLEARABLE_FIELDS = {"Role", "Hype Role", "Frontlines Role", "VS Role", "Worship Role"}
+_CR_CLEAR_LABEL = "(blank: remove role)"
 _CR_BLANK_DISPLAY = "(blank)"
 
 _CR_INFO_ONLY_FIELDS = ["Age", "Attendance", "New Since"]
@@ -519,6 +520,7 @@ _CR_FIELD_ALIASES: dict[str, str] = {
     "shepherds": "Cell",
     # role abbreviations → Role field
     "cgl": "Role", "acgl": "Role", "cgc": "Role", "zl": "Role",
+    "leadership": "Role",
 }
 
 _CR_CELL_ALIASES: dict[str, str] = {
@@ -609,6 +611,8 @@ _CR_VALUE_KEYWORDS: dict[str, dict[str, str]] = {
         "ministry core": "Ministry Core", "mc": "Ministry Core",
         "potential ministry": "Potential Ministry Core", "potential ministry core": "Potential Ministry Core",
         "zone leader": "Zone Leader", "zl": "Zone Leader",
+        "remove": _CR_CLEAR_LABEL, "take off": _CR_CLEAR_LABEL, "take out": _CR_CLEAR_LABEL,
+        "no longer leading": _CR_CLEAR_LABEL, "stepped down": _CR_CLEAR_LABEL, "step down": _CR_CLEAR_LABEL,
     },
     "Hype Role": {
         "leader": "Ministry Leader", "ml": "Ministry Leader",
