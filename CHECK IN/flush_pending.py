@@ -399,11 +399,14 @@ def _gsheet_client(log_lines: list[str] | None = None):
     json_blob = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
     if creds is None and json_blob:
         try:
+            if not json_blob.lstrip().startswith("{"):
+                import base64
+                json_blob = base64.b64decode(json_blob).decode("utf-8")  # secret may be base64-encoded
             info = json.loads(json_blob)
             creds = Credentials.from_service_account_info(info, scopes=scope)
             if log_lines is not None:
                 _emit("Using GCP_SERVICE_ACCOUNT_JSON from environment.", log_lines)
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:  # binascii.Error is a ValueError
             _emit(f"GCP_SERVICE_ACCOUNT_JSON is invalid: {e}", log_lines, err=True)
             return None
 
