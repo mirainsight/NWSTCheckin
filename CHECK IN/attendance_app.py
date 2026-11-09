@@ -384,8 +384,15 @@ def flush_pending_attendance_for_tabs(client, tab_names):
         total_rows = 0
         parts = []
         for tab_name in tab_names:
-            pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
-            raw_items = redis_client.lrange(pk, 0, -1)
+            # Flush every date's queue for this tab (not just today) so a missed flush is never stranded.
+            pk_list = sorted(
+                (k.decode() if isinstance(k, bytes) else k)
+                for k in (redis_client.keys(f"{REDIS_PENDING_ATTENDANCE_PREFIX}*:{tab_name}") or [])
+            )
+            raw_items = []
+            for _pk in pk_list:
+                raw_items.extend(redis_client.lrange(_pk, 0, -1) or [])
+            pk = pk_list
             if not raw_items:
                 continue
             rows = []
@@ -395,7 +402,8 @@ def flush_pending_attendance_for_tabs(client, tab_names):
                 rows.append([d["ts"], d["opt"]])
             sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
             sh.append_rows(rows)
-            redis_client.delete(pk)
+            for _pk in pk_list:
+                redis_client.delete(_pk)
             n = len(rows)
             total_rows += n
             parts.append(f"{tab_name}: {n}")
@@ -2435,7 +2443,7 @@ def save_attendance_to_sheet(client, attendance_data, tab_name=ATTENDANCE_TAB_NA
             for option in selected_options:
                 line = json.dumps({"opt": option, "ts": timestamp}, sort_keys=True, separators=(",", ":"))
                 redis_client.rpush(pending_key, line)
-            redis_client.expire(pending_key, REDIS_CACHE_TTL)
+            redis_client.expire(pending_key, 7 * 86400)  # keep unflushed check-ins for a week, not 24h
 
             count = len(selected_options)
             return True, f"Checked in {count} {'person' if count == 1 else 'people'} successfully!"

@@ -1,0 +1,26 @@
+name: Flush pending check-ins to Google Sheets
+
+on:
+  # Every 10 minutes, so check-ins land in the sheet without anyone pressing Refresh
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  flush:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Flush pending rows
+        env:
+          ATTENDANCE_SHEET_ID: ${{ secrets.ATTENDANCE_SHEET_ID }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          cd "CHECK IN"
+          python flush_pending.py --pending-only

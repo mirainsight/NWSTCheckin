@@ -498,8 +498,15 @@ def flush_pending_attendance_for_tabs(
         total_rows = 0
         results = []
         for tab_name in tab_names:
-            pk = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
-            raw_items = redis_client.lrange(pk, 0, -1)
+            # Flush every date's queue for this tab (not just today) so a missed flush is never stranded.
+            pk_list = sorted(
+                (k.decode() if isinstance(k, bytes) else k)
+                for k in (redis_client.keys(f"{REDIS_PENDING_ATTENDANCE_PREFIX}*:{tab_name}") or [])
+            )
+            raw_items = []
+            for _pk in pk_list:
+                raw_items.extend(redis_client.lrange(_pk, 0, -1) or [])
+            pk = pk_list
             if not raw_items:
                 results.append(f"  {tab_name}: 0 rows")
                 continue
@@ -510,7 +517,8 @@ def flush_pending_attendance_for_tabs(
                 rows.append([d["ts"], d["opt"]])
             sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
             sh.append_rows(rows)
-            redis_client.delete(pk)
+            for _pk in pk_list:
+                redis_client.delete(_pk)
             n = len(rows)
             total_rows += n
             results.append(f"  {tab_name}: +{n} rows")
