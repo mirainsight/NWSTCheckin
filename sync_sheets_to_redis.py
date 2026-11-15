@@ -40,6 +40,9 @@ REDIS_CACHE_TTL = 86400  # 24 hours
 REDIS_OPTIONS_KEY = "attendance:options"
 REDIS_ATTENDANCE_KEY_PREFIX = "attendance:data:"
 REDIS_ZONE_MAPPING_KEY = "attendance:zone_mapping"
+# Check-ins the app has queued but the flush job has not written to the sheet yet
+# (same key format as attendance_app.save_attendance_to_sheet / flush_pending.py)
+REDIS_PENDING_ATTENDANCE_PREFIX = "attendance:pending_rows:"
 
 
 def get_today_myt_date():
@@ -195,8 +198,27 @@ def sync_zone_mapping(gsheet_client, redis_client):
     print(f"  Synced {len(cell_to_zone)} zone mappings")
 
 
+def read_pending_checkins(redis_client, today_myt, tab_name):
+    """Return today's queued-but-not-yet-flushed check-ins as (timestamp, "Name - Cell") pairs."""
+    pending_key = f"{REDIS_PENDING_ATTENDANCE_PREFIX}{today_myt}:{tab_name}"
+    items = []
+    for raw in redis_client.lrange(pending_key, 0, -1) or []:
+        try:
+            s = raw.decode() if isinstance(raw, bytes) else raw
+            d = json.loads(s)
+            items.append((str(d["ts"]).strip(), str(d["opt"]).strip()))
+        except Exception:
+            continue
+    return items
+
+
 def sync_attendance(gsheet_client, redis_client, tab_name):
-    """Sync attendance data for a specific tab to Redis"""
+    """Sync attendance data for a specific tab to Redis.
+
+    Today's snapshot = rows already in the sheet + check-ins still waiting in the pending
+    queue. Without the pending part, a sync that runs before the flush job would wipe
+    those check-ins from the app's "Checked in today" count.
+    """
     print(f"Syncing {tab_name}...")
 
     spreadsheet = gsheet_client.open_by_key(SHEET_ID)
@@ -208,43 +230,50 @@ def sync_attendance(gsheet_client, redis_client, tab_name):
         print(f"  Warning: {tab_name} tab not found")
         return
 
-    all_rows = attendance_sheet.get_all_values()
+    # Read the queue BEFORE the sheet. The flush appends to the sheet and only then clears
+    # the queue, so a flush running in between shows up in at least one of the two reads.
+    pending = read_pending_checkins(redis_client, today_myt, tab_name)
 
-    if len(all_rows) <= 1:
-        print(f"  No attendance data for today")
-        return
+    all_rows = attendance_sheet.get_all_values()
 
     cell_group_data = {}
     checked_in_set = set()
     checked_in_list = []
     recent_checkins = []
+    seen_recent = set()
+
+    def add_checkin(timestamp_str, name_cell_group):
+        if not timestamp_str or not name_cell_group:
+            return
+        if len(timestamp_str) < 10 or timestamp_str[:10] != today_myt:
+            return
+        # Same row can be in both the sheet and the queue if a flush ran mid-sync
+        if (timestamp_str, name_cell_group) in seen_recent:
+            return
+        seen_recent.add((timestamp_str, name_cell_group))
+        recent_checkins.append((timestamp_str, name_cell_group))
+
+        if name_cell_group not in checked_in_set:
+            checked_in_set.add(name_cell_group)
+            checked_in_list.append(name_cell_group)
+
+            name, cell_group = parse_name_cell_group(name_cell_group)
+
+            if cell_group not in cell_group_data:
+                cell_group_data[cell_group] = []
+            cell_group_data[cell_group].append(name)
 
     for row in all_rows[1:]:
         if len(row) < 2:
             continue
-
-        timestamp_str = row[0].strip() if row[0] else ""
-        name_cell_group = row[1].strip() if len(row) > 1 and row[1] else ""
-
-        if not timestamp_str or not name_cell_group:
+        try:
+            add_checkin(row[0].strip() if row[0] else "", row[1].strip() if row[1] else "")
+        except Exception:
             continue
 
+    for timestamp_str, name_cell_group in pending:
         try:
-            if len(timestamp_str) >= 10:
-                date_part = timestamp_str[:10]
-
-                if date_part == today_myt:
-                    recent_checkins.append((timestamp_str, name_cell_group))
-
-                    if name_cell_group not in checked_in_set:
-                        checked_in_set.add(name_cell_group)
-                        checked_in_list.append(name_cell_group)
-
-                        name, cell_group = parse_name_cell_group(name_cell_group)
-
-                        if cell_group not in cell_group_data:
-                            cell_group_data[cell_group] = []
-                        cell_group_data[cell_group].append(name)
+            add_checkin(timestamp_str, name_cell_group)
         except Exception:
             continue
 
@@ -259,7 +288,7 @@ def sync_attendance(gsheet_client, redis_client, tab_name):
 
     redis_client.set(redis_key, json.dumps(cache_data), ex=REDIS_CACHE_TTL)
 
-    print(f"  Synced {len(checked_in_list)} check-ins for today")
+    print(f"  Synced {len(checked_in_list)} check-ins for today ({len(pending)} still pending flush)")
 
 
 def main():
