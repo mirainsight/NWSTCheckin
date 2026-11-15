@@ -6,6 +6,11 @@ on:
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
+# Never run two flushes at once (cron-job.org triggers every 10 min), so rows are not appended twice
+concurrency:
+  group: flush-pending
+  cancel-in-progress: false
+
 jobs:
   flush:
     runs-on: ubuntu-latest
