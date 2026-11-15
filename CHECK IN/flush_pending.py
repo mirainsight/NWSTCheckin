@@ -507,8 +507,11 @@ def flush_pending_attendance_for_tabs(
                 for k in (redis_client.keys(f"{REDIS_PENDING_ATTENDANCE_PREFIX}*:{tab_name}") or [])
             )
             raw_items = []
+            taken = {}  # key -> how many items we read, so only those are removed afterwards
             for _pk in pk_list:
-                raw_items.extend(redis_client.lrange(_pk, 0, -1) or [])
+                _items = redis_client.lrange(_pk, 0, -1) or []
+                taken[_pk] = len(_items)
+                raw_items.extend(_items)
             pk = pk_list
             if not raw_items:
                 results.append(f"  {tab_name}: 0 rows")
@@ -520,8 +523,11 @@ def flush_pending_attendance_for_tabs(
                 rows.append([d["ts"], d["opt"]])
             sh = _ensure_attendance_worksheet(spreadsheet, tab_name)
             sh.append_rows(rows)
-            for _pk in pk_list:
-                redis_client.delete(_pk)
+            # Remove only the items written above. A check-in queued while append_rows was
+            # running stays in the list for the next flush instead of being deleted unseen.
+            for _pk, _n in taken.items():
+                if _n:
+                    redis_client.ltrim(_pk, _n, -1)
             n = len(rows)
             total_rows += n
             results.append(f"  {tab_name}: +{n} rows")
